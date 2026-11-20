@@ -1,3 +1,5 @@
+import {pixhawkBoard} from './pixhawk.mjs';
+import {makePixhawkMesh} from './pixhawk-3d.mjs';
 import {mountedWeights} from './weights.mjs';
 import {checkClearance} from './clearance.mjs';
 import * as T from './three.js';
@@ -277,25 +279,33 @@ export function createScene(host){
       const bottom=sharesStack?escY+.04:deckY;
       const h=bottom+(sharesStack?.164:.077);
       standoffs(0,stackZ,.43,.36,bottom,h-.04);
-      box(drone,1.04,.08,.89,s.controller?black:pcb,0,h,stackZ);
-      box(drone,.43,.07,.34,s.controller?edge:chip,0,h+.06,stackZ);
-      if(s.controller===2){
-        box(drone,1.13,.21,.90,black,0,h+.12,stackZ);
-        box(drone,.79,.04,.60,edge,0,h+.244,stackZ);
+      const flightBoard=pixhawkBoard(s.controller);
+      if(flightBoard){
+        box(drone,1.04,.08,.89,edge,0,h,stackZ);
+        const {group,anchors}=makePixhawkMesh(flightBoard);
+        group.scale.setScalar(.088);
+        if(flightBoard.flip)group.rotation.y=Math.PI;
+        group.position.set(0,h+.04,stackZ);
+        group.updateMatrix();
+        drone.add(group);
+        for(const [name,position] of Object.entries(anchors))ports[name]=position.applyMatrix4(group.matrix);
+      }else{
+        box(drone,1.04,.08,.89,s.controller?black:pcb,0,h,stackZ);
+        box(drone,.43,.07,.34,s.controller?edge:chip,0,h+.06,stackZ);
+        for(let i=0;i<7;i++){
+          box(drone,.055,.056,.11,metal,-.42+i*.14,h+.049,stackZ-.41);
+          box(drone,.04,.05,.10,copper,-.42+i*.14,h+.04,stackZ+.39);
+        }
+        box(drone,.18,.1,.23,metal,-.47,h+.06,stackZ);
+        for(let i=0;i<s.n;i++){
+          const z=stackZ-.32+.115*i;
+          box(drone,.07,.04,.058,copper,.51,h+.05,z);
+          ports['FC.OUT'+(i+1)]=new T.Vector3(.54,h+.07,z);
+        }
+        ports['FC.5V']=new T.Vector3(.42,h+.065,stackZ+.41);
+        ports['FC.GND']=new T.Vector3(.28,h+.065,stackZ+.41);
       }
-      for(let i=0;i<7;i++){
-        box(drone,.055,.056,.11,metal,-.42+i*.14,h+.049,stackZ-.41);
-        box(drone,.04,.05,.10,copper,-.42+i*.14,h+.04,stackZ+.39);
-      }
-      box(drone,.18,.1,.23,metal,-.47,h+.06,stackZ);
-      for(let i=0;i<s.n;i++){
-        const z=stackZ-.32+.115*i;
-        box(drone,.07,.04,.058,copper,.51,h+.05,z);
-        ports['FC.OUT'+(i+1)]=new T.Vector3(.54,h+.07,z);
-      }
-      ports['FC.5V']=new T.Vector3(.42,h+.065,stackZ+.41);
-      ports['FC.GND']=new T.Vector3(.28,h+.065,stackZ+.41);
-      movePart('FC',start,[0,bottom,stackZ],[0,h+(s.controller===2?.12:0),stackZ],['FC.']);
+      movePart('FC',start,[0,bottom,stackZ],[0,h+(flightBoard ? .115 : 0),stackZ],['FC.','P_']);
     }
     if(s.controller===2){
       const start=drone.children.length;
@@ -349,7 +359,7 @@ export function createScene(host){
     if(centers.FC){
       const expansion=groups.filter(g=>g.type==='port').flatMap(g=>g.pins.map(pin=>g.id+'.'+pin));
       const chipBase=ports['FC.5V']??centers.FC;
-      expansion.forEach((pin,i)=>{ports[pin]=chipBase.clone().lerp(centers.FC,(i%8)*.04);});
+      expansion.forEach((pin,i)=>{if(!ports[pin])ports[pin]=chipBase.clone().lerp(centers.FC,(i%8)*.04);});
     }
     const routed=links.filter(l=>s.wires.includes(l.key)&&ports[l.a]&&ports[l.b]);
     for(const {id,mass} of mountedWeights(s)){
@@ -386,7 +396,7 @@ export function createScene(host){
     }
     pivot.set(result.x,result.y,result.z);
     for(const link of routed){
-      const a=ports[link.a], b=ports[link.b];
+      const a=ports[link.a], b=link.a==='ESC.SGND'&&link.b==='FC.GND'?(ports['FC.OUTPUT_GND']??ports[link.b]):ports[link.b];
       const curve=new T.CubicBezierCurve3(a,a.clone().add(new T.Vector3(0,.16,0)),b.clone().add(new T.Vector3(0,.13,0)),b);
       mesh(drone,new T.TubeGeometry(curve,20,['power','series'].includes(link.kind)?.023:.016,6,false),routedColors[wireRole(link)],0,0,0);
     }

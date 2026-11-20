@@ -1,3 +1,5 @@
+import {pixhawkBoard,logicalPin} from './pixhawk.mjs';
+import {createPixhawkInspector} from './pixhawk-3d.mjs';
 import {mountedWeights,weightIds} from './weights.mjs';
 import {parseBenchCSV} from './bench.mjs';
 import {readProject,writeProject} from './project.mjs';
@@ -213,6 +215,65 @@ function drawWires(){
     path(points.get(drag.pin),points.get(drag.target)??{x:drag.x-frame.x,y:drag.y-frame.y},paint[kind??(drag.target?'invalid':'signal')],true);
   }
 }
+let pixhawkViewer=null,lastPixhawkBoard=null,pixhawkSocket='GPS',pixhawkPin=-1;
+function renderPixhawk(){
+  const board=pixhawkBoard(state.controller), details=$('pixhawkInspector');
+  details.hidden=!board;
+  if(!board||!details.open||tab!=='wire')return;
+  if(lastPixhawkBoard!==board){
+    $('pixhawkTitle').textContent=board.name;
+    $('pixhawkRevision').textContent=board.revision;
+    $('pixhawkDocs').href=board.doc;
+    $('pixhawkSocket').replaceChildren(...board.ports.map(port=>new Option(port.label,port.id)));
+    if(!board.ports.some(port=>port.id===pixhawkSocket))pixhawkSocket=board.ports.find(port=>port.id==='GPS1'||port.id==='GPS')?.id??board.ports[0].id;
+    lastPixhawkBoard=board;
+    pixhawkPin=-1;
+  }
+  $('pixhawkSocket').value=pixhawkSocket;
+  const port=board.ports.find(entry=>entry.id===pixhawkSocket);
+  const {present}=circuit(state);
+  const connected=new Set(state.wires.flatMap(w=>w.split('|')));
+  const palette=wirePalette(state.wireColors);
+  if(!pixhawkViewer)pixhawkViewer=createPixhawkInspector($('pixhawkCanvas'),hit=>{
+    pixhawkSocket=hit.socket;
+    pixhawkPin=hit.pin??-1;
+    if(pixhawkPin>=0){inspectPin(pixhawkPin);return;}
+    renderPixhawk();
+  });
+  pixhawkViewer.update(board,port.id,palette,picked,connected,pixhawkPin);
+  $('pixhawkPins').replaceChildren(...port.pins.map((pin,i)=>{
+    const endpoint=logicalPin(pin);
+    const status=endpoint&&present.has(endpoint)?(connected.has(endpoint)?'Wired':'Connect'):'Reference';
+    const button=document.createElement('button');
+    button.type='button';button.dataset.contact=i;
+    button.setAttribute('aria-pressed',String(pixhawkPin===i||Boolean(endpoint&&endpoint===picked)));
+    button.style.setProperty('--pin-color',palette[pin.role]??'#82919d');
+    button.textContent=(pin.number??i+1)+' · '+pin.name+' · '+status;
+    return button;
+  }));
+  const pin=port.pins[pixhawkPin];
+  const endpoint=pin&&logicalPin(pin);
+  $('pixhawkPinNote').textContent=!pin?'Pin numbers follow the connector-face view. Pick a connectable pin, then pick the other end in Wiring.':
+    [pin.name,pin.note,endpoint&&present.has(endpoint)?'Circuit terminal '+endpoint:'Reference contact. A matching simulated terminal must be installed to connect it.'].filter(Boolean).join(' · ');
+}
+function inspectPin(index){
+  pixhawkPin=index;
+  const pin=pixhawkBoard(state.controller)?.ports.find(port=>port.id===pixhawkSocket)?.pins[index];
+  const endpoint=pin&&logicalPin(pin);
+  if(endpoint&&circuit(state).present.has(endpoint))selectPin(endpoint,false);
+  else renderPixhawk();
+}
+$('pixhawkInspector').addEventListener('toggle',renderPixhawk);
+$('pixhawkSocket').onchange=e=>{pixhawkSocket=e.target.value;pixhawkPin=-1;renderPixhawk();};
+$('pixhawkFocus').onclick=()=>pixhawkViewer?.focus(pixhawkSocket);
+$('pixhawkOverview').onclick=()=>pixhawkViewer?.focus(null);
+$('pixhawkPins').onclick=e=>{
+  const index=e.target.closest('button')?.dataset.contact;
+  if(index!=null){
+    inspectPin(Number(index));
+    $('pixhawkPins').querySelector('[data-contact="'+index+'"]')?.focus({preventScroll:true});
+  }
+};
 function renderWiring(){
   const {groups,links,pinKinds}=circuit(state);
   const paint=wirePalette(state.wireColors);
@@ -239,6 +300,7 @@ function renderWiring(){
   }).join('');
   $('wireMessage').textContent=message||(picked?'Selected '+picked+' · Choose the destination.':!groups.length?'Install components in Assembly to reveal their pins.':busConflict(state)?'Optical flow and ADS-B both use TELEM2. Install one of them.':!model.accessoryOK?'Select a Pixhawk controller to wire these peripherals.':model.wired?'All required connections are present.':'Match wire colors and pin labels. UART transmit connects to receive.');
   drawWires();
+  renderPixhawk();
 }
 new ResizeObserver(drawWires).observe(board);
 document.fonts?.ready.then(drawWires);
@@ -510,12 +572,12 @@ function connectPins(a,b){
   message=expected?'Connection added.':'Unexpected connection. Remove this lead before arming.';
   update();
 }
-function selectPin(pin){
+function selectPin(pin,focus=true){
   message='';
   if(picked&&picked!==pin){connectPins(picked,pin);return;}
   picked=picked===pin?null:pin;
   renderWiring();
-  [...terminals.querySelectorAll('[data-pin]')].find(b=>b.dataset.pin===pin)?.focus({preventScroll:true});
+  if(focus)[...terminals.querySelectorAll('[data-pin]')].find(b=>b.dataset.pin===pin)?.focus({preventScroll:true});
 }
 function pinAt(e){
   return document.elementFromPoint(e.clientX,e.clientY)?.closest('[data-pin]')?.dataset.pin;

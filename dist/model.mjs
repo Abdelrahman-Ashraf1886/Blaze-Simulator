@@ -1,3 +1,4 @@
+import {toVariant} from './component-data.mjs';
 import {mountedWeights} from './weights.mjs';
 import {benchValue,benchDuty} from './bench.mjs';
 import {peripherals,installedPeripherals,busConflict,wireRole} from './peripherals.mjs';
@@ -33,7 +34,18 @@ export const catalog = {
 };
 export const singleton = ['battery','controller','esc'];
 export const empty = (n=4) => ({n, battery:null, controller:null, esc:null, motor:Array(n).fill(null),prop:Array(n).fill(null),payload:0,peripherals:[],extraBatteries:[],wires:[]});
-export const part = (s,k,i) => catalog[k].variants[i==null?s[k]:s[k][i]];
+export function componentVariants(s,type){
+  return [...catalog[type].variants,...(s.customComponents?.[type]??[]).map(spec=>toVariant(type,spec))];
+}
+export function part(s,type,i){
+  const index=i==null?s[type]:s[type][i];
+  const standard=catalog[type].variants;
+  if(!Number.isInteger(index)||index<0)return undefined;
+  if(index<standard.length)return standard[index];
+  const spec=s.customComponents?.[type]?.[index-standard.length];
+  return spec?toVariant(type,spec):undefined;
+}
+export const supportsPixhawk=s=>s.controller===1||s.controller===2;
 export const edge = (a,b) => [a,b].sort().join('|');
 export const phases = ['U','V','W'];
 
@@ -42,7 +54,7 @@ export const firstThreeS=4;
 export function batteryPacks(s){
   if(!part(s,'battery'))return [];
   return [s.battery,...(s.extraBatteries??[]).slice(0,maxBatteryPacks-1)]
-    .map((index,i)=>({id:i?'BAT'+(i+1):'BAT',spec:catalog.battery.variants[index]}))
+    .map((index,i)=>({id:i?'BAT'+(i+1):'BAT',spec:part({...s,battery:index},'battery')}))
     .filter(pack=>pack.spec);
 }
 
@@ -78,7 +90,7 @@ export function circuit(s){
     const item=peripherals[id], port='P_'+item.port.replaceAll(' ','_');
     add(id,item.name,item.pins.map(([pin])=>pin),'accessory');
     groups.at(-1).protocol=item.protocol;
-    if(fc&&s.controller>0){
+    if(fc&&supportsPixhawk(s)){
       let group=groups.find(g=>g.id===port);
       if(!group){add(port,'Pixhawk '+item.port,[],'port');group=groups.at(-1);}
       for(const [pin,target,kind] of item.pins){
@@ -112,7 +124,7 @@ export function analyze(s,frameMass=s.n===4?128:196){
   const {links,required}=circuit(s);
   const matched=links.filter(l=>s.wires.includes(l.key)).length;
   const assembly=Boolean(battery&&esc&&fc&&motors.every(Boolean)&&props.every(Boolean));
-  const accessoryOK=(!installedPeripherals(s).length||s.controller>0)&&!busConflict(s);
+  const accessoryOK=(!installedPeripherals(s).length||supportsPixhawk(s))&&!busConflict(s);
   const wired=assembly&&accessoryOK&&links.length===required&&matched===links.length&&matched===s.wires.length;
   const voltageOK=Boolean(battery&&esc&&battery.cells<=esc.max&&motors.every(m=>!m?.max||battery.cells<=m.max));
   const curves=motors.map((_,i)=>s.bench?.[s.motor[i]+':'+s.prop[i]]);
@@ -124,7 +136,7 @@ export function analyze(s,frameMass=s.n===4?128:196){
     if(!battery||!esc||!voltageOK)return {v:0,a:0,t:0,p:0,loss:0,amps:0,limited:false};
     const open=battery.v*(.88+.12*soc);
     const resistance=battery.r+.006;
-    const idle=(fc?.mass>20?3:1.4)+accessoryPower;
+    const idle=(fc?.watts??(fc?.mass>20?3:1.4))+accessoryPower;
     const channels=motors.map((m,i)=>({m,prop:props[i]}));
     const duties=Array.isArray(duty)?duty:channels.map(()=>duty);
     const electrical=(scale,v)=>channels.map(({m,prop},i)=>{
@@ -183,10 +195,22 @@ export function analyze(s,frameMass=s.n===4?128:196){
       return Math.min(1,Math.sqrt(forces[i]/(m.t*prop.t))*m.v/voltage);
     });
   }
-  const peak=assembly&&voltageOK?sample(1):null;
-  const ratio=peak?peak.t*1000/mass:null;
+  const powered=motors.some((motor,i)=>motor&&props[i])&&voltageOK?sample(1):null;
+  const peak=assembly?powered:null;
+  const rotorCount=motors.filter(Boolean).length;
+  const missingProps=motors.some((motor,i)=>motor&&!props[i]);
+  const reference=motors.reduce((sum,motor,i)=>{
+    if(!motor)return sum;
+    const ratedLimit=(motor.max??Infinity)*3.7;
+    const voltage=Math.min(battery?.v??motor.v,ratedLimit,esc?esc.max*3.7:Infinity);
+    const curve=curves[i];
+    return sum+(curve?benchValue(curve,voltage/curve.voltage,1):motor.t*(props[i]?.t??1)*(voltage/motor.v)**2);
+  },0);
+  const estimatedThrust=rotorCount?(powered&&!missingProps?powered.t:reference):null;
+  const ratio=estimatedThrust==null?null:estimatedThrust*1000/mass;
+  const estimateMode=peak?'full':!rotorCount?'missing':!voltageOK&&battery&&esc?'voltage':missingProps?'referenceProp':'partial';
   let hover=null;
-  if(ratio>1){
+  if(peak&&ratio>1){
     let lo=0,hi=1;
     for(let j=0;j<20;j++){
       const mid=(lo+hi)/2;
@@ -194,5 +218,5 @@ export function analyze(s,frameMass=s.n===4?128:196){
     }
     hover={duty:hi,...sample(hi)};
   }
-  return {mass,measuredRotors:curves.map(Boolean),assembly,wired,accessoryOK,required,voltageOK,matched,ratio,peak,hover,sample,commandsForThrust,ready:wired&&voltageOK&&ratio>1,battery,esc};
+  return {mass,measuredRotors:curves.map(Boolean),assembly,wired,accessoryOK,required,voltageOK,matched,ratio,estimatedThrust,estimateMode,peak,hover,sample,commandsForThrust,ready:wired&&voltageOK&&ratio>1,battery,esc};
 }

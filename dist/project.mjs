@@ -1,5 +1,6 @@
+import {componentFields,customLimit,validateComponent} from './component-data.mjs';
 import {weightIds,mountedWeights} from './weights.mjs';
-import {catalog,empty,maxBatteryPacks} from './model.mjs';
+import {componentVariants,empty,maxBatteryPacks} from './model.mjs';
 import {peripherals,wireTypes,wirePalette} from './peripherals.mjs';
 import {parseBenchCSV} from './bench.mjs';
 
@@ -25,7 +26,16 @@ export function readProject(text){
   const doc=JSON.parse(text);
   if(doc?.format!=='blaze-build'||doc.version!==1||![4,6].includes(doc.build?.n))throw new Error('Unsupported BLAZE project file.');
   const raw=doc.build,state=empty(raw.n);
-  const variant=(type,value)=>Number.isInteger(value)&&catalog[type].variants[value]?value:null;
+  if(raw.customComponents){
+    state.customComponents={};
+    for(const type of Object.keys(componentFields)){
+      const entries=raw.customComponents[type];
+      if(entries==null)continue;
+      if(!Array.isArray(entries)||entries.length>customLimit)throw new Error('Invalid custom component catalog.');
+      state.customComponents[type]=entries.map(spec=>validateComponent(type,spec??{}));
+    }
+  }
+  const variant=(type,value)=>Number.isInteger(value)&&componentVariants(state,type)[value]?value:null;
   for(const type of ['battery','controller','esc'])state[type]=variant(type,raw[type]);
   for(const type of ['motor','prop'])state[type]=state[type].map((_,i)=>variant(type,raw[type]?.[i]));
   state.extraBatteries=state.battery!=null&&Array.isArray(raw.extraBatteries)?raw.extraBatteries.slice(0,maxBatteryPacks-1).map(i=>variant('battery',i)).filter(i=>i!=null):[];

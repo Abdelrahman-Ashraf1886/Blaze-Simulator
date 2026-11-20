@@ -4,7 +4,7 @@ import {mountedWeights} from './weights.mjs';
 import {checkClearance} from './clearance.mjs';
 import * as T from './three.js';
 import {createCanvasView} from './canvas-view.mjs';
-import {circuit,phases,batteryPacks} from './model.mjs';
+import {circuit,phases,batteryPacks,part} from './model.mjs';
 import {balance,mmPerUnit,placementOptions} from './layout.mjs';
 import {peripherals,installedPeripherals,wireTypes,wireRole,wirePalette} from './peripherals.mjs';
 
@@ -231,16 +231,18 @@ export function createScene(host){
       }
       if(s.prop[i]!=null&&s.motor[i]!=null){
         const prop=new T.Group();prop.position.set(x,.90,z);drone.add(prop);
-        const blades=s.prop[i]===1?2:3;
+        const propSpec=part(s,'prop',i);
+        const blades=propSpec?.blades??(s.prop[i]===1?2:3);
+        const rotorRadius=(propSpec?.diameter??5)*25.4/mmPerUnit/2;
         for(let j=0;j<blades;j++){
-          const blade=new T.Group();blade.rotation.y=j*2*Math.PI/blades;blade.scale.set(1.46,1,1.46);prop.add(blade);
+          const blade=new T.Group();blade.rotation.y=j*2*Math.PI/blades;blade.scale.set(rotorRadius/1.087,1,rotorRadius/1.087);prop.add(blade);
           plate(blade,[[-.085,.08],[-.18,.7],[-.1,1.03],[.04,1.08],[.14,.91],[.15,.55],[.07,.08]],.027,i%2?edge:orange,0);
         }
         cyl(prop,.139,.06,black,0,0,0);
         cyl(prop,.068,.045,metal,0,.051,0,6);
         if(!frameMesh||Number.isFinite(positions['M'+(i+1)]?.x)){
           spinning.push([prop,i%2?1:-1]);
-          propellers.push({id:'M'+(i+1),object:prop});
+          propellers.push({id:'M'+(i+1),object:prop,radius:rotorRadius});
         }
       }
       movePart('M'+(i+1),start,[x,.486,z],[x,.65,z],['M'+(i+1)+'.']);
@@ -410,10 +412,10 @@ export function createScene(host){
       const component=bounds.get(id);
       component.box.union(box);component.pieces.push(box);
     }
-    const disks=propellers.map(({id,object})=>({
+    const disks=propellers.map(({id,object,radius})=>({
       id,center:object.getWorldPosition(new T.Vector3()),
       normal:new T.Vector3(0,1,0).applyQuaternion(object.getWorldQuaternion(new T.Quaternion())),
-      radius:1.5875
+      radius
     }));
     result.clearance=checkClearance([...bounds.values()],disks,surfaces);
     setSelection(selection,onSelect);

@@ -1,16 +1,18 @@
+import {componentFields,componentTypeLabels,customLimit,validateComponent,extractComponent,readDatasheet} from './component-data.mjs';
 import {pixhawkBoard,logicalPin} from './pixhawk.mjs';
 import {createPixhawkInspector} from './pixhawk-3d.mjs';
 import {mountedWeights,weightIds} from './weights.mjs';
 import {parseBenchCSV} from './bench.mjs';
 import {readProject,writeProject} from './project.mjs';
 import {peripherals,installedPeripherals,busConflict,wireTypes,wireRole,wirePalette} from './peripherals.mjs';
-import {catalog,singleton,empty,part,circuit,edge,analyze,upgradeWires,batteryPacks,maxBatteryPacks,firstThreeS} from './model.mjs';
+import {catalog,singleton,empty,part,circuit,edge,analyze,upgradeWires,batteryPacks,maxBatteryPacks,firstThreeS,componentVariants,supportsPixhawk} from './model.mjs';
 import {createScene} from './scene.mjs';
 import {STLLoader} from './STLLoader.mjs';
 import {balance,mmPerUnit,placementOptions} from './layout.mjs';
 import {gravity,hoverEnvelope,rotorMoments,attitudeForces,spoolMotors} from './flight.mjs';
 
 const $=id=>document.getElementById(id);
+const escapeHtml=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const display=(n,d,suffix)=>Number.isFinite(n)?n.toFixed(d)+suffix:'—';
 const key='rotorbench-build-v1';
 let state=empty();
@@ -69,7 +71,7 @@ function renderCatalog(){
     const controls=slots.filter(i=>part(state,type,i)).map(i=>{
       const selected=i==null?state[type]:state[type][i];
       const tag=i==null?'':('M'+(i+1)+' ');
-      return '<div class="part-tools"><select aria-label="'+tag+spec.name+' model" data-model="'+type+'" data-slot="'+(i??-1)+'">'+spec.variants.map((v,j)=>'<option value="'+j+'" '+(selected===j?'selected':'')+'>'+tag+v.name+'</option>').join('')+'</select><button aria-label="Remove '+tag+spec.name+'" data-remove="'+type+'" data-slot="'+(i??-1)+'" '+(type==='battery'&&batteryPacks(state).length>1?'disabled title="Remove extra packs first"':'')+'>×</button></div>';
+      return '<div class="part-tools"><select aria-label="'+tag+spec.name+' model" data-model="'+type+'" data-slot="'+(i??-1)+'">'+componentVariants(state,type).map((v,j)=>'<option value="'+j+'" '+(selected===j?'selected':'')+'>'+tag+escapeHtml(v.name)+'</option>').join('')+'</select><button aria-label="Remove '+tag+spec.name+'" data-remove="'+type+'" data-slot="'+(i??-1)+'" '+(type==='battery'&&batteryPacks(state).length>1?'disabled title="Remove extra packs first"':'')+'>×</button></div>';
     }).join('');
     return '<div class="part"><span class="part-icon" aria-hidden="true">'+spec.icon+'</span><div><div class="part-name">'+spec.name+'</div><span class="part-spec">'+n+' / '+(multi?state.n:1)+' installed</span></div><button data-add="'+type+'" aria-label="Add '+spec.name+'" '+((multi?next<0:n===1)?'disabled':'')+'>+</button>'+controls+'</div>';
   }).join('');
@@ -93,7 +95,7 @@ function renderSeries(){
   $('batterySeries').hidden=!packs.length;
   const battery=model.battery;
   $('seriesStatus').textContent=battery?packs.length+' '+(packs.length===1?'pack':'packs in series')+' · '+battery.cells+'S · '+battery.v.toFixed(1)+' V · '+Math.round(battery.ah*1000)+' mAh':'';
-  $('seriesPacks').innerHTML=packs.slice(1).map(({spec},i)=>'<label>Pack '+(i+2)+'<select data-pack="'+i+'">'+catalog.battery.variants.map((choice,j)=>'<option value="'+j+'" '+(choice===spec?'selected':'')+'>'+choice.name+'</option>').join('')+'</select></label>').join('');
+  $('seriesPacks').innerHTML=packs.slice(1).map((_,i)=>'<label>Pack '+(i+2)+'<select data-pack="'+i+'">'+componentVariants(state,'battery').map((choice,j)=>'<option value="'+j+'" '+(j===state.extraBatteries[i]?'selected':'')+'>'+escapeHtml(choice.name)+'</option>').join('')+'</select></label>').join('');
   $('addPack').disabled=packs.length>=maxBatteryPacks;
   $('removePack').hidden=packs.length<2;
 }
@@ -141,11 +143,17 @@ function render(){
   const pendingProps=state.prop.some((prop,i)=>prop!=null&&state.motor[i]==null);
   $('assemblyHint').textContent=pendingProps?'Selected propellers appear in 3D when their motors are installed.':model.assembly?'Connect battery power, controller signals and motor phases in Wiring.':'Add a battery, flight controller, ESC and a motor with propeller at each mount.';
   $('ratio').textContent=display(model.ratio,2,' : 1');
-  $('ratioNote').textContent=model.peak?(model.peak.limited?'Peak limited by electrical ratings':model.ratio>1?'Estimated static thrust margin':'Insufficient thrust for hover'):(model.assembly?'Check battery and motor voltage':'Complete the propulsion system');
+  const estimateNotes={
+    voltage:'Reference-voltage estimate. Battery and propulsion ratings are incompatible.',
+    referenceProp:'Estimate uses reference propellers for any missing propellers.',
+    partial:'Estimate for installed propulsion. Complete the build for a flight test.',
+    missing:'Add a motor to calculate an estimate.'
+  };
+  $('ratioNote').textContent=model.peak?(model.peak.limited?'Peak limited by electrical ratings':model.ratio>1?'Estimated static thrust margin':'Insufficient thrust for hover'):estimateNotes[model.estimateMode];
   const h=trim;
   $('metrics').innerHTML=[
     ['Total mass',display(model.mass,0,' g')],
-    ['Peak thrust',display(model.peak?.t,2,' kgf')],
+    [model.peak?'Peak thrust':'Estimated static thrust',display(model.estimatedThrust,2,' kgf')],
     ['Balanced lift limit',display(envelope?.lift,2,' kgf')],
     ['Balanced lift reserve',display(envelope?(envelope.lift/(model.mass/1000)-1)*100:null,0,'%')],
     ['Hover throttle',display(h?.duty*100,1,'%')],
@@ -160,10 +168,10 @@ function render(){
     ['Components',model.assembly,model.assembly?'Complete':'Incomplete'],
     ['Voltage / ESC channels',model.voltageOK&&model.esc.ch>=state.n,model.battery&&model.esc?(model.voltageOK&&model.esc.ch>=state.n?'Compatible':'Mismatch'):'Pending'],
     ['Circuit',model.wired,model.wired?'Connected':model.matched+' / '+model.required],
-    ...(installedPeripherals(state).length?[['Pixhawk ports',model.accessoryOK,busConflict(state)?'TELEM2 conflict':state.controller>0?'Compatible':'Pixhawk required']]:[]),
+    ...(installedPeripherals(state).length?[['Pixhawk ports',model.accessoryOK,busConflict(state)?'TELEM2 conflict':supportsPixhawk(state)?'Compatible':'Pixhawk required']]:[]),
     ...(layoutBalance.rotorAligned===false?[['Rotor orientation',false,'Align upward']]:[]),
     ...(custom||mountedWeights(state).length?[['Component mounts',allMounted(),allMounted()?'Placed':'Incomplete']]:[]),
-    ['Lift margin',model.ratio>1,model.ratio==null?'Pending':model.ratio>1?'Sufficient':'Low'],
+    ['Lift margin',Boolean(model.peak&&model.ratio>1),model.ratio==null?'Pending':!model.peak?'Estimate only':model.ratio>1?'Sufficient':'Low'],
     ['Hover balance',canHold(),!envelope?'Pending':canHold()?'Trimmable':'Cannot hold']
   ].map(([label,ok,status])=>'<div class="check"><span>'+label+'</span><b class="'+(ok?'ok':'')+'">'+status+'</b></div>').join('');
   renderWiring();
@@ -286,12 +294,12 @@ function renderWiring(){
   terminals.innerHTML=groups.map(({id,label,pins,type,protocol})=>{
     const modelMark={battery:'LiPo',pixhawk:'PIXHAWK',controller:'FC',esc:'ESC',motor:'BLDC',module:'5 V',accessory:'I/O',port:'FC'}[type];
     const displayPin=p=>type==='pixhawk'&&p.startsWith('OUT')?'MAIN '+p.slice(3):p;
-    return '<div class="terminal-group hardware-'+type+'"><div class="board-heading"><div class="board-mark" aria-hidden="true">'+modelMark+'</div><h4>'+label+(protocol?'<small>'+protocol+'</small>':'')+'</h4></div><div class="pin-bank">'+pins.map(p=>{
+    return '<div class="terminal-group hardware-'+type+'"><div class="board-heading"><div class="board-mark" aria-hidden="true">'+modelMark+'</div><h4>'+escapeHtml(label)+(protocol?'<small>'+protocol+'</small>':'')+'</h4></div><div class="pin-bank">'+pins.map(p=>{
       const pin=id+'.'+p, name=displayPin(p);
       const fallback=peripherals[id]?.pins.find(([key])=>key===p)?.[2];
       const kind=pinKinds.get(pin)??(fallback==='uart'?(p==='RX'?'tx':'rx'):fallback);
       const color=paint[kind]??'#a3aab3';
-      return '<button style="--wire:'+color+'" title="'+(wireTypes[kind]?.name??'Terminal')+'" data-pin="'+pin+'"  class="'+(picked===pin?'selected':connected.has(pin)?'connected':'')+'" aria-label="'+label+' '+name+'" aria-pressed="'+(picked===pin)+'"><i></i>'+name+'</button>';
+      return '<button style="--wire:'+color+'" title="'+(wireTypes[kind]?.name??'Terminal')+'" data-pin="'+pin+'"  class="'+(picked===pin?'selected':connected.has(pin)?'connected':'')+'" aria-label="'+escapeHtml(label)+' '+name+'" aria-pressed="'+(picked===pin)+'"><i></i>'+name+'</button>';
     }).join('')+'</div></div>';
   }).join('');
   $('connections').innerHTML=state.wires.map((w,i)=>{
@@ -550,10 +558,15 @@ $('layout').addEventListener('change',e=>{
   for(const k of ['motor','prop'])state[k]=Array.from({length:n},(_,i)=>state[k][i]??null);
   state.n=n;update();
 });
-$('reset').onclick=()=>{if(custom)custom.positions={};state=empty(state.n);selectTab('build');update();};
+$('reset').onclick=()=>{if(custom)custom.positions={};resetBuild();selectTab('build');update();};
+function resetBuild(){
+  const {n,customComponents}=state;
+  state=empty(n);
+  if(customComponents)state.customComponents=customComponents;
+}
 $('demo').onclick=()=>{
   removeFrame();
-  state=empty(state.n);
+  resetBuild();
   Object.assign(state,{battery:1,controller:0,esc:state.n===6?1:0,motor:Array(state.n).fill(0),prop:Array(state.n).fill(0)});
   state.wires=circuit(state).links.map(l=>l.key);
   selectTab('build');update();
@@ -669,12 +682,17 @@ function renderComparison(){
 }
 
 for(const [id,type] of [['benchMotor','motor'],['benchProp','prop']]){
-  $(id).replaceChildren(...catalog[type].variants.map((spec,i)=>new Option(spec.name,i)));
   $(id).onchange=()=>{benchMessage='';renderBench();};
 }
 const benchKey=()=>$('benchMotor').value+':'+$('benchProp').value;
 let benchMessage='';
 function renderBench(){
+  for(const [id,type] of [['benchMotor','motor'],['benchProp','prop']]){
+    const select=$(id),selected=select.value;
+    const variants=componentVariants(state,type);
+    select.replaceChildren(...variants.map((spec,i)=>new Option(spec.name,i)));
+    if(variants[selected])select.value=selected;
+  }
   const curve=state.bench?.[benchKey()];
   $('removeBench').disabled=!curve;
   $('benchStatus').textContent=benchMessage||(curve?curve.points.length+' points at '+curve.voltage+' V. '+model.measuredRotors.filter(Boolean).length+' installed rotors use measured curves.':'No measured curve for this pair. Estimates remain active.');
@@ -771,9 +789,9 @@ function renderEngineering(){
     const draw=model.peak.requested;
     notes.push('Full-throttle demand: '+display(draw.a,1,' A')+' total, '+display(draw.v,2,' V')+' loaded. Highest draw: M'+draw.limitMotor+' at '+display(draw.amps,1,' A')+'.');
   }
-  if(model.ratio!=null&&model.ratio<=1)notes.push('Total thrust is below the build weight.');
+  if(model.peak&&model.ratio<=1)notes.push('Total thrust is below the build weight.');
   if(layoutBalance.rotorAligned===false)notes.push('Rotate or remount the sideways rotor so its thrust axis points up.');
-  if(model.ratio>1&&envelope&&!canHold())notes.push('Total thrust is available, but a level hover exceeds the balanced lift limit. Move the heaviest component toward the rotor center.');
+  if(model.peak&&model.ratio>1&&envelope&&!canHold())notes.push('Total thrust is available, but a level hover exceeds the balanced lift limit. Move the heaviest component toward the rotor center.');
   if(Number.isFinite(layoutBalance.offset))notes.push('The center of mass is '+display(layoutBalance.offset*mmPerUnit,1,' mm')+' from the rotor center.');
   fillList('diagnosticList',notes.length?notes:['No electrical or hover checks are available yet.']);
   const names=new Map(placementOptions(state).map(({id,label})=>[id,label]));
@@ -786,6 +804,81 @@ function renderEngineering(){
   });
   fillList('clearanceList',warnings?.length?warnings:[!warnings?'3D clearance is unavailable.':custom&&!allMounted()?'Place all components to complete the clearance check.':'No overlaps detected among placed parts.']);
 }
+
+const newComponentType=$('newComponentType');
+const componentForm=$('componentForm');
+const componentStatus=$('componentStatus');
+let datasheetSource='',datasheetRequest=0;
+newComponentType.replaceChildren(...Object.entries(componentTypeLabels).map(([id,label])=>new Option(label,id)));
+function renderComponentFields(){
+  const type=newComponentType.value;
+  $('componentFields').replaceChildren(...componentFields[type].map(field=>{
+    const label=document.createElement('label');
+    label.textContent=field.label;
+    const input=document.createElement('input');
+    Object.assign(input,{type:'number',name:field.key,min:String(field.min),max:String(field.max),step:'any',required:true});
+    label.append(input);
+    return label;
+  }));
+  $('componentHint').textContent=type==='motor'?'Use thrust and current from the same test row, with its test voltage.':
+    type==='controller'?'Use with regulated 5 V only. Custom controllers use generic power and output terminals.':
+    type==='prop'?'Diameter updates the 3D propeller and clearance check. Thrust remains estimated unless you add measured data.':'';
+}
+function clearComponentForm(){
+  datasheetRequest++;
+  datasheetSource='';componentForm.reset();renderComponentFields();
+}
+newComponentType.onchange=()=>{
+  datasheetRequest++;datasheetSource='';
+  renderComponentFields();
+  componentStatus.textContent='Upload the datasheet for this component type or enter the values manually.';
+};
+$('componentFile').onchange=async e=>{
+  const [file]=e.target.files;
+  if(!file)return;
+  const request=++datasheetRequest,type=newComponentType.value;
+  e.target.value='';
+  componentStatus.textContent='Reading datasheet…';
+  try{
+    const fields=extractComponent(type,await readDatasheet(file));
+    if(request!==datasheetRequest)return;
+    datasheetSource=file.name;
+    if(!componentForm.elements.componentName.value.trim())componentForm.elements.componentName.value=file.name.replace(/\.[^.]+$/,'').slice(0,100);
+    for(const {key} of componentFields[type])componentForm.elements[key].value=fields[key]??'';
+    const count=componentFields[type].filter(({key})=>fields[key]!=null).length;
+    componentStatus.textContent=count?'Found '+count+' values. Verify them and fill any blanks before adding.':'No labeled values were found. Enter the values from the datasheet manually.';
+  }catch(error){
+    if(request===datasheetRequest)componentStatus.textContent=(error.message||'The datasheet could not be read.')+' You can enter the specifications manually.';
+  }
+};
+componentForm.onsubmit=e=>{
+  e.preventDefault();
+  const type=newComponentType.value;
+  try{
+    const custom=state.customComponents?.[type]??[];
+    if(custom.length>=customLimit)throw new Error('This build already contains '+customLimit+' custom parts of this type.');
+    const raw={name:componentForm.elements.componentName.value,source:datasheetSource};
+    for(const {key} of componentFields[type]){
+      const input=componentForm.elements[key];
+      raw[key]=input.value===''?NaN:Number(input.value);
+    }
+    const spec=validateComponent(type,raw);
+    state.customComponents??={};
+    const index=componentVariants(state,type).length;
+    state.customComponents[type]=[...custom,spec];
+    let installed=false;
+    if(singleton.includes(type)){
+      if(state[type]==null){state[type]=index;installed=true;}
+    }else{
+      const slot=state[type].indexOf(null);
+      if(slot>=0){state[type][slot]=index;installed=true;}
+    }
+    clearComponentForm();
+    update();
+    componentStatus.textContent=spec.name+(installed?' was added and installed.':' was added to its component selector.');
+  }catch(error){componentStatus.textContent=error.message;}
+};
+renderComponentFields();
 
 let last=performance.now(),tick=0,reading=null;
 function animate(now){

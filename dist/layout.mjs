@@ -1,3 +1,4 @@
+import {mountedWeights} from './weights.mjs';
 import {peripherals,installedPeripherals} from './peripherals.mjs';
 import {part,batteryPacks} from './model.mjs';
 
@@ -29,6 +30,7 @@ export function placementOptions(s){
     if(motor||prop)options.push({id:'M'+(i+1),label:'Rotor '+(i+1),mass:(motor?.mass??0)+(prop?.mass??0)});
   }
   for(const id of installedPeripherals(s))options.push({id,label:peripherals[id].name,mass:peripherals[id].mass});
+  options.push(...mountedWeights(s));
   if(s.payload>0)options.push({id:'LOAD',label:'Additional mass',mass:s.payload});
   return options;
 }

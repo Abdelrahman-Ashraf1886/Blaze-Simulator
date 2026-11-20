@@ -1,3 +1,4 @@
+import {mountedWeights} from './weights.mjs';
 import {checkClearance} from './clearance.mjs';
 import * as T from './three.js';
 import {createCanvasView} from './canvas-view.mjs';
@@ -351,6 +352,14 @@ export function createScene(host){
       expansion.forEach((pin,i)=>{ports[pin]=chipBase.clone().lerp(centers.FC,(i%8)*.04);});
     }
     const routed=links.filter(l=>s.wires.includes(l.key)&&ports[l.a]&&ports[l.b]);
+    for(const {id,mass} of mountedWeights(s)){
+      if(!Number.isFinite(positions[id]?.x))continue;
+      const start=drone.children.length;
+      const side=.30+.075*Math.cbrt(mass/100);
+      box(drone,side,.18,side,orange,0,.09,0);
+      box(drone,side*.52,.023,side*.52,black,0,.19,0);
+      movePart(id,start,[0,0,0],[0,.09,0],[]);
+    }
     if(s.payload>0){
       const start=drone.children.length;
       box(drone,.43,.17,.43,edge,0,deckY+.085,0);

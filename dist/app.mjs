@@ -1,3 +1,4 @@
+import {mountedWeights,weightIds} from './weights.mjs';
 import {parseBenchCSV} from './bench.mjs';
 import {readProject,writeProject} from './project.mjs';
 import {peripherals,installedPeripherals,busConflict,wireTypes,wireRole,wirePalette} from './peripherals.mjs';
@@ -5,7 +6,7 @@ import {catalog,singleton,empty,part,circuit,edge,analyze,upgradeWires,batteryPa
 import {createScene} from './scene.mjs';
 import {STLLoader} from './STLLoader.mjs';
 import {balance,mmPerUnit,placementOptions} from './layout.mjs';
-import {gravity,hoverEnvelope,rotorMoments} from './flight.mjs';
+import {gravity,hoverEnvelope,rotorMoments,attitudeForces,spoolMotors} from './flight.mjs';
 
 const $=id=>document.getElementById(id);
 const display=(n,d,suffix)=>Number.isFinite(n)?n.toFixed(d)+suffix:'—';
@@ -18,11 +19,14 @@ try{
 const viewport=createScene($('canvasHost'));
 let custom=null,pendingFrame=null,layoutBalance=null,envelope=null,trim=null,placing=false,importSequence=0;
 let pitch=0,roll=0,pitchRate=0,rollRate=0,busVoltage=0,flightOutcome='';
+let motorDuties=[],driftX=0,driftZ=0,lateralX=0,lateralZ=0;
 let model,tab='build',picked=null,drag=null,message='',armed=false,hold=false,alt=0,speed=0,soc=1,throttle=0,view='orbit';
 
 function stop(){
   armed=false;hold=false;alt=0;speed=0;soc=1;throttle=0;flightOutcome='';
   pitch=roll=pitchRate=rollRate=0;
+  driftX=driftZ=lateralX=lateralZ=0;
+  motorDuties=Array(state.n).fill(0);
   busVoltage=model?.battery?.v??0;
   $('throttle').value=0;
   viewport.pose(0,0);
@@ -130,6 +134,7 @@ function render(){
   $('wireCount').textContent=state.wires.length;
   renderCatalog();
   renderSeries();
+  renderWeights();
   $('assemblyTitle').textContent=model.assembly?'Assembly complete':'Start with the essentials';
   const pendingProps=state.prop.some((prop,i)=>prop!=null&&state.motor[i]==null);
   $('assemblyHint').textContent=pendingProps?'Selected propellers appear in 3D when their motors are installed.':model.assembly?'Connect battery power, controller signals and motor phases in Wiring.':'Add a battery, flight controller, ESC and a motor with propeller at each mount.';
@@ -140,6 +145,7 @@ function render(){
     ['Total mass',display(model.mass,0,' g')],
     ['Peak thrust',display(model.peak?.t,2,' kgf')],
     ['Balanced lift limit',display(envelope?.lift,2,' kgf')],
+    ['Balanced lift reserve',display(envelope?(envelope.lift/(model.mass/1000)-1)*100:null,0,'%')],
     ['Hover throttle',display(h?.duty*100,1,'%')],
     ['Hover current',display(h?.a,1,' A')],
     ['Loaded voltage',display(h?.v,2,' V')],
@@ -154,7 +160,7 @@ function render(){
     ['Circuit',model.wired,model.wired?'Connected':model.matched+' / '+model.required],
     ...(installedPeripherals(state).length?[['Pixhawk ports',model.accessoryOK,busConflict(state)?'TELEM2 conflict':state.controller>0?'Compatible':'Pixhawk required']]:[]),
     ...(layoutBalance.rotorAligned===false?[['Rotor orientation',false,'Align upward']]:[]),
-    ...(custom?[['Component mounts',allMounted(),allMounted()?'Placed':'Incomplete']]:[]),
+    ...(custom||mountedWeights(state).length?[['Component mounts',allMounted(),allMounted()?'Placed':'Incomplete']]:[]),
     ['Lift margin',model.ratio>1,model.ratio==null?'Pending':model.ratio>1?'Sufficient':'Low'],
     ['Hover balance',canHold(),!envelope?'Pending':canHold()?'Trimmable':'Cannot hold']
   ].map(([label,ok,status])=>'<div class="check"><span>'+label+'</span><b class="'+(ok?'ok':'')+'">'+status+'</b></div>').join('');
@@ -237,7 +243,10 @@ function renderWiring(){
 new ResizeObserver(drawWires).observe(board);
 document.fonts?.ready.then(drawWires);
 function allMounted(){
-  return !pendingFrame&&(!custom||placementOptions(state).every(({id})=>Number.isFinite(custom.positions[id]?.x)));
+  if(pendingFrame)return false;
+  const positions=mountPositions();
+  const required=custom?placementOptions(state):mountedWeights(state);
+  return required.every(({id})=>Number.isFinite(positions[id]?.x));
 }
 function mountPositions(){
   return custom?.positions??state.mounts??{};
@@ -258,6 +267,7 @@ function setPlacement(active){
     mounts[id]={...mounts[id],x:position.x,y:position.y,z:position.z,normal};
     setPlacement(false);
     $('cadMessage').textContent='Mount placed.';
+    if(weightIds.includes(id))$('weightStatus').textContent='Weight placed. Center of mass updated.';
     update(!custom);
   }:null);
   $('pickMount').textContent=active?'Cancel move':'Move on frame';
@@ -274,14 +284,14 @@ function renderCad(){
   const positions=mountPositions();
   const options=placementOptions(state);
   const selected=$('placePart').value;
-  $('placePart').replaceChildren(...options.map(({id,label})=>new Option(label+(custom?(Number.isFinite(positions[id]?.x)?' · placed':' · unplaced'):(Number.isFinite(positions[id]?.x)?' · moved':'')),id)));
+  $('placePart').replaceChildren(...options.map(({id,label})=>new Option(label+((custom||weightIds.includes(id))?(Number.isFinite(positions[id]?.x)?' · placed':' · unplaced'):(Number.isFinite(positions[id]?.x)?' · moved':'')),id)));
   if(options.some(({id})=>id===selected))$('placePart').value=selected;
   $('pickMount').disabled=!options.length||!viewport.available;
   $('rotatePart').disabled=$('pickMount').disabled;
   viewport.setSelection($('placePart').value,tab==='build'?selectComponent:null);
   if(!options.length&&placing)setPlacement(false);
   $('clearMounts').disabled=!Object.keys(positions).length;
-  const mounted=custom?options.filter(({id})=>Number.isFinite(positions[id]?.x)).length:options.length;
+  const mounted=options.filter(({id})=>(!custom&&!weightIds.includes(id))||Number.isFinite(positions[id]?.x)).length;
   const b=layoutBalance;
   const axis=b?' X '+display(b.x*mmPerUnit,1,' mm')+' · Y (height) '+display(b.y*mmPerUnit,1,' mm')+' · Z '+display(b.z*mmPerUnit,1,' mm'):'';
   const offset=Number.isFinite(b?.offset)&&allMounted()?' · '+display(b.offset*mmPerUnit,1,' mm from rotor center'):'';
@@ -401,14 +411,17 @@ function renderFlight(){
   $('arm').disabled=!canArm();
   $('arm').textContent=armed?'Disarm':flightOutcome?'Restart simulation':'Arm simulation';
   $('throttle').disabled=!armed||hold;
-  $('hold').disabled=!armed||!canHold();
+  const stabilize=$('stabilize').checked;
+  $('hold').disabled=!armed||!canHold()||!stabilize;
   $('hold').textContent=hold?'Release hold':'Hold 1 m';
   let hint='Resolve the wiring, voltage, and mount checks to arm.';
+  if(!allMounted())hint='Place every weight and required component before arming.';
   if(layoutBalance.rotorAligned===false)hint='This hover model requires all rotor thrust axes to point up.';
   if(canArm()){
     if(model.ratio<=1)hint='Insufficient total lift. Use manual throttle to see why this build stays grounded.';
     else if(!canHold())hint='The motors cannot balance this center of mass with enough lift. Move the load or test in manual mode.';
-    else hint=armed?'Throttle controls lift with automatic motor balancing. Hold 1 m also controls altitude.':'Arm to test the drone from the launch pad.';
+    else if(!stabilize)hint='Pitch and roll stabilization is off. Equal throttle exposes the torque and drift from an off-center load.';
+    else hint=armed?'The controller adjusts motor thrust to stay level. A shifted load reduces the available correction margin.':'Arm to test the drone from the launch pad.';
   }
   $('flightHint').textContent=flightOutcome||hint;
 }
@@ -434,6 +447,41 @@ $('catalog').addEventListener('change',e=>{
   const s=e.target;
   if(s.dataset.model)change(s.dataset.model,Number(s.dataset.slot),Number(s.value));
 });
+function renderWeights(){
+  const positions=mountPositions();
+  const weights=mountedWeights(state);
+  $('addWeight').disabled=!viewport.available||Boolean(pendingFrame)||weights.length>=weightIds.length;
+  $('weightList').innerHTML=weights.map(({id,label})=>'<div class="weight-row"><button data-place-weight="'+id+'">'+label+' · '+(Number.isFinite(positions[id]?.x)?'Move':'Place')+'</button><button data-remove-weight="'+id+'" aria-label="Remove '+label+'">×</button></div>').join('');
+}
+function placeWeight(id){
+  if(tab!=='build')selectTab('build');
+  selectComponent(id);
+  setPlacement(true);
+  $('cadMessage').textContent='Click where the weight should mount.';
+  $('viewport').scrollIntoView({block:'nearest'});
+}
+$('addWeight').onclick=()=>{
+  const entered=Number($('weightGrams').value);
+  if(!Number.isFinite(entered)||entered<1||entered>5000){$('weightStatus').textContent='Enter a weight from 1 to 5000 g.';return;}
+  const id=weightIds.find(id=>!state.weights?.[id]);
+  if(!id)return;
+  (state.weights??={})[id]=Math.round(entered);
+  $('weightStatus').textContent='Click a mounting surface in Assembly.';
+  update();
+  placeWeight(id);
+};
+$('weightList').onclick=e=>{
+  const button=e.target.closest('button');
+  if(button?.dataset.placeWeight){placeWeight(button.dataset.placeWeight);return;}
+  const id=button?.dataset.removeWeight;
+  if(!id)return;
+  if(placing&&$('placePart').value===id)setPlacement(false);
+  delete state.weights[id];
+  if(state.mounts)delete state.mounts[id];
+  if(custom)delete custom.positions[id];
+  $('weightStatus').textContent='Weight removed.';
+  update();
+};
 $('payload').addEventListener('change',e=>{state.payload=Math.max(0,Math.min(5000,Number(e.target.value)||0));update();});
 $('layout').addEventListener('change',e=>{
   const n=Number(e.target.value);
@@ -511,6 +559,7 @@ $('connections').onclick=e=>{
 };
 $('arm').onclick=()=>{if(armed)stop();else {stop();armed=true;}$('throttle').value=0;renderFlight();};
 $('hold').onclick=()=>{hold=!hold;renderFlight();};
+$('stabilize').onchange=()=>{if(!$('stabilize').checked)hold=false;renderFlight();};
 $('throttle').oninput=e=>{throttle=Number(e.target.value)/100;};
 
 function syncFrameInputs(){
@@ -643,6 +692,8 @@ function renderEngineering(){
   renderComparison();renderBench();
   const notes=[];
   if(pendingFrame)notes.push('Attach the original STL before testing this build.');
+  const pendingWeights=mountedWeights(state).filter(({id})=>!Number.isFinite(mountPositions()[id]?.x));
+  if(pendingWeights.length)notes.push('Place all added weights before flight. Unplaced weights count toward total mass.');
   if(!model.assembly)notes.push('Install the battery, controller, ESC, motors and propellers first.');
   if(model.assembly&&!model.wired)notes.push('Complete the required wiring and remove unexpected leads.');
   if(model.measuredRotors.some(Boolean))notes.push(model.measuredRotors.filter(Boolean).length+' of '+state.n+' rotors use measured thrust and current.');
@@ -676,19 +727,19 @@ function renderEngineering(){
 
 let last=performance.now(),tick=0,reading=null;
 function animate(now){
-  const dt=Math.min(.05,(now-last)/1000);last=now;
+  const dt=Math.max(0,Math.min(.05,(now-last)/1000));last=now;
   if(armed){
-    let command=throttle;
-    if(hold){
+    let command=Array(state.n).fill(throttle);
+    if((hold||$('stabilize').checked)&&canHold()){
       const weight=model.mass/1000;
-      const demand=Math.max(0,Math.min(envelope.lift,weight*(1+(1-alt)*.28-speed*.29)));
-      command=model.commandsForThrust(envelope.shares.map(share=>share*demand),busVoltage);
-      throttle=command.reduce((a,b)=>a+b,0)/command.length;
-    }else if(canHold()){
-      const demand=Math.min(envelope.lift,model.peak.t*throttle**2);
-      command=model.commandsForThrust(envelope.shares.map(share=>share*demand),busVoltage);
+      const requested=hold?weight*(1+(1-alt)*.28-speed*.29):model.peak.t*throttle**2;
+      const demand=Math.max(0,Math.min(envelope.lift,requested));
+      const attitude={pitch,roll,pitchRate,rollRate};
+      command=model.commandsForThrust(attitudeForces(layoutBalance,model.peak.rotors,envelope,demand,attitude),busVoltage);
+      if(hold)throttle=command.reduce((a,b)=>a+b,0)/command.length;
     }
-    reading=model.sample(command,soc);
+    motorDuties=spoolMotors(motorDuties,command,dt);
+    reading=model.sample(motorDuties,soc);
     busVoltage=reading.v;
     const moment=rotorMoments(layoutBalance.rotors,layoutBalance,reading.rotors);
     const lift=reading.t*1000/model.mass;
@@ -697,6 +748,11 @@ function animate(now){
       rollRate+=(moment.roll/layoutBalance.rollInertia-2.1*rollRate)*dt;
       pitch+=pitchRate*dt;roll+=rollRate*dt;
     }else pitch=roll=pitchRate=rollRate=0;
+    if(alt>0){
+      lateralX+=(-gravity*lift*Math.sin(roll)-lateralX*.9)*dt;
+      lateralZ+=(gravity*lift*Math.sin(pitch)*Math.cos(roll)-lateralZ*.9)*dt;
+      driftX+=lateralX*dt;driftZ+=lateralZ*dt;
+    }else lateralX=lateralZ=0;
     speed+=(gravity*(lift*Math.cos(pitch)*Math.cos(roll)-1)-1.05*speed)*dt;
     alt+=speed*dt;
     if(alt<0){alt=0;speed=0;}
@@ -717,7 +773,8 @@ function animate(now){
     if(hold)$('throttle').value=100*throttle;
     $('telemetry').innerHTML=[
       display(alt,2,' m altitude'),display(speed,2,' m/s vertical speed'),
-      display(pitch*180/Math.PI,1,'° pitch'),display(roll*180/Math.PI,1,'° roll'),
+      display(pitch*180/Math.PI,1,'° pitch'),display(roll*180/Math.PI,1,'° roll'),display(Math.hypot(driftX,driftZ),2,' m lateral drift'),
+      ...(armed||flightOutcome?motorDuties.map((duty,i)=>'M'+(i+1)+' '+display(duty*100,0,'%')):[]),
       display(reading?.v,2,' V'),display(reading?.a,1,' A'),display(reading?.t,2,' kgf'),display(soc*100,0,'% battery')
     ].map(v=>'<span>'+v+'</span>').join('');
   }

@@ -1,3 +1,4 @@
+import {mountedWeights} from './weights.mjs';
 import {benchValue,benchDuty} from './bench.mjs';
 import {peripherals,installedPeripherals,busConflict,wireRole} from './peripherals.mjs';
 
@@ -118,7 +119,7 @@ export function analyze(s,frameMass=s.n===4?128:196){
   const hardware=installedPeripherals(s).map(id=>peripherals[id]);
   const accessoryMass=hardware.reduce((sum,item)=>sum+item.mass,0);
   const accessoryPower=hardware.reduce((sum,item)=>sum+item.watts,0);
-  const mass=frameMass+accessoryMass+Number(s.payload)+(battery?.mass??0)+(esc?.mass??0)+(fc?.mass??0)+[...motors,...props].reduce((sum,p)=>sum+(p?.mass??0),0)+s.wires.length*.55;
+  const mass=frameMass+accessoryMass+(Number(s.payload)||0)+mountedWeights(s).reduce((sum,weight)=>sum+weight.mass,0)+(battery?.mass??0)+(esc?.mass??0)+(fc?.mass??0)+[...motors,...props].reduce((sum,p)=>sum+(p?.mass??0),0)+s.wires.length*.55;
   function sample(duty,soc=1){
     if(!battery||!esc||!voltageOK)return {v:0,a:0,t:0,p:0,loss:0,amps:0,limited:false};
     const open=battery.v*(.88+.12*soc);

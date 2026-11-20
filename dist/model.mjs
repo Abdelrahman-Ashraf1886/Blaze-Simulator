@@ -1,3 +1,4 @@
+import {benchValue,benchDuty} from './bench.mjs';
 import {peripherals,installedPeripherals,busConflict} from './peripherals.mjs';
 
 export const catalog = {
@@ -89,6 +90,7 @@ export function analyze(s,frameMass=s.n===4?128:196){
   const accessoryOK=(!installedPeripherals(s).length||s.controller>0)&&!busConflict(s);
   const wired=assembly&&accessoryOK&&links.length===required&&matched===links.length&&matched===s.wires.length;
   const voltageOK=Boolean(battery&&esc&&battery.v/3.7<=esc.max&&motors.every(m=>!m?.max||battery.v/3.7<=m.max));
+  const curves=motors.map((_,i)=>s.bench?.[s.motor[i]+':'+s.prop[i]]);
   const hardware=installedPeripherals(s).map(id=>peripherals[id]);
   const accessoryMass=hardware.reduce((sum,item)=>sum+item.mass,0);
   const accessoryPower=hardware.reduce((sum,item)=>sum+item.watts,0);
@@ -100,7 +102,12 @@ export function analyze(s,frameMass=s.n===4?128:196){
     const idle=(fc?.mass>20?3:1.4)+accessoryPower;
     const channels=motors.map((m,i)=>({m,prop:props[i]}));
     const duties=Array.isArray(duty)?duty:channels.map(()=>duty);
-    const electrical=(scale,v)=>channels.map(({m,prop},i)=>m&&prop?m.p*prop.p*Math.pow(duties[i]*scale*v/m.v,3)/(1-esc.loss):0);
+    const electrical=(scale,v)=>channels.map(({m,prop},i)=>{
+      if(!m||!prop)return 0;
+      const curve=curves[i];
+      return curve?benchValue(curve,duties[i]*scale*v/curve.voltage,2)*curve.voltage/(1-esc.loss):
+        m.p*prop.p*Math.pow(duties[i]*scale*v/m.v,3)/(1-esc.loss);
+    });
     function solve(command){
       let lo=open*.5,hi=open;
       for(let j=0;j<22;j++){
@@ -112,11 +119,18 @@ export function analyze(s,frameMass=s.n===4?128:196){
       const loads=electrical(command,v);
       const a=loads.reduce((sum,w)=>sum+w,idle)/v;
       const amps=Math.max(...loads)/v;
-      return {v,a,amps,invalid:a>battery.a||amps>esc.a||v<(battery.v/3.7)*3.15};
+      const currents=loads.map(w=>w/v);
+      const reasons=[];
+      if(a>battery.a)reasons.push('Battery current exceeds '+battery.a+' A');
+      const limitMotor=currents.indexOf(amps)+1;
+      if(amps>esc.a)reasons.push('Motor '+limitMotor+' exceeds the ESC channel limit of '+esc.a+' A');
+      if(v<(battery.v/3.7)*3.15)reasons.push('Battery voltage drops below 3.15 V per cell');
+      return {v,a,amps,currents,limitMotor,reasons,invalid:reasons.length>0};
     }
     let command=1;
     let result=solve(command);
     const limited=result.invalid;
+    const requested=result;
     if(limited){
       let lo=0,hi=command;
       for(let j=0;j<17;j++){
@@ -127,14 +141,20 @@ export function analyze(s,frameMass=s.n===4?128:196){
       result=solve(command);
     }
     const {v,a,amps}=result;
-    const rotors=channels.map(({m,prop},i)=>m&&prop?m.t*prop.t*Math.pow(duties[i]*command*v/m.v,2):0);
+    const rotors=channels.map(({m,prop},i)=>{
+      if(!m||!prop)return 0;
+      const curve=curves[i];
+      return curve?benchValue(curve,duties[i]*command*v/curve.voltage,1):m.t*prop.t*Math.pow(duties[i]*command*v/m.v,2);
+    });
     const t=rotors.reduce((a,b)=>a+b,0);
-    return {v,a,amps,t,rotors,p:open*a,loss:a*a*resistance+(v*a-idle)*esc.loss,limited};
+    return {v,a,amps,t,rotors,p:open*a,loss:a*a*resistance+(v*a-idle)*esc.loss,limited,requested,currents:result.currents};
   }
   function commandsForThrust(forces,voltage){
     return motors.map((m,i)=>{
       const prop=props[i];
       if(!m||!prop||!voltage)return 0;
+      const curve=curves[i];
+      if(curve)return Math.min(1,benchDuty(curve,forces[i])*curve.voltage/voltage);
       return Math.min(1,Math.sqrt(forces[i]/(m.t*prop.t))*m.v/voltage);
     });
   }
@@ -149,5 +169,5 @@ export function analyze(s,frameMass=s.n===4?128:196){
     }
     hover={duty:hi,...sample(hi)};
   }
-  return {mass,assembly,wired,accessoryOK,required,voltageOK,matched,ratio,peak,hover,sample,commandsForThrust,ready:wired&&voltageOK&&ratio>1,battery,esc};
+  return {mass,measuredRotors:curves.map(Boolean),assembly,wired,accessoryOK,required,voltageOK,matched,ratio,peak,hover,sample,commandsForThrust,ready:wired&&voltageOK&&ratio>1,battery,esc};
 }

@@ -1,3 +1,4 @@
+import {checkClearance} from './clearance.mjs';
 import * as T from './three.js';
 import {createCanvasView} from './canvas-view.mjs';
 import {circuit,phases} from './model.mjs';
@@ -128,6 +129,8 @@ export function createScene(host){
   function build(s,custom=null,positions={}){
     drone.traverse(o=>{if(o!==frameMesh)o.geometry?.dispose();if(o.isSprite){o.material.map.dispose();o.material.dispose();}});
     drone.clear();spinning.length=0;
+    drone.position.set(0,0,0);drone.rotation.set(0,0,0);
+    const propellers=[];
     const ports={}, centers={}, mountNormals={};
     const up=new T.Vector3(0,1,0);
     surfaces=[];selectable=[];activeCenters=centers;selectionRing=null;
@@ -218,12 +221,15 @@ export function createScene(host){
         const prop=new T.Group();prop.position.set(x,.90,z);drone.add(prop);
         const blades=s.prop[i]===1?2:3;
         for(let j=0;j<blades;j++){
-          const blade=new T.Group();blade.rotation.y=j*2*Math.PI/blades;prop.add(blade);
+          const blade=new T.Group();blade.rotation.y=j*2*Math.PI/blades;blade.scale.set(1.46,1,1.46);prop.add(blade);
           plate(blade,[[-.085,.08],[-.18,.7],[-.1,1.03],[.04,1.08],[.14,.91],[.15,.55],[.07,.08]],.027,i%2?edge:orange,0);
         }
         cyl(prop,.139,.06,black,0,0,0);
         cyl(prop,.068,.045,metal,0,.051,0,6);
-        if(!frameMesh||Number.isFinite(positions['M'+(i+1)]?.x))spinning.push([prop,i%2?1:-1]);
+        if(!frameMesh||Number.isFinite(positions['M'+(i+1)]?.x)){
+          spinning.push([prop,i%2?1:-1]);
+          propellers.push({id:'M'+(i+1),object:prop});
+        }
       }
       movePart('M'+(i+1),start,[x,.486,z],[x,.65,z],['M'+(i+1)+'.']);
       if(!frameMesh){
@@ -349,11 +355,11 @@ export function createScene(host){
       weights.reduce((sum,{position,mass})=>position?sum+mass*.001*.04**2*((position[axis]-result[axis])**2+(position.y-result.y)**2):sum,0));
     result.pitchInertia=inertia('z');
     result.rollInertia=inertia('x');
+    if(result.rotors.every(Boolean)){
+      const thrust=result.rotors.reduce((v,r)=>v.add(r),new T.Vector3()).divideScalar(s.n);
+      result.offset=Math.hypot(result.x-thrust.x,result.z-thrust.z);
+    }
     if(frameMesh||Object.keys(positions).length){
-      if(result.rotors.every(Boolean)){
-        const thrust=result.rotors.reduce((v,r)=>v.add(r),new T.Vector3()).divideScalar(s.n);
-        result.offset=Math.hypot(result.x-thrust.x,result.z-thrust.z);
-      }
       const marker=mesh(drone,new T.SphereGeometry(.10,16,12),markerMaterial,result.x,result.y,result.z);
       marker.renderOrder=2;
     }
@@ -363,6 +369,22 @@ export function createScene(host){
       const curve=new T.CubicBezierCurve3(a,a.clone().add(new T.Vector3(0,.16,0)),b.clone().add(new T.Vector3(0,.13,0)),b);
       mesh(drone,new T.TubeGeometry(curve,20,link.kind==='power'?.021:.013,6,false),shades[link.kind],0,0,0);
     }
+    drone.updateMatrixWorld(true);
+    const bounds=new Map();
+    for(const object of selectable){
+      if(propellers.some(prop=>prop.object===object))continue;
+      const box=new T.Box3().setFromObject(object);
+      const id=object.userData.component;
+      if(!bounds.has(id))bounds.set(id,{id,box:new T.Box3(),pieces:[]});
+      const component=bounds.get(id);
+      component.box.union(box);component.pieces.push(box);
+    }
+    const disks=propellers.map(({id,object})=>({
+      id,center:object.getWorldPosition(new T.Vector3()),
+      normal:new T.Vector3(0,1,0).applyQuaternion(object.getWorldQuaternion(new T.Quaternion())),
+      radius:1.5875
+    }));
+    result.clearance=checkClearance([...bounds.values()],disks,surfaces);
     setSelection(selection,onSelect);
     return result;
   }

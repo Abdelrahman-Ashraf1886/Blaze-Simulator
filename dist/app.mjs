@@ -1,3 +1,5 @@
+import {parseBenchCSV} from './bench.mjs';
+import {readProject,writeProject} from './project.mjs';
 import {peripherals,installedPeripherals,busConflict,wireTypes} from './peripherals.mjs';
 import {catalog,singleton,empty,part,circuit,edge,analyze,upgradeWires} from './model.mjs';
 import {createScene} from './scene.mjs';
@@ -14,7 +16,7 @@ try{
   if(saved&&[4,6].includes(saved.n)&&saved.motor.length===saved.n&&saved.prop.length===saved.n&&Array.isArray(saved.wires))state={...saved,wires:upgradeWires(saved.wires)};
 }catch{}
 const viewport=createScene($('canvasHost'));
-let custom=null,layoutBalance=null,envelope=null,trim=null,placing=false,importSequence=0;
+let custom=null,pendingFrame=null,layoutBalance=null,envelope=null,trim=null,placing=false,importSequence=0;
 let pitch=0,roll=0,pitchRate=0,rollRate=0,busVoltage=0,flightOutcome='';
 let model,tab='build',picked=null,drag=null,message='',armed=false,hold=false,alt=0,speed=0,soc=1,throttle=0,view='orbit';
 
@@ -128,6 +130,7 @@ function render(){
   ].map(([label,ok,status])=>'<div class="check"><span>'+label+'</span><b class="'+(ok?'ok':'')+'">'+status+'</b></div>').join('');
   renderWiring();
   renderFlight();
+  renderEngineering();
 }
 const board=$('wiringBoard'), terminals=$('terminals'), wirePaths=$('wirePaths');
 const paint=Object.fromEntries(Object.entries(wireTypes).map(([kind,{color}])=>[kind,color]));
@@ -188,9 +191,9 @@ function renderWiring(){
   drawWires();
 }
 new ResizeObserver(drawWires).observe(board);
-document.fonts.ready.then(drawWires);
+document.fonts?.ready.then(drawWires);
 function allMounted(){
-  return !custom||placementOptions(state).every(({id})=>Number.isFinite(custom.positions[id]?.x));
+  return !pendingFrame&&(!custom||placementOptions(state).every(({id})=>Number.isFinite(custom.positions[id]?.x)));
 }
 function mountPositions(){
   return custom?.positions??state.mounts??{};
@@ -222,8 +225,8 @@ function renderCad(){
   $('cadTools').hidden=tab!=='build';
   $('stlFile').disabled=!viewport.available;
   $('cadSettings').hidden=!custom;
-  $('removeStl').hidden=!custom;
-  $('stlName').textContent=custom?custom.name:'Built-in frame';
+  $('removeStl').hidden=!custom&&!pendingFrame;
+  $('stlName').textContent=custom?custom.name:pendingFrame?'Awaiting '+pendingFrame.name:'Built-in frame';
   const positions=mountPositions();
   const options=placementOptions(state);
   const selected=$('placePart').value;
@@ -244,7 +247,7 @@ function removeFrame(){
   importSequence++;
   setPlacement(false);
   custom?.geometry.dispose();
-  custom=null;
+  custom=null;pendingFrame=null;
   viewport.setFrame(null);
   $('cadMessage').textContent='';
 }
@@ -268,14 +271,16 @@ $('stlFile').onchange=async e=>{
     geometry.computeBoundingBox();
     const {min,max}=geometry.boundingBox;
     const extent=Math.max(max.x-min.x,max.y-min.y,max.z-min.z);
-    const units=[1,10,25.4,1000].find(scale=>extent*scale>=1&&extent*scale<=10000);
+    const units=pendingFrame?.units??[1,10,25.4,1000].find(scale=>extent*scale>=1&&extent*scale<=10000);
     if(!units)throw new Error('The STL has unsupported dimensions.');
-    viewport.setFrame(geometry,units,'Z');
+    const frame=pendingFrame??{mass:state.n===4?128:196,positions:{},units,axis:'Z'};
+    viewport.setFrame(geometry,frame.units,frame.axis);
     custom?.geometry.dispose();
-    custom={name:file.name,geometry,mass:state.n===4?128:196,positions:{},units,axis:'Z'};
-    $('stlUnits').value=String(units);$('stlAxis').value='Z';$('stlMass').value=custom.mass;
+    custom={...frame,name:file.name,geometry,bytes:data};
+    pendingFrame=null;
+    syncFrameInputs();
     selectTab('build');
-    status.textContent='STL loaded. Set its units, up axis and measured frame mass.';
+    status.textContent='STL loaded. Verify its units, up axis and measured frame mass.';
     view='orbit';
     update(false);
   }catch(error){
@@ -463,6 +468,166 @@ $('connections').onclick=e=>{
 $('arm').onclick=()=>{if(armed)stop();else {stop();armed=true;}$('throttle').value=0;renderFlight();};
 $('hold').onclick=()=>{hold=!hold;renderFlight();};
 $('throttle').oninput=e=>{throttle=Number(e.target.value)/100;};
+
+function syncFrameInputs(){
+  if(!custom)return;
+  $('stlUnits').value=String(custom.units);
+  $('stlAxis').value=custom.axis;
+  $('stlMass').value=custom.mass;
+}
+
+const compareKey='blaze-compare-v1';
+let comparisons={};
+try{comparisons=JSON.parse(localStorage.getItem(compareKey))??{};}catch{}
+const comparisonFields=[
+  ['mass','All-up mass',0,' g'],['ratio','Thrust-to-weight',2,' ×'],
+  ['lift','Balanced lift',2,' kgf'],['current','Hover current',1,' A'],
+  ['voltage','Loaded hover voltage',2,' V'],['power','Hover power',0,' W'],
+  ['endurance','Estimated hover time',1,' min'],['offset','Center-of-mass offset',1,' mm']
+];
+function capture(slot){
+  const name=$('projectName').value.trim()||'Build '+slot;
+  comparisons[slot]={name,mass:model.mass,ratio:model.ratio,lift:envelope?.lift,current:trim?.a,voltage:trim?.v,power:trim?.p,
+    endurance:trim?model.battery.ah*.8/trim.a*60:null,offset:Number.isFinite(layoutBalance.offset)?layoutBalance.offset*mmPerUnit:null};
+  storeComparison();
+}
+function storeComparison(){
+  try{localStorage.setItem(compareKey,JSON.stringify(comparisons));}catch{}
+  renderComparison();
+}
+$('captureA').onclick=()=>capture('A');
+$('captureB').onclick=()=>capture('B');
+$('clearCompare').onclick=()=>{comparisons={};storeComparison();};
+function renderComparison(){
+  const {A,B}=comparisons;
+  $('compareNameA').textContent=A?.name??'Build A';
+  $('compareNameB').textContent=B?.name??'Build B';
+  $('compareValues').replaceChildren(...comparisonFields.map(([key,label,digits,unit])=>{
+    const row=document.createElement('tr');
+    const both=Number.isFinite(A?.[key])&&Number.isFinite(B?.[key]);
+    const delta=both?B[key]-A[key]:null;
+    for(const [index,value] of [label,display(A?.[key],digits,unit),display(B?.[key],digits,unit),(delta>0?'+':'')+display(delta,digits,unit)].entries()){
+      const cell=document.createElement(index?'td':'th');cell.textContent=value;row.append(cell);
+    }
+    return row;
+  }));
+}
+
+for(const [id,type] of [['benchMotor','motor'],['benchProp','prop']]){
+  $(id).replaceChildren(...catalog[type].variants.map((spec,i)=>new Option(spec.name,i)));
+  $(id).onchange=()=>{benchMessage='';renderBench();};
+}
+const benchKey=()=>$('benchMotor').value+':'+$('benchProp').value;
+let benchMessage='';
+function renderBench(){
+  const curve=state.bench?.[benchKey()];
+  $('removeBench').disabled=!curve;
+  $('benchStatus').textContent=benchMessage||(curve?curve.points.length+' points at '+curve.voltage+' V. '+model.measuredRotors.filter(Boolean).length+' installed rotors use measured curves.':'No measured curve for this pair. Estimates remain active.');
+}
+$('benchFile').onchange=async e=>{
+  const [file]=e.target.files;
+  e.target.value='';
+  if(!file)return;
+  const selected=benchKey(),target=state,voltage=Number($('benchVoltage').value);
+  try{
+    if(file.size>128*1024)throw new Error('Choose a CSV under 128 KB.');
+    const curve=parseBenchCSV(await file.text(),voltage);
+    if(state!==target)return;
+    (state.bench??={})[selected]=curve;
+    benchMessage='Measured curve imported.';
+    update();
+  }catch(error){benchMessage=error.message;renderBench();}
+};
+$('removeBench').onclick=()=>{
+  delete state.bench[benchKey()];
+  benchMessage='Curve removed. This pair uses the built-in estimates.';
+  update();
+};
+
+$('exportProject').onclick=()=>{
+  const name=$('projectName').value.trim()||'BLAZE build';
+  const blob=new Blob([writeProject(name,state,custom??pendingFrame,$('embedSTL').checked)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.download=(name.replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'')||'blaze-build')+'.blaze.json';
+  a.href=url;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+  $('projectStatus').textContent='Build exported.';
+};
+$('importProject').onchange=async e=>{
+  const [file]=e.target.files;
+  e.target.value='';
+  if(!file)return;
+  const status=$('projectStatus'),request=++importSequence;
+  let geometry;
+  try{
+    if(file.size>36*1024*1024)throw new Error('Choose a build file under 36 MB.');
+    const project=readProject(await file.text());
+    if(request!==importSequence)return;
+    let bytes;
+    if(project.frame?.stl){
+      if(!viewport.available)throw new Error('The 3D viewport is required to restore an embedded STL.');
+      bytes=Uint8Array.from(atob(project.frame.stl),c=>c.charCodeAt(0)).buffer;
+      geometry=new STLLoader().parse(bytes);
+      const vertices=geometry.getAttribute('position');
+      if(!vertices||vertices.count<3||!vertices.array.every(Number.isFinite))throw new Error('The embedded STL is invalid.');
+      viewport.setFrame(geometry,project.frame.units,project.frame.axis);
+    }else viewport.setFrame(null);
+    custom?.geometry.dispose();
+    state=project.state;
+    state.wires=upgradeWires(state.wires);
+    const frame=project.frame?{...project.frame,stl:undefined}:null;
+    custom=geometry?{...frame,bytes,geometry}:null;
+    pendingFrame=frame&&!custom?frame:null;
+    syncFrameInputs();
+    $('projectName').value=project.name;
+    view='orbit';benchMessage='';
+    tab='build';setPlacement(false);
+    update();
+    status.textContent=pendingFrame?'Build restored. Use Import STL to attach '+pendingFrame.name+' and restore its mounting positions.':'Build restored.';
+  }catch(error){
+    if(custom?.geometry!==geometry)geometry?.dispose();
+    status.textContent=error.message||'Unable to import build.';
+  }
+};
+function fillList(id,items){
+  $(id).replaceChildren(...items.map(message=>{
+    const li=document.createElement('li');li.textContent=message;return li;
+  }));
+}
+function renderEngineering(){
+  $('embedSTL').disabled=!custom?.bytes;
+  renderComparison();renderBench();
+  const notes=[];
+  if(pendingFrame)notes.push('Attach the original STL before testing this build.');
+  if(!model.assembly)notes.push('Install the battery, controller, ESC, motors and propellers first.');
+  if(model.assembly&&!model.wired)notes.push('Complete the required wiring and remove unexpected leads.');
+  if(model.measuredRotors.some(Boolean))notes.push(model.measuredRotors.filter(Boolean).length+' of '+state.n+' rotors use measured thrust and current.');
+  if(model.assembly&&!model.voltageOK){
+    const cells=model.battery.v/3.7;
+    const incompatible=state.motor.map((_,i)=>part(state,'motor',i)?.max<cells?'M'+(i+1):null).filter(Boolean);
+    if(incompatible.length)notes.push(incompatible.join(', ')+' exceed their supported battery cell count.');
+    if(model.esc.max<cells)notes.push('Battery cell count exceeds the ESC rating.');
+  }
+  if(model.peak?.limited)notes.push(...model.peak.requested.reasons);
+  if(model.peak){
+    const draw=model.peak.requested;
+    notes.push('Full-throttle demand: '+display(draw.a,1,' A')+' total, '+display(draw.v,2,' V')+' loaded. Highest draw: M'+draw.limitMotor+' at '+display(draw.amps,1,' A')+'.');
+  }
+  if(model.ratio!=null&&model.ratio<=1)notes.push('Total thrust is below the build weight.');
+  if(layoutBalance.rotorAligned===false)notes.push('Rotate or remount the sideways rotor so its thrust axis points up.');
+  if(model.ratio>1&&envelope&&!canHold())notes.push('Total thrust is available, but a level hover exceeds the balanced lift limit. Move the heaviest component toward the rotor center.');
+  if(Number.isFinite(layoutBalance.offset))notes.push('The center of mass is '+display(layoutBalance.offset*mmPerUnit,1,' mm')+' from the rotor center.');
+  fillList('diagnosticList',notes.length?notes:['No electrical or hover checks are available yet.']);
+  const names=new Map(placementOptions(state).map(({id,label})=>[id,label]));
+  const warnings=layoutBalance.clearance?.map(({ids,type})=>{
+    const [a,b]=ids.map(id=>names.get(id)??id);
+    if(type==='frame')return a+' propeller sweep intersects the frame.';
+    if(type==='propellers')return a+' and '+b+' propeller sweeps may overlap.';
+    if(type==='propPart')return a+' propeller sweep may contact '+b+'.';
+    return a+' and '+b+' may overlap.';
+  });
+  fillList('clearanceList',warnings?.length?warnings:[!warnings?'3D clearance is unavailable.':custom&&!allMounted()?'Place all components to complete the clearance check.':'No overlaps detected among placed parts.']);
+}
 
 let last=performance.now(),tick=0,reading=null;
 function animate(now){

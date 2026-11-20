@@ -25,9 +25,22 @@ export const busConflict=s=>{
 };
 
 export const wireTypes={
-  power:{color:'#ff765d',name:'Power'},ground:{color:'#bdc7d2',name:'Ground'},
+  power:{color:'#ff765d',name:'VCC / positive'},ground:{color:'#bdc7d2',name:'Ground'},
   signal:{color:'#ffcd75',name:'Control / PWM'},phase:{color:'#72b5ff',name:'Motor phase'},
-  rc:{color:'#ffae64',name:'SBUS'},uart:{color:'#c7a0ff',name:'UART'},
+  rc:{color:'#ffae64',name:'SBUS'},tx:{color:'#e6b3ff',name:'UART TX'},rx:{color:'#a6abff',name:'UART RX'},
+  series:{color:'#ff9858',name:'Series jumper'},
   i2c:{color:'#72dcb0',name:'I²C'},can:{color:'#55e1e8',name:'CAN'},
   invalid:{color:'#ff6391',name:'Unexpected'}
 };
+
+export function wireRole(link){
+  if(link.kind!=='uart')return link.kind;
+  const controller=link.a.startsWith('P_')?link.a:link.b;
+  return controller.endsWith('_TX')?'tx':'rx';
+}
+
+export function wirePalette(overrides){
+  return Object.fromEntries(Object.entries(wireTypes).map(([key,{color}])=>[
+    key,/^#[0-9a-f]{6}$/i.test(overrides?.[key]??'')?overrides[key]:color
+  ]));
+}

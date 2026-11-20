@@ -1,12 +1,12 @@
-import {catalog,empty} from './model.mjs';
-import {peripherals} from './peripherals.mjs';
+import {catalog,empty,maxBatteryPacks} from './model.mjs';
+import {peripherals,wireTypes,wirePalette} from './peripherals.mjs';
 import {parseBenchCSV} from './bench.mjs';
 
 const maxSTL=25*1024*1024;
 const validNumber=(v,min,max)=>Number.isFinite(v)&&v>=min&&v<=max;
 const label=(v,fallback)=>typeof v==='string'&&v.trim()?v.trim().slice(0,120):fallback;
 function mounts(value){
-  const known=['BAT','ESC','FC','PM','LOAD',...Object.keys(peripherals),'M1','M2','M3','M4','M5','M6'];
+  const known=['BAT','BAT2','BAT3','BAT4','BAT5','BAT6','ESC','FC','PM','LOAD',...Object.keys(peripherals),'M1','M2','M3','M4','M5','M6'];
   const output={};
   for(const id of known){
     const mount=value?.[id];
@@ -27,6 +27,8 @@ export function readProject(text){
   const variant=(type,value)=>Number.isInteger(value)&&catalog[type].variants[value]?value:null;
   for(const type of ['battery','controller','esc'])state[type]=variant(type,raw[type]);
   for(const type of ['motor','prop'])state[type]=state[type].map((_,i)=>variant(type,raw[type]?.[i]));
+  state.extraBatteries=state.battery!=null&&Array.isArray(raw.extraBatteries)?raw.extraBatteries.slice(0,maxBatteryPacks-1).map(i=>variant('battery',i)).filter(i=>i!=null):[];
+  if(raw.wireColors&&typeof raw.wireColors==='object')state.wireColors=Object.fromEntries(Object.entries(wirePalette(raw.wireColors)).filter(([role,color])=>color!==wireTypes[role].color));
   state.payload=validNumber(raw.payload,0,5000)?raw.payload:0;
   state.peripherals=[...new Set(Array.isArray(raw.peripherals)?raw.peripherals.filter(id=>typeof id==='string'&&Object.hasOwn(peripherals,id)):[])];
   state.wires=Array.isArray(raw.wires)?[...new Set(raw.wires.slice(0,300).filter(w=>typeof w==='string'&&w.length<=100&&w.split('|').length===2))]:[];

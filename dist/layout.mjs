@@ -1,5 +1,5 @@
 import {peripherals,installedPeripherals} from './peripherals.mjs';
-import {part} from './model.mjs';
+import {part,batteryPacks} from './model.mjs';
 
 export const mmPerUnit=40;
 
@@ -17,10 +17,12 @@ export function balance(entries,frameMass,frameY){
 
 export function placementOptions(s){
   const options=[];
-  for(const [id,type] of [['BAT','battery'],['ESC','esc'],['FC','controller']]){
+  for(const [id,type] of [['ESC','esc'],['FC','controller']]){
     const spec=part(s,type);
     if(spec)options.push({id,label:spec.name,mass:spec.mass-(id==='FC'&&s.controller===2?15:0)});
   }
+  const packs=batteryPacks(s);
+  options.unshift(...packs.map(({id,spec},i)=>({id,label:(packs.length>1?'Pack '+(i+1)+' · ':'')+spec.name,mass:spec.mass})));
   if(s.controller===2)options.push({id:'PM',label:'Pixhawk power module',mass:15});
   for(let i=0;i<s.n;i++){
     const motor=part(s,'motor',i),prop=part(s,'prop',i);

@@ -1,9 +1,9 @@
 import {checkClearance} from './clearance.mjs';
 import * as T from './three.js';
 import {createCanvasView} from './canvas-view.mjs';
-import {circuit,phases} from './model.mjs';
+import {circuit,phases,batteryPacks} from './model.mjs';
 import {balance,mmPerUnit,placementOptions} from './layout.mjs';
-import {peripherals,installedPeripherals,wireTypes} from './peripherals.mjs';
+import {peripherals,installedPeripherals,wireTypes,wireRole,wirePalette} from './peripherals.mjs';
 
 export function createScene(host){
   let renderer,software=false;
@@ -41,6 +41,8 @@ export function createScene(host){
   pattern.repeat.set(5,4);pattern.anisotropy=renderer.capabilities.getMaxAnisotropy();
   pattern.colorSpace=T.SRGBColorSpace;
   const carbon=new T.MeshStandardMaterial({map:pattern,color:0xb2b8c3,roughness:.49,metalness:.49});
+  const routedColors={};
+  let lastPalette={};
   const shades=Object.fromEntries(Object.entries(wireTypes).map(([kind,{color}])=>[kind,mat(color)]));
   const spinning=[];
   const cadMaterial=mat(0x7e9ab1,.38,.51);
@@ -60,7 +62,7 @@ export function createScene(host){
     }
     const center=activeCenters[id];
     selectionRing.visible=Boolean(center&&callback);
-    if(center){selectionRing.position.copy(center);selectionRing.position.y+=id==='BAT'?.23:.18;}
+    if(center){selectionRing.position.copy(center);selectionRing.position.y+=id.startsWith('BAT')?.23:.18;}
   }
   let frameGeometry=null,frameMesh=null,picker=null,fit=13.8,frameHeight=0;
 
@@ -131,6 +133,13 @@ export function createScene(host){
     drone.clear();spinning.length=0;
     drone.position.set(0,0,0);drone.rotation.set(0,0,0);
     const propellers=[];
+    const palette=wirePalette(s.wireColors);
+    for(const [role,color] of Object.entries(palette)){
+      if(lastPalette[role]===color)continue;
+      routedColors[role]?.dispose();
+      routedColors[role]=new T.MeshBasicMaterial({color,toneMapped:false});
+    }
+    lastPalette=palette;
     const ports={}, centers={}, mountNormals={};
     const up=new T.Vector3(0,1,0);
     surfaces=[];selectable=[];activeCenters=centers;selectionRing=null;
@@ -295,23 +304,26 @@ export function createScene(host){
       Object.assign(ports,{'PM.IN+':new T.Vector3(.52,deckY+.116,.61),'PM.IN−':new T.Vector3(.61,deckY+.116,.61),'PM.5V':new T.Vector3(.52,deckY+.116,.23),'PM.GND':new T.Vector3(.61,deckY+.116,.23)});
       movePart('PM',start,[.55,deckY,.42],[.55,deckY+.08,.42],['PM.']);
     }
-    if(s.battery!=null){
+    batteryPacks(s).forEach(({id,spec},i)=>{
       const start=drone.children.length;
-      const x=-.17,z=.51;
+      const arm=mounts[(i-1+mounts.length)%mounts.length];
+      const x=i?arm[0]*.55:-.17,z=i?arm[1]*.55:.51;
+      const base=i?.455:deckY;
       const pad=.046;
-      const h=deckY+pad+.17;
-      box(drone,.78,pad,1.00,black,x,deckY+pad/2,z);
-      box(drone,.74,.34,.96,black,x,h,z);
-      box(drone,.746,.321,.60,orange,x,h,z);
+      const height=.34*Math.cbrt(spec.mass/220);
+      const h=base+pad+height/2;
+      box(drone,.78,pad,1.00,black,x,base+pad/2,z);
+      box(drone,.74,height,.96,black,x,h,z);
+      box(drone,.746,height*.94,.60,orange,x,h,z);
       for(const strapZ of [z-.23,z+.23]){
-        box(drone,.80,.044,.15,carbon,x,h+.175,strapZ);
-        for(const dx of [-.389,.389])box(drone,.039,pad+.36,.15,carbon,x+dx,deckY+(pad+.36)/2,strapZ);
+        box(drone,.80,.044,.15,carbon,x,h+height/2+.005,strapZ);
+        for(const dx of [-.389,.389])box(drone,.039,pad+height+.02,.15,carbon,x+dx,base+(pad+height+.02)/2,strapZ);
       }
-      box(drone,.18,.14,.16,orange,-.35,h,.99);
-      ports['BAT.+']=new T.Vector3(-.40,h,1.07);
-      ports['BAT.−']=new T.Vector3(-.30,h,1.07);
-      movePart('BAT',start,[x,deckY,z],[x,h,z],['BAT.']);
-    }
+      box(drone,.18,.14,.16,orange,x-.18,h,z+.48);
+      ports[id+'.+']=new T.Vector3(x-.23,h,z+.56);
+      ports[id+'.−']=new T.Vector3(x-.13,h,z+.56);
+      movePart(id,start,[x,base,z],[x,h,z],[id+'.']);
+    });
     const {links,groups}=circuit(s);
     const accessories=installedPeripherals(s);
     accessories.forEach((id,i)=>{
@@ -323,7 +335,7 @@ export function createScene(host){
       const item=peripherals[id];
       const signalKind=item.pins.find(pin=>!['power','ground'].includes(pin[2]))?.[2]??'signal';
       box(drone,.31,.10,.34,chip,x,h,z);
-      box(drone,.27,.04,.29,shades[signalKind],x,h+.07,z);
+      box(drone,.27,.04,.29,shades[signalKind==='uart'?'tx':signalKind],x,h+.07,z);
       if(id==='GPS'||id==='GPSCAN')cyl(drone,.09,.044,metal,x,h+.105,z,16);
       if(id==='RC'||id==='RADIO'||id==='ADSB')cyl(drone,.018,.17,black,x+.12,h+.11,z-.12,8);
       item.pins.forEach(([pin],j)=>{
@@ -367,7 +379,7 @@ export function createScene(host){
     for(const link of routed){
       const a=ports[link.a], b=ports[link.b];
       const curve=new T.CubicBezierCurve3(a,a.clone().add(new T.Vector3(0,.16,0)),b.clone().add(new T.Vector3(0,.13,0)),b);
-      mesh(drone,new T.TubeGeometry(curve,20,link.kind==='power'?.021:.013,6,false),shades[link.kind],0,0,0);
+      mesh(drone,new T.TubeGeometry(curve,20,['power','series'].includes(link.kind)?.023:.016,6,false),routedColors[wireRole(link)],0,0,0);
     }
     drone.updateMatrixWorld(true);
     const bounds=new Map();

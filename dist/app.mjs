@@ -1,7 +1,7 @@
 import {parseBenchCSV} from './bench.mjs';
 import {readProject,writeProject} from './project.mjs';
-import {peripherals,installedPeripherals,busConflict,wireTypes} from './peripherals.mjs';
-import {catalog,singleton,empty,part,circuit,edge,analyze,upgradeWires} from './model.mjs';
+import {peripherals,installedPeripherals,busConflict,wireTypes,wireRole,wirePalette} from './peripherals.mjs';
+import {catalog,singleton,empty,part,circuit,edge,analyze,upgradeWires,batteryPacks,maxBatteryPacks,firstThreeS} from './model.mjs';
 import {createScene} from './scene.mjs';
 import {STLLoader} from './STLLoader.mjs';
 import {balance,mmPerUnit,placementOptions} from './layout.mjs';
@@ -63,7 +63,7 @@ function renderCatalog(){
     const controls=slots.filter(i=>part(state,type,i)).map(i=>{
       const selected=i==null?state[type]:state[type][i];
       const tag=i==null?'':('M'+(i+1)+' ');
-      return '<div class="part-tools"><select aria-label="'+tag+spec.name+' model" data-model="'+type+'" data-slot="'+(i??-1)+'">'+spec.variants.map((v,j)=>'<option value="'+j+'" '+(selected===j?'selected':'')+'>'+tag+v.name+'</option>').join('')+'</select><button aria-label="Remove '+tag+spec.name+'" data-remove="'+type+'" data-slot="'+(i??-1)+'">×</button></div>';
+      return '<div class="part-tools"><select aria-label="'+tag+spec.name+' model" data-model="'+type+'" data-slot="'+(i??-1)+'">'+spec.variants.map((v,j)=>'<option value="'+j+'" '+(selected===j?'selected':'')+'>'+tag+v.name+'</option>').join('')+'</select><button aria-label="Remove '+tag+spec.name+'" data-remove="'+type+'" data-slot="'+(i??-1)+'" '+(type==='battery'&&batteryPacks(state).length>1?'disabled title="Remove extra packs first"':'')+'>×</button></div>';
     }).join('');
     return '<div class="part"><span class="part-icon" aria-hidden="true">'+spec.icon+'</span><div><div class="part-name">'+spec.name+'</div><span class="part-spec">'+n+' / '+(multi?state.n:1)+' installed</span></div><button data-add="'+type+'" aria-label="Add '+spec.name+'" '+((multi?next<0:n===1)?'disabled':'')+'>+</button>'+controls+'</div>';
   }).join('');
@@ -81,6 +81,35 @@ $('peripheralCatalog').onclick=e=>{
   state.peripherals=ids.includes(id)?ids.filter(item=>item!==id):[...ids,id];
   update();
   $('peripheralCatalog').querySelector('[data-peripheral="'+id+'"]')?.focus({preventScroll:true});
+};
+function renderSeries(){
+  const packs=batteryPacks(state);
+  $('batterySeries').hidden=!packs.length;
+  const battery=model.battery;
+  $('seriesStatus').textContent=battery?packs.length+' '+(packs.length===1?'pack':'packs in series')+' · '+battery.cells+'S · '+battery.v.toFixed(1)+' V · '+Math.round(battery.ah*1000)+' mAh':'';
+  $('seriesPacks').innerHTML=packs.slice(1).map(({spec},i)=>'<label>Pack '+(i+2)+'<select data-pack="'+i+'">'+catalog.battery.variants.map((choice,j)=>'<option value="'+j+'" '+(choice===spec?'selected':'')+'>'+choice.name+'</option>').join('')+'</select></label>').join('');
+  $('addPack').disabled=packs.length>=maxBatteryPacks;
+  $('removePack').hidden=packs.length<2;
+}
+function changeSeries(action){
+  const before=circuit(state).links;
+  action();
+  const after=new Set(circuit(state).links.map(link=>link.key));
+  const retired=new Set(before.filter(link=>!after.has(link.key)).map(link=>link.key));
+  state.wires=state.wires.filter(wire=>!retired.has(wire));
+  update();
+}
+$('addPack').onclick=()=>changeSeries(()=>{(state.extraBatteries??=[]).push(firstThreeS);});
+$('removePack').onclick=()=>changeSeries(()=>{
+  const id='BAT'+(state.extraBatteries.length+1);
+  if(state.mounts)delete state.mounts[id];
+  if(custom)delete custom.positions[id];
+  state.extraBatteries.pop();
+});
+$('seriesPacks').onchange=e=>{
+  if(e.target.dataset.pack==null)return;
+  state.extraBatteries[Number(e.target.dataset.pack)]=Number(e.target.value);
+  update();
 };
 function render(){
   document.querySelectorAll('[data-tab]').forEach(button=>{
@@ -100,6 +129,7 @@ function render(){
   $('payload').value=state.payload;
   $('wireCount').textContent=state.wires.length;
   renderCatalog();
+  renderSeries();
   $('assemblyTitle').textContent=model.assembly?'Assembly complete':'Start with the essentials';
   const pendingProps=state.prop.some((prop,i)=>prop!=null&&state.motor[i]==null);
   $('assemblyHint').textContent=pendingProps?'Selected propellers appear in 3D when their motors are installed.':model.assembly?'Connect battery power, controller signals and motor phases in Wiring.':'Add a battery, flight controller, ESC and a motor with propeller at each mount.';
@@ -133,7 +163,17 @@ function render(){
   renderEngineering();
 }
 const board=$('wiringBoard'), terminals=$('terminals'), wirePaths=$('wirePaths');
-const paint=Object.fromEntries(Object.entries(wireTypes).map(([kind,{color}])=>[kind,color]));
+$('paletteFields').onchange=e=>{
+  const role=e.target.dataset.role;
+  if(!Object.hasOwn(wireTypes,role))return;
+  (state.wireColors??={})[role]=e.target.value;
+  update();
+};
+$('examplePalette').onclick=()=>{
+  state.wireColors={...state.wireColors,power:'#ff0000',ground:'#000000',tx:'#ffffff',rx:'#00aa44'};
+  update();
+};
+$('resetPalette').onclick=()=>{delete state.wireColors;update();};
 function drawWires(){
   if(tab!=='wire')return;
   const frame=board.getBoundingClientRect();
@@ -141,13 +181,14 @@ function drawWires(){
     const rect=button.querySelector('i').getBoundingClientRect();
     return [button.dataset.pin,{x:rect.x+rect.width/2-frame.x,y:rect.y+rect.height/2-frame.y}];
   }));
-  const kinds=new Map(circuit(state).links.map(l=>[l.key,l.kind]));
+  const paint=wirePalette(state.wireColors);
+  const kinds=new Map(circuit(state).links.map(l=>[l.key,wireRole(l)]));
   wirePaths.replaceChildren();
   function path(a,b,color,preview=false){
     if(!a||!b)return;
     const distance=Math.hypot(a.x-b.x,a.y-b.y), curve=Math.max(14,Math.min(78,distance*.24));
     const d='M '+a.x+' '+a.y+' C '+a.x+' '+(a.y+curve)+' '+b.x+' '+(b.y+curve)+' '+b.x+' '+b.y;
-    for(const [width,stroke] of [[5.5,'#101619'],[2.5,color]]){
+    for(const [width,stroke] of [[5.5,color==='#000000'?'#8b98a4':'#101619'],[2.5,color]]){
       const line=document.createElementNS('http://www.w3.org/2000/svg','path');
       line.setAttribute('d',d);
       line.setAttribute('stroke',stroke);
@@ -168,17 +209,20 @@ function drawWires(){
 }
 function renderWiring(){
   const {groups,links,pinKinds}=circuit(state);
-  const kinds=new Map(links.map(l=>[l.key,l.kind]));
+  const paint=wirePalette(state.wireColors);
+  const kinds=new Map(links.map(l=>[l.key,wireRole(l)]));
   const connected=new Set(state.wires.flatMap(w=>w.split('|')));
   $('autoWire').disabled=!links.length;
   board.hidden=!groups.length;
-  $('wireLegend').innerHTML=Object.entries(wireTypes).map(([kind,{color,name}])=>'<span style="--wire:'+color+'" data-kind="'+kind+'">'+name+'</span>').join('');
+  $('wireLegend').innerHTML=Object.entries(wireTypes).map(([kind,{name}])=>'<span style="--wire:'+paint[kind]+'" data-kind="'+kind+'">'+name+'</span>').join('');
+  $('paletteFields').innerHTML=Object.entries(wireTypes).map(([role,{name}])=>'<label>'+name+' <input type="color" data-role="'+role+'" value="'+paint[role]+'"></label>').join('');
   terminals.innerHTML=groups.map(({id,label,pins,type,protocol})=>{
     const modelMark={battery:'LiPo',pixhawk:'PIXHAWK',controller:'FC',esc:'ESC',motor:'BLDC',module:'5 V',accessory:'I/O',port:'FC'}[type];
     const displayPin=p=>type==='pixhawk'&&p.startsWith('OUT')?'MAIN '+p.slice(3):p;
     return '<div class="terminal-group hardware-'+type+'"><div class="board-heading"><div class="board-mark" aria-hidden="true">'+modelMark+'</div><h4>'+label+(protocol?'<small>'+protocol+'</small>':'')+'</h4></div><div class="pin-bank">'+pins.map(p=>{
       const pin=id+'.'+p, name=displayPin(p);
-      const kind=pinKinds.get(pin)??peripherals[id]?.pins.find(([key])=>key===p)?.[2];
+      const fallback=peripherals[id]?.pins.find(([key])=>key===p)?.[2];
+      const kind=pinKinds.get(pin)??(fallback==='uart'?(p==='RX'?'tx':'rx'):fallback);
       const color=paint[kind]??'#a3aab3';
       return '<button style="--wire:'+color+'" title="'+(wireTypes[kind]?.name??'Terminal')+'" data-pin="'+pin+'"  class="'+(picked===pin?'selected':connected.has(pin)?'connected':'')+'" aria-label="'+label+' '+name+'" aria-pressed="'+(picked===pin)+'"><i></i>'+name+'</button>';
     }).join('')+'</div></div>';
@@ -603,11 +647,12 @@ function renderEngineering(){
   if(model.assembly&&!model.wired)notes.push('Complete the required wiring and remove unexpected leads.');
   if(model.measuredRotors.some(Boolean))notes.push(model.measuredRotors.filter(Boolean).length+' of '+state.n+' rotors use measured thrust and current.');
   if(model.assembly&&!model.voltageOK){
-    const cells=model.battery.v/3.7;
+    const cells=model.battery.cells;
     const incompatible=state.motor.map((_,i)=>part(state,'motor',i)?.max<cells?'M'+(i+1):null).filter(Boolean);
     if(incompatible.length)notes.push(incompatible.join(', ')+' exceed their supported battery cell count.');
     if(model.esc.max<cells)notes.push('Battery cell count exceeds the ESC rating.');
   }
+  if(model.battery?.mismatch)notes.push('Series packs have different capacities. Usable capacity and current are limited by the weakest pack.');
   if(model.peak?.limited)notes.push(...model.peak.requested.reasons);
   if(model.peak){
     const draw=model.peak.requested;

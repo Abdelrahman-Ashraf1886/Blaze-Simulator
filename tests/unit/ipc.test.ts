@@ -72,8 +72,10 @@ describe('IPC handlers', () => {
   it('has a handler for every request channel', () => {
     // The push channel is main → renderer; the sync save is bound with ipcMain.on to the same handler;
     // the import and the image save need native file dialogs, so main binds them
-    // (their logic is tested in assets.test.ts and screenshot.test.ts).
+    // (their logic is tested in assets.test.ts and screenshot.test.ts); the drop test needs the
+    // engine supervisor, so main binds it (drop-test.ts, tested in environment and supervisor tests).
     const mainOnly: string[] = [
+      Channels.engineDropTest,
       Channels.engineStatusChanged,
       Channels.assemblySaveSync,
       Channels.assetsImport,

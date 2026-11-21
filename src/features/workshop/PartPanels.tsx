@@ -64,6 +64,7 @@ import {
 } from './links'
 
 import { componentIndex, useComponentIndex } from './component-index'
+import { addPlaced, editSize } from './place-actions'
 export { useComponentIndex }
 const shapeOfFor = (components: ComponentIndex) => (p: AssemblyPart) => effectiveShape(p, components)
 import { InertiaEditor } from './InertiaEditor'
@@ -110,24 +111,25 @@ function targetLabel(geo: FrameGeometry, doc: AssemblyDocument, t: AttachTarget)
 /** MIME type of a part kind dragged from the library onto the viewport. */
 export const PART_DRAG_TYPE = 'application/x-blaze-part-kind'
 
-/** Adds a new part of `kind` to `target` (one undo step) and selects it. */
-export function addLibraryPart(kind: PartKind, target: AttachTarget, frameTop: number) {
-  let created: AssemblyPart | null = null
-  edit(`Add ${PART_LABELS[kind].toLowerCase()}`, (d) => {
-    const index = componentIndex(useComponents.getState().components)
-    // Landing gear belongs under the frame: with nothing selected it goes on the bottom plate.
-    const to: AttachTarget = kind === 'landing-gear' && target.kind === 'none' ? { kind: 'mount', id: 'plate-bottom' } : target
-    const r = addPart(d, kind, to, frameTop, undefined, useAssets.getState().assets, shapeOfFor(index))
-    created = r.part
-    return r.doc
+/**
+ * Adds a new part of `kind` to `target`, placed clear of the other parts on what it rests
+ * on (placement.ts), as one undo step, and selects it. If there is no free spot, nothing is
+ * added and the reason is shown under "Add part".
+ */
+export function addLibraryPart(kind: PartKind, target: AttachTarget, frameTop: number, geo: FrameGeometry) {
+  // Landing gear belongs under the frame: with nothing selected it goes on the bottom plate.
+  const to: AttachTarget = kind === 'landing-gear' && target.kind === 'none' ? { kind: 'mount', id: 'plate-bottom' } : target
+  addPlaced(`Add ${PART_LABELS[kind].toLowerCase()}`, geo, (d, index, assets) => {
+    const r = addPart(d, kind, to, frameTop, undefined, assets, shapeOfFor(index))
+    return { doc: r.doc, roots: [r.part.id] }
   })
-  if (created) useWorkshopView.getState().selectPart((created as AssemblyPart).id)
 }
 
 export function PartLibrary({ doc, geo, frameTop }: { doc: AssemblyDocument; geo: FrameGeometry; frameTop: number }) {
   const selection = useWorkshopView((s) => s.selection)
   const target = targetFor(selection)
-  const add = (kind: PartKind) => addLibraryPart(kind, target, frameTop)
+  const add = (kind: PartKind) => addLibraryPart(kind, target, frameTop, geo)
+  const note = useWorkshopView((s) => s.placementNote)
   return (
     <div data-testid="part-library">
       <div className="grid grid-cols-2 gap-1 border-t border-line pt-2">
@@ -157,7 +159,12 @@ export function PartLibrary({ doc, geo, frameTop }: { doc: AssemblyDocument; geo
           )
         })}
       </div>
-      <ModelImport target={target} frameTop={frameTop} />
+      {note && (
+        <p role="alert" data-testid="placement-error" className="mt-1.5 text-[12px] leading-relaxed text-fault">
+          {note}
+        </p>
+      )}
+      <ModelImport target={target} frameTop={frameTop} geo={geo} />
       <p className="mt-2 text-[12px] text-fg-subtle" data-testid="add-target">
         Adds to {targetLabel(geo, doc, target)}, or drag onto a mount. New parts start with a placeholder shape and no mass.
       </p>
@@ -335,7 +342,7 @@ export function PartInspector({ doc, geo }: { doc: AssemblyDocument; geo: FrameG
             )}
           </select>
         </Row>
-        <ComponentRow part={part} linked={linked} options={linkableComponents(part.kind, library)} />
+        <ComponentRow part={part} linked={linked} options={linkableComponents(part.kind, library)} geo={geo} />
       </div>
 
       <SubHeading>Shape</SubHeading>
@@ -357,7 +364,7 @@ export function PartInspector({ doc, geo }: { doc: AssemblyDocument; geo: FrameG
                 onChange={(t) => set(`Change ${part.name} shape`, { shape: convertShape(part.shape, t) })}
               />
             </Row>
-            <ShapeFields part={part} />
+            <ShapeFields part={part} geo={geo} />
           </>
         )}
         <Row label="Size X × Y × Z">
@@ -444,13 +451,10 @@ export function PartInspector({ doc, geo }: { doc: AssemblyDocument; geo: FrameG
         <Button
           size="sm"
           onClick={() => {
-            let rootId: string | null = null
-            edit(`Duplicate ${part.name}`, (d) => {
+            addPlaced(`Duplicate ${part.name}`, geo, (d) => {
               const r = duplicatePart(d, id)
-              rootId = r.rootId
-              return r.doc
+              return { doc: r.doc, roots: r.rootId ? [r.rootId] : [] }
             })
-            if (rootId) useWorkshopView.getState().selectPart(rootId)
           }}
           title="Duplicate (Ctrl+D)"
         >
@@ -483,7 +487,12 @@ function CopyToMounts({ doc, geo, part }: { doc: AssemblyDocument; geo: FrameGeo
         data-testid="copy-to-mounts"
         disabled={free === 0}
         onClick={() =>
-          edit(`Copy ${part.name} to ${free} motor mount${free === 1 ? '' : 's'}`, (d) => copyToMotorMounts(d, geo, part.id).doc)
+          addPlaced(`Copy ${part.name} to ${free} motor mount${free === 1 ? '' : 's'}`, geo, (d) => {
+            const before = new Set(d.parts.map((p) => p.id))
+            const next = copyToMotorMounts(d, geo, part.id).doc
+            // Each copy must fit on its mount; if one does not, nothing is copied.
+            return { doc: next, roots: next.parts.filter((p) => !before.has(p.id) && p.parentId === null).map((p) => p.id) }
+          })
         }
       >
         <Copy /> {free === 0 ? 'Every motor mount has one' : `Copy to ${free} more motor mount${free === 1 ? '' : 's'}`}
@@ -498,7 +507,7 @@ function CopyToMounts({ doc, geo, part }: { doc: AssemblyDocument; geo: FrameGeo
 }
 
 /** Link to a library component of a fitting category, or unlink. Undoable like any edit. */
-function ComponentRow({ part, linked, options }: { part: AssemblyPart; linked: Component | null; options: Component[] }) {
+function ComponentRow({ part, linked, options, geo }: { part: AssemblyPart; linked: Component | null; options: Component[]; geo: FrameGeometry }) {
   const missing = !!part.componentId && !linked
   const groups = KIND_CATEGORIES[part.kind]
     .map((cat) => ({ cat, items: options.filter((c) => c.category === cat) }))
@@ -516,9 +525,8 @@ function ComponentRow({ part, linked, options }: { part: AssemblyPart; linked: C
           onChange={(e) => {
             const v = e.target.value
             const target = options.find((c) => c.id === v)
-            edit(v ? `Link ${part.name} to ${target?.name ?? 'component'}` : `Unlink ${part.name}`, (d) =>
-              updatePart(d, part.id, { componentId: v || null }),
-            )
+            // The component's stated size replaces the envelope: keep the part on its support.
+            editSize(v ? `Link ${part.name} to ${target?.name ?? 'component'}` : `Unlink ${part.name}`, geo, part, { componentId: v || null })
           }}
           className="h-7 w-[150px] min-w-0 rounded-[var(--radius-sm)] border border-line-strong bg-chrome px-1.5 text-[12.5px] text-fg"
         >
@@ -646,9 +654,9 @@ function convertShape(shape: PartShape, to: string): PartShape {
   return shape
 }
 
-function ShapeFields({ part }: { part: AssemblyPart }) {
+function ShapeFields({ part, geo }: { part: AssemblyPart; geo: FrameGeometry }) {
   const s = part.shape
-  const set = (shape: PartShape) => edit(`Resize ${part.name}`, (d) => updatePart(d, part.id, { shape }))
+  const set = (shape: PartShape) => editSize(`Resize ${part.name}`, geo, part, { shape })
   if (s.type === 'box') {
     return (
       <>

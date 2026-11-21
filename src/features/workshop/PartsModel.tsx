@@ -10,6 +10,7 @@ import { placeModel } from '@/three/model-units'
 import type { Vec3 } from '@/three/views'
 import { attach, halfHeight, mountFrames, resizable, scaledShape, shapeExtent, updatePart } from './assembly-ops'
 import { useAssembly } from './assembly-store'
+import { editSize } from './place-actions'
 import { useAssets } from './asset-store'
 import { NO_CAPTURE } from './capture'
 import { mountPoints, snapMount } from './inspection'
@@ -151,7 +152,7 @@ export function PartsModel({
               target.scale.set(1, 1, 1)
               const shape = scaledShape(selectedPart.shape, [Math.abs(s.x), Math.abs(s.y), Math.abs(s.z)])
               if (shape && JSON.stringify(shape) !== JSON.stringify(selectedPart.shape)) {
-                useAssembly.getState().edit(`Resize ${selectedPart.name}`, (d) => updatePart(d, selectedPart.id, { shape }))
+                editSize(`Resize ${selectedPart.name}`, geo, selectedPart, { shape })
               }
               return
             }

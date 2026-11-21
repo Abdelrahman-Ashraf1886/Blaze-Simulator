@@ -3,7 +3,6 @@ import { useState, type ReactNode } from 'react'
 import {
   MODEL_UNITS,
   PART_KINDS,
-  type AssemblyPart,
   type AssetInfo,
   type ModelUnits,
   type PartKind,
@@ -14,11 +13,11 @@ import { Dialog, DialogClose, DialogContent } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { placeModel, UNIT_LABELS } from '@/three/model-units'
 import { getApi, unwrap } from '@/services/api'
+import type { FrameGeometry } from '@/three/frame-geometry'
 import { PART_LABELS, addModelPart, type AttachTarget } from './assembly-ops'
-import { useAssembly } from './assembly-store'
+import { addPlaced } from './place-actions'
 import { useAssets } from './asset-store'
 import { toMm } from './frame-values'
-import { useWorkshopView } from './view-store'
 
 export const formatSize = (extent: readonly number[]) => extent.map((v) => toMm(v)).join(' × ')
 
@@ -34,7 +33,7 @@ function scaleHint(extent: readonly number[]): string | null {
  * asks how to interpret it (units, up axis) with a live size preview, and adds
  * a part that displays it. The import is one undoable edit.
  */
-export function ModelImport({ target, frameTop }: { target: AttachTarget; frameTop: number }) {
+export function ModelImport({ target, frameTop, geo }: { target: AttachTarget; frameTop: number; geo: FrameGeometry }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [asset, setAsset] = useState<AssetInfo | null>(null)
@@ -71,13 +70,11 @@ export function ModelImport({ target, frameTop }: { target: AttachTarget; frameT
           asset={asset}
           onClose={() => setAsset(null)}
           onImport={(opts) => {
-            let created: AssemblyPart | null = null
-            useAssembly.getState().edit(`Import ${asset.filename}`, (d) => {
-              const r = addModelPart(d, asset, opts, target, frameTop, useAssets.getState().assets)
-              created = r.part
-              return r.doc
+            // Placed clear of the other parts like any new part; nothing is added if it does not fit.
+            addPlaced(`Import ${asset.filename}`, geo, (d, _components, assets) => {
+              const r = addModelPart(d, asset, opts, target, frameTop, assets)
+              return { doc: r.doc, roots: [r.part.id] }
             })
-            if (created) useWorkshopView.getState().selectPart((created as AssemblyPart).id)
             setAsset(null)
           }}
         />

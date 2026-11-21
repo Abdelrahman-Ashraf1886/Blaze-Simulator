@@ -58,6 +58,7 @@ import { useComponents } from '@/stores/components'
 import { ComDropLine, ComMarker, MassPanel } from './MassPanel'
 import { CollisionShapes, CollisionStatus } from './CollisionView'
 import { InterferencePanel } from './InterferencePanel'
+import { addPlaced } from './place-actions'
 import { EnvironmentPanel } from './EnvironmentPanel'
 import { ChecksPanel, ChecksStatus } from './ChecksPanel'
 import { PartsModel } from './PartsModel'
@@ -241,7 +242,7 @@ function Workshop({ project }: { project: Project }) {
         const a = useAssembly.getState()
         if (k === 'z' && !e.shiftKey) a.undo()
         else if (k === 'y' || (k === 'z' && e.shiftKey)) a.redo()
-        else if (k === 'd') duplicateSelected()
+        else if (k === 'd' && geo) duplicateSelected(geo)
         else return
         e.preventDefault()
         return
@@ -266,7 +267,7 @@ function Workshop({ project }: { project: Project }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [geo])
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="workshop">
@@ -454,7 +455,7 @@ function Workshop({ project }: { project: Project }) {
               if (!doc || !PART_KINDS.includes(kind)) return
               e.preventDefault()
               const mount = markerUnder(e.clientX, e.clientY)
-              addLibraryPart(kind, mount ? { kind: 'mount', id: mount } : { kind: 'none' }, doc.frame.armThickness)
+              if (geo) addLibraryPart(kind, mount ? { kind: 'mount', id: mount } : { kind: 'none' }, doc.frame.armThickness, geo)
             }}
           >
             <Viewport
@@ -862,19 +863,16 @@ function partKeys(e: KeyboardEvent): boolean {
   return true
 }
 
-function duplicateSelected() {
+function duplicateSelected(geo: FrameGeometry) {
   const v = useWorkshopView.getState()
   const a = useAssembly.getState()
   const sel = v.selection
   const part = sel?.kind === 'part' ? a.doc?.parts.find((p) => p.id === sel.id) : undefined
   if (!part) return
-  let rootId: string | null = null
-  a.edit(`Duplicate ${part.name}`, (d) => {
+  addPlaced(`Duplicate ${part.name}`, geo, (d) => {
     const r = duplicatePart(d, part.id)
-    rootId = r.rootId
-    return r.doc
+    return { doc: r.doc, roots: r.rootId ? [r.rootId] : [] }
   })
-  if (rootId) v.selectPart(rootId)
 }
 
 /** The mount marker nearest a screen point, within 28 px (markers show while a library part is dragged). */

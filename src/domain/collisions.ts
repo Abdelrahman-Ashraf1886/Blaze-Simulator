@@ -408,6 +408,38 @@ export function interferences(bodies: readonly CollisionBody[], settings: Interf
   return [...byPair.values()].sort((p, q) => q.depthM - p.depthM || p.a.localeCompare(q.a) || p.b.localeCompare(q.b))
 }
 
+/**
+ * Overlaps between bodies that move together (`moving`) and the rest (`fixed`), deeper
+ * than the tolerance, with their status. Pairs within each set are not compared (a part
+ * moved with what is attached to it keeps those contacts). Used to search for a free spot.
+ */
+export function overlapsBetween(moving: readonly CollisionBody[], fixed: readonly CollisionBody[], settings: InterferenceSettings): Overlap[] {
+  const movingIds = new Set(moving.map((b) => b.ownerId))
+  const others = fixed.filter((b) => !movingIds.has(b.ownerId))
+  const attached = new Set(settings.attached.map(([a, b]) => key(a, b)))
+  const allowed = new Set(settings.allowed.map(([a, b]) => key(a, b)))
+  const out: Overlap[] = []
+  for (const m of moving)
+    for (const f of others) {
+      if (m.propeller && f.propeller) continue
+      const [x, y] = f.ownerId < m.ownerId ? [f, m] : [m, f]
+      const hit = penetration(x, y)
+      if (!hit || hit.depthM <= settings.toleranceM) continue
+      const k = key(x.ownerId, y.ownerId)
+      out.push({
+        a: x.ownerId,
+        b: y.ownerId,
+        aName: x.name,
+        bName: y.name,
+        bodies: [x.id, y.id],
+        depthM: hit.depthM,
+        normal: hit.normal,
+        status: attached.has(k) ? 'attached' : allowed.has(k) ? 'allowed' : 'error',
+      })
+    }
+  return out
+}
+
 const mm = (m: number) => String(Math.round(m * 10_000) / 10)
 
 /** Checks findings: one error per owner pair overlapping deeper than the tolerance. */

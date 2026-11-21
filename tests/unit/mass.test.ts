@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   hoverBalance,
+  massFindings,
   massProperties,
   rotateInertia,
   shapeInertia,
@@ -172,6 +173,20 @@ describe('hover balance', () => {
     const h = hoverBalance(quad, [0.2, 0, 0], 1.2)
     expect(h.feasible).toBe(false)
     expect(h.reason).toMatch(/Motor 2|Motor 4/)
+  })
+
+  it('hover-balance finding: passes within the limit, warns beyond it, errors when infeasible, cannot check without every mass', () => {
+    const mp = massProperties([box('frame', 1.2, [0, 0, 0], [0.1, 0.1, 0.01])])
+    const findings = (com: Vec3, tol: number) => massFindings(mp, quad, hoverBalance(quad, com, 1.2), tol)
+    expect(findings([0, 0, 0], 10)).toEqual([])
+    // 30 mm forward: front shares 1.2 (see above) → passes a 25 % limit, warns at 10 %.
+    expect(findings([0.03, 0, 0], 25)).toEqual([])
+    const warn = findings([0.03, 0, 0], 10)
+    expect(warn.map((f) => [f.rule, f.severity])).toEqual([['hover-balance', 'warning']])
+    expect(warn[0]!.partIds.sort()).toEqual(['m0', 'm2'])
+    expect(findings([0.2, 0, 0], 10).map((f) => f.severity)).toEqual(['error'])
+    const missing = massProperties([box('frame', 1.2, [0, 0, 0], [0.1, 0.1, 0.01]), box('gps', null, [0, 0, 0.05], [0.02, 0.02, 0.01])])
+    expect(massFindings(missing, quad, null, 10).map((f) => [f.severity, f.partIds])).toEqual([['cannot-check', ['gps']]])
   })
 
   it('fewer than three motors, or all in a line, cannot hold roll and pitch', () => {

@@ -240,7 +240,9 @@ describe('compatibility checks', () => {
       'prop-frame': { pass: [p('propeller', null, { shape: disc(0.127), center: [0, 0, 0.05] })], fail: [p('propeller', null, { shape: disc(0.127), center: [0, 0, 0.002] })] },
     }
     const wiringRules = ['wire-port', 'wire-kind', 'port-conflict', 'unwired']
-    expect(Object.keys(table).sort()).toEqual(Object.keys(RULES).filter((r) => !wiringRules.includes(r)).sort())
+    // hover-balance comes from mass.ts (massFindings), with its own pass/fail/cannot-check test in mass.test.ts.
+    const otherRules = [...wiringRules, 'hover-balance']
+    expect(Object.keys(table).sort()).toEqual(Object.keys(RULES).filter((r) => !otherRules.includes(r)).sort())
     for (const [rule, cases] of Object.entries(table)) {
       expect(fails(onMount(rule, cases.pass)), `${rule}: pass case`).toBe(false)
       expect(fails(onMount(rule, cases.fail)), `${rule}: fail case`).toBe(true)

@@ -57,6 +57,7 @@ import { effectiveMass, resolveLinks } from './links'
 import { useComponents } from '@/stores/components'
 import { ComDropLine, ComMarker, MassPanel } from './MassPanel'
 import { ChecksPanel, ChecksStatus } from './ChecksPanel'
+import { PropulsionPanel, ReadyPanel } from './PropulsionPanel'
 import { PartsModel } from './PartsModel'
 import { duplicatePart, subtreeIds, updatePart } from './assembly-ops'
 import { SNAP_MM } from './view-store'
@@ -616,6 +617,12 @@ function ProjectPanel({
           </Section>
           <Section title="Mass">
             <MassPanel doc={doc} geo={geo} />
+          </Section>
+          <Section title="Ready to fly" testId="ready-section">
+            <ReadyPanel doc={doc} geo={geo} />
+          </Section>
+          <Section title="Propulsion" testId="propulsion-section">
+            <PropulsionPanel doc={doc} geo={geo} />
           </Section>
         </>
       )}

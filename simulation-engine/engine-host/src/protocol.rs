@@ -27,8 +27,15 @@ pub enum Command {
     Shutdown,
     /// Validates a `VehicleDefinition` and, if valid, makes it the vehicle
     /// that `sim.run` simulates. An invalid one clears the loaded vehicle.
+    /// `propulsion` (optional, additive in 4.5) carries the per-motor
+    /// coefficients and the battery (`engine_core::propulsion`); it is validated
+    /// against the vehicle's motors.
     #[serde(rename = "vehicle.load")]
-    VehicleLoad { vehicle: Value },
+    VehicleLoad {
+        vehicle: Value,
+        #[serde(default)]
+        propulsion: Option<Value>,
+    },
     /// Runs the loaded vehicle from rest at the origin (identity attitude)
     /// for `durationS`, with an optional constant body-frame force (through
     /// the CoM) and torque (about the CoM); returns the final state and hash.
@@ -146,7 +153,11 @@ mod tests {
         );
         assert!(matches!(
             parse_request(r#"{"id":5,"type":"vehicle.load","vehicle":{}}"#).unwrap().command,
-            Command::VehicleLoad { .. }
+            Command::VehicleLoad { propulsion: None, .. }
+        ));
+        assert!(matches!(
+            parse_request(r#"{"id":6,"type":"vehicle.load","vehicle":{},"propulsion":{}}"#).unwrap().command,
+            Command::VehicleLoad { propulsion: Some(_), .. }
         ));
     }
 

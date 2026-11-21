@@ -217,6 +217,12 @@ export interface UserMass {
   source: 'user'
 }
 
+/** A dimensionless coefficient the user entered (no source states it). */
+export interface UserCoefficient {
+  value: number
+  source: 'user'
+}
+
 export interface AssemblyDocument {
   frame: FrameParams
   /**
@@ -224,6 +230,11 @@ export interface AssemblyDocument {
    * set: the centre of mass is then incomplete. Used by src/domain/mass.ts.
    */
   frameMass?: UserMass | null
+  /**
+   * Body drag coefficient C_d (F = ½ ρ C_d A v² per axis, A derived from the collision
+   * shapes). Absent or null = not set: listed in the Ready-to-fly checklist.
+   */
+  bodyDrag?: UserCoefficient | null
   /** Keyed by mount id (`motor-1` …); motors not listed use PX4 defaults. */
   motors: Record<string, MotorMount>
   parts: AssemblyPart[]

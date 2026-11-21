@@ -56,6 +56,29 @@ export const VehicleDefinitionSchema = z.strictObject({
 export type VehicleDefinition = z.infer<typeof VehicleDefinitionSchema>
 
 // ---------------------------------------------------------------------------
+// PropulsionDefinition (4.5, additive): optional with `vehicle.load`, separate
+// from the pinned VehicleDefinition. Built by src/domain/propulsion.ts
+// (`propulsionDefinition`), validated again by engine-core/src/propulsion.rs.
+
+const positive = num.refine((v) => v > 0, 'must be positive')
+export const PropulsionDefinitionSchema = z.strictObject({
+  version: z.literal(1),
+  motors: z.array(
+    z.strictObject({
+      partId: z.string().min(1),
+      kvRadPerSV: positive,
+      resistanceOhm: positive,
+      noLoadCurrentA: num.refine((v) => v >= 0, 'must be ≥ 0'),
+      thrustCoefNs2: positive,
+      torqueCoefNms2: positive,
+      inertiaKgM2: positive,
+    }),
+  ),
+  battery: z.strictObject({ openCircuitVoltageV: positive, internalResistanceOhm: positive, capacityC: positive }),
+})
+export type PropulsionDefinition = z.infer<typeof PropulsionDefinitionSchema>
+
+// ---------------------------------------------------------------------------
 // Commands
 
 export const SimRunParamsSchema = z.strictObject({
@@ -70,7 +93,7 @@ export type EngineCommand =
   | { type: 'hello' }
   | { type: 'ping' }
   | { type: 'shutdown' }
-  | { type: 'vehicle.load'; vehicle: VehicleDefinition }
+  | { type: 'vehicle.load'; vehicle: VehicleDefinition; propulsion?: PropulsionDefinition }
   | ({ type: 'sim.run' } & SimRunParams)
 
 // ---------------------------------------------------------------------------
@@ -95,6 +118,8 @@ export const VehicleLoadResultSchema = z.union([
     motorCount: z.number().int().nonnegative(),
     totals: MassTotalsSchema,
     missingMass: z.array(z.string()),
+    /** Present when a propulsion definition was sent and accepted. */
+    propulsion: z.strictObject({ motorCount: z.number().int().nonnegative() }).optional(),
   }),
   z.strictObject({
     valid: z.literal(false),

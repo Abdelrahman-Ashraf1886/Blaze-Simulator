@@ -1,6 +1,7 @@
 //! Request dispatch and the sidecar's state (the loaded vehicle).
 
 use crate::protocol::{Command, ErrorCode, HelloResult, PongResult, Request, Response, PROTOCOL_VERSION};
+use engine_core::propulsion::Propulsion;
 use engine_core::sim::{hash_hex, BodyInput, SimConfig, SimState, Simulation, DEFAULT_DT_S};
 use engine_core::vehicle::{vec, MassTotals, Vehicle, VehicleError};
 use serde::Serialize;
@@ -23,11 +24,20 @@ enum VehicleLoadResult<'a> {
         motor_count: usize,
         totals: MassTotals,
         missing_mass: &'a [String],
+        /// Present when the request carried a (valid) propulsion definition.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        propulsion: Option<PropulsionSummary>,
     },
     Invalid {
         valid: bool,
         errors: Vec<VehicleError>,
     },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PropulsionSummary {
+    motor_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,11 +55,15 @@ struct SimRunResult {
 pub struct Engine {
     started: Instant,
     vehicle: Option<Vehicle>,
+    /// Coefficients of the loaded vehicle's motors and battery (4.5); the
+    /// flight step uses them from 4.6.
+    #[allow(dead_code)]
+    propulsion: Option<Propulsion>,
 }
 
 impl Engine {
     pub fn new() -> Self {
-        Engine { started: Instant::now(), vehicle: None }
+        Engine { started: Instant::now(), vehicle: None, propulsion: None }
     }
 
     /// Handles one request; the flag is true when the engine should exit.
@@ -72,16 +86,21 @@ impl Engine {
                 false,
             ),
             Command::Shutdown => (Response::ok(id, serde_json::json!({})), true),
-            Command::VehicleLoad { vehicle } => (self.load(id, vehicle), false),
+            Command::VehicleLoad { vehicle, propulsion } => (self.load(id, vehicle, propulsion), false),
             Command::SimRun { duration_s, dt_s, force_body_n, torque_body_nm } => {
                 (self.run(id, duration_s, dt_s, force_body_n, torque_body_nm), false)
             }
         }
     }
 
-    fn load(&mut self, id: u64, value: serde_json::Value) -> Response {
-        match Vehicle::from_json(value) {
-            Ok(v) => {
+    fn load(&mut self, id: u64, value: serde_json::Value, propulsion: Option<serde_json::Value>) -> Response {
+        self.propulsion = None;
+        let loaded = Vehicle::from_json(value).and_then(|v| match propulsion {
+            None => Ok((v, None)),
+            Some(p) => Propulsion::from_json(p, &v.definition).map(|p| (v, Some(p))),
+        });
+        match loaded {
+            Ok((v, propulsion)) => {
                 let response = Response::ok(
                     id,
                     VehicleLoadResult::Valid {
@@ -90,9 +109,11 @@ impl Engine {
                         motor_count: v.definition.motors.len(),
                         totals: v.totals,
                         missing_mass: &v.definition.missing_mass,
+                        propulsion: propulsion.as_ref().map(|p| PropulsionSummary { motor_count: p.motors.len() }),
                     },
                 );
                 self.vehicle = Some(v);
+                self.propulsion = propulsion;
                 response
             }
             Err(errors) => {

@@ -314,6 +314,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
               wiring_json: string
               frame_mass_kg: number | null
               frame_mass_source: 'user' | null
+              body_cd?: number | null
+              body_cd_source?: 'user' | null
               updated_at: string
             }
           | undefined
@@ -348,6 +350,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           ...(row.frame_mass_kg !== null && row.frame_mass_source !== null
             ? { frameMass: { valueKg: row.frame_mass_kg, source: row.frame_mass_source } }
             : {}),
+          // Omitted when not set (schema v11), like the frame mass.
+          ...(row.body_cd != null && row.body_cd_source != null ? { bodyDrag: { value: row.body_cd, source: row.body_cd_source } } : {}),
           // Omitted when empty, so documents without wiring round-trip unchanged.
           ...wiringFields(JSON.parse(row.wiring_json) as Pick<Assembly, 'wires' | 'schematic'>),
         }
@@ -396,6 +400,12 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           input.frameMass?.valueKg ?? null,
           input.frameMass?.source ?? null,
           ts,
+        )
+        // Separate statement so the columns of schema v11 stay apart from the upsert above.
+        db.prepare('UPDATE assemblies SET body_cd = ?, body_cd_source = ? WHERE project_id = ?').run(
+          input.bodyDrag?.value ?? null,
+          input.bodyDrag?.source ?? null,
+          input.projectId,
         )
         db.prepare('DELETE FROM assembly_parts WHERE project_id = ?').run(input.projectId)
         const insert = db.prepare(

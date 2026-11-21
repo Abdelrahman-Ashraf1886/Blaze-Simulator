@@ -125,6 +125,11 @@ export const saveAssemblySchema = z
       .strict()
       .nullable()
       .optional(),
+    bodyDrag: z
+      .object({ value: z.number().positive('C_d must be more than 0').max(10, 'C_d must be at most 10'), source: z.literal('user') })
+      .strict()
+      .nullable()
+      .optional(),
     motors: z.record(z.string(), motorMountSchema).superRefine((motors, ctx) => {
       for (const key of Object.keys(motors)) {
         if (!/^motor-[1-8]$/.test(key)) ctx.addIssue({ code: 'custom', message: `Unknown motor mount "${key}"` })

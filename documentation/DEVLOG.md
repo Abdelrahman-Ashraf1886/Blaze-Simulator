@@ -1,5 +1,135 @@
 # Development log
 
+## 2026-11-22 — Phase 4, milestone 4.5: motor, propeller and battery models
+
+**Built**
+- **`src/domain/propulsion.ts`** (pure; every formula is in its header):
+  - k_T and k_Q are least-squares fits through the origin in ω²:
+    k = Σ y ω² / Σ ω⁴.
+  - Data sources, in order:
+    1. the motor's cited test-table rows for that propeller;
+    2. the propeller's performance table (APC: the condition "computed, not
+       measured" is carried with the fit and shown);
+    3. otherwise k_T is a user input.
+  - A table row matches a propeller of the same manufacturer whose stated
+    diameter × pitch equals the D × P in the row's name. So "T-MOTO13*4.4CF"
+    and "T-MOTOR13*4.4CF" both match T-Motor's P13*4.4.
+  - k_Q from the motor table: Q = K_t (I/d − I₀), with K_t = 60/(2π·KV). The
+    table's current is the supply current (its power column is V × I).
+    Labelled assumption: an ideal averaging ESC gives I_motor = I_supply / d.
+  - Steady state in closed form: ω = 2c / (b + √(b² + 4ac)), with
+    a = R k_Q K_v, b = 1/K_v and c = d·V − R·I₀. A battery R_int adds d²·R_int
+    to R.
+  - The solver is compared with every cited row (speed, thrust, current).
+  - Propeller inertia: blades as thin rods, J = m R²/3 (the same model as
+    mass.ts).
+  - Rotor inertia: entered, or J = τ_m K_t²/R from an entered mechanical time
+    constant.
+  - Battery: V = V_oc − I·R_int. V_oc is the stated nominal voltage, held
+    constant, because no discharge curve is stated.
+- **Motor fields** (with the usual provenance): `rotorInertia` (g·cm²) and
+  `mechanicalTimeConstant` (ms). New units: kg·m², g·cm², s, ms.
+- **Body drag coefficient C_d**:
+  - new frame field; migration **0011** (0010 belongs to 4.4);
+  - `AssemblyDocument.bodyDrag`;
+  - saved by its own `UPDATE` statement, apart from the assembly upsert.
+- **Workshop**:
+  - **Ready to fly** lists exactly what the build still needs: frame mass, part
+    masses, motor/propeller/battery links, missing motor or battery values,
+    rotor inertia, k_T/k_Q for a pair without data, body C_d, and ground
+    friction and restitution.
+  - A value shared by four motors is one item.
+  - Each item goes to its field: the frame inputs are focused; parts are
+    selected; library values open `#/components?id=…&field=…` with that field
+    marked. A built-in record also gets the note "duplicate it, enter the value,
+    link the copy".
+  - Ground friction and restitution have no link yet: their fields come with
+    4.4.
+- **Propulsion** section: one block per motor + propeller pair, showing:
+  - the data source and its condition;
+  - k_T and k_Q with their fit errors;
+  - K_t, J propeller and J rotor;
+  - the solver-vs-table error for each cited row (hover a cell for both values).
+- **Engine** (`engine-core/src/propulsion.rs`):
+  - motor response J dω/dt = K_t (I − I₀) − k_Q ω²;
+  - battery sag solved exactly for any number of motors on one pack;
+  - charge used = ∫I dt;
+  - RK4 integration.
+  - I₀ can stop the rotor but never reverses it.
+  - `vehicle.load` takes an optional `propulsion` structure, separate from the
+    pinned VehicleDefinition. It is validated against the vehicle's motors, and
+    the result then carries `propulsion.motorCount`.
+  - Forces are not applied yet (4.6).
+
+**Fitted coefficients (built-in data)**
+
+| Motor + propeller | Data | k_T (N·s²) | fit max / rms | k_Q (N·m·s²) | fit max | Solver max error: speed / thrust / current |
+|---|---|---|---|---|---|---|
+| MN3110 KV470 + P13*4.4 | T-Motor table, 5 rows, 14.8 V | 2.2945e-5 | 3.6 % / 2.0 % | 3.7162e-7 | 19.1 % | 16.6 % / 35.3 % / 47.4 % |
+| MN3110 KV470 + P15*5 | T-Motor table, 5 rows, 14.8 V | 4.8676e-5 | 7.2 % / 3.8 % | 8.2781e-7 | 14.6 % | 23.7 % / 57.3 % / 69.0 % |
+| MN3110 KV700 + P13*4.4 | T-Motor table, 5 rows, 11.1 V | 2.4138e-5 | 13.9 % / 6.6 % | 3.7561e-7 | 17.8 % | 14.0 % / 28.9 % / 41.5 % |
+| any MN3110 + APC 10x4.5MR | APC, computed, 22 static rows | 1.4945e-5 | 9.3 % / 5.9 % | 2.1840e-7 | 20.2 % | no bench data |
+| any MN3110 + APC 11x4.5MR | APC, computed, 20 static rows | 1.9846e-5 | 9.4 % / 6.2 % | 3.0058e-7 | 17.6 % | no bench data |
+| any MN3110 + APC 12x4.5MR | APC, computed, 19 static rows | 2.6449e-5 | 10.3 % / 6.9 % | 4.2577e-7 | 10.6 % | no bench data |
+| KV700 + P15*5, KV780 + P13*4.4 or P15*5 | none | user input | | | | |
+
+**Findings**
+- The solver over-predicts at full throttle: speed +14 to +24 %, thrust
+  +29 to +57 %. At 50 % throttle it is within 2 % in speed (KV470 + P13*4.4:
+  +0.6 %).
+  - The 100 % rows sit well below KV × V: 5500 rpm against 6956 rpm no-load at
+    14.8 V.
+  - So "V·throttle at the motor" with the stated KV and R does not hold at full
+    throttle on T-Motor's bench (ESC or supply drop, or the KV under load).
+  - This is reported, not corrected; nothing is tuned to fit.
+- k_Q from the current scatters 11–20 % around ω²: the current-derived torque
+  does not follow a square law closely in these tables.
+- The two T-Motor tables disagree on the same P13*4.4: k_T is 5 % higher in the
+  KV700 table, although k_T is a propeller property.
+- The APC k_T fit errors (9–10 %) come from Ct rising from 0.106 to 0.119 over
+  1,000–22,000 rpm. The fit uses all rows.
+
+**Tests**
+- `propulsion.test.ts` (22 tests, plan test 6):
+  - the fit equals an independent least squares on the raw cited rows, and
+    every row lies within the reported maximum error;
+  - the steady state matches a hand solution (ω = 911.852502 rad/s), and both
+    model equations hold at every validation row;
+  - battery sag; prop matching by maker and size; the APC fallback; rotor
+    inertia from τ_m;
+  - the checklist: the exact item list for the built-in quad, dedupe, links,
+    and an empty list once everything is entered.
+- `propulsion-engine.test.ts`:
+  - a seed quad's propulsion loads in the real engine (`motorCount` 4);
+  - the result without propulsion is unchanged from 4.3;
+  - a wrong `partId` is refused with paths;
+  - the TS and zod types are assignable both ways.
+- Rust: 7 `propulsion` tests against analytical solutions:
+  - Riccati spin-up, to 1e-8 of ω₁;
+  - the first-order case with τ = J·R/K_t², to 1e-9;
+  - steady sag with 1 and 4 motors equals R + n·d²·R_int;
+  - charge = I·t;
+  - the rotor stays at rest below I₀;
+  - validation paths.
+- A sidecar test covers `vehicle.load` with `propulsion`.
+- e2e `propulsion.spec.ts`: builds the quad, checks k_T, the five validation
+  rows and the five checklist items, follows the C_d and rotor-inertia links,
+  and takes the screenshots below.
+
+**Screenshots** (reviewed): `documentation/screenshots/4.5-fit.png`,
+`4.5-checklist.png`, `4.5-library-field.png`.
+- Fixed after review: the narrow left panel cut off the k values and the
+  four-column table. Labels are shorter now, and the table shows the errors
+  with both values in a tooltip.
+
+**Left open**
+- MN3110 rotor inertia, the Tattu R_int and the ground coefficients stay user
+  inputs. The ground fields arrive with 4.4.
+- Built-in records are read-only, so entering a value means duplicating the
+  component and relinking. A per-build override would be shorter.
+- The app does not send `propulsion` yet: 4.6 wires `propulsionDefinition()` and
+  the forces into the flight step.
+
 ## 2026-11-21 — Phase 4 data sources: APC performance, reference data, gaps
 
 Data only, plus the units and the propeller field needed to hold it. No simulation

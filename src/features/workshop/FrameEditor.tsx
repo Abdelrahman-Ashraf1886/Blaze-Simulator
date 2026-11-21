@@ -12,6 +12,11 @@ const FIELDS: { key: keyof FrameParams; label: string; edit: string }[] = [
   { key: 'armThickness', label: 'Arm thickness', edit: 'Change arm thickness' },
 ]
 
+const bodyCd = (text: string): { ok: true; value: number | null } | { ok: false; message: string } => {
+  if (text.trim() === '') return { ok: true, value: null }
+  return numberParser(0.01, 10, '', 0.01)(text)
+}
+
 const frameMassG = (text: string): { ok: true; value: number | null } | { ok: false; message: string } => {
   if (text.trim() === '') return { ok: true, value: null }
   const r = numberParser(0.1, 100_000, 'g')(text)
@@ -21,6 +26,7 @@ const frameMassG = (text: string): { ok: true; value: number | null } | { ok: fa
 export function FrameEditor() {
   const frame = useAssembly((s) => s.doc?.frame)
   const frameMass = useAssembly((s) => s.doc?.frameMass ?? null)
+  const bodyDrag = useAssembly((s) => s.doc?.bodyDrag ?? null)
   if (!frame) return null
   return (
     <div className="border-t border-line" data-testid="frame-editor">
@@ -43,6 +49,24 @@ export function FrameEditor() {
               .edit(g === null ? 'Clear frame mass' : 'Set frame mass', (d) => ({
                 ...d,
                 frameMass: g === null ? null : { valueKg: g / 1000, source: 'user' },
+              }))
+          }
+        />
+      </div>
+      <div title="Body drag per axis F = ½ ρ C_d A v², A from the parts' collision shapes. No source states C_d for a build.">
+        <NumberField
+          key={`body-cd:${bodyDrag?.value ?? 'none'}`}
+          id="body-cd"
+          label="Body drag coefficient C_d"
+          initial={bodyDrag ? String(bodyDrag.value) : ''}
+          placeholder="not set"
+          parse={bodyCd}
+          onCommit={(v) =>
+            useAssembly
+              .getState()
+              .edit(v === null ? 'Clear body drag coefficient' : 'Set body drag coefficient', (d) => ({
+                ...d,
+                bodyDrag: v === null ? null : { value: v, source: 'user' },
               }))
           }
         />

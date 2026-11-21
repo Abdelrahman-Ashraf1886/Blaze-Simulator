@@ -1,5 +1,6 @@
 import { Copy, Download, ExternalLink, FileUp, Pencil, Plus, Search, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import {
   CATEGORY_LABELS,
   COMPONENT_CATEGORIES,
@@ -27,7 +28,11 @@ export function ComponentsPage() {
   const { components, loading, error } = useComponents()
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // `#/components?id=…&field=…` (e.g. from the workshop's Ready-to-fly checklist) selects a
+  // component and highlights one of its fields.
+  const [params] = useSearchParams()
+  const [selectedId, setSelectedId] = useState<string | null>(params.get('id'))
+  const highlight = selectedId !== null && selectedId === params.get('id') ? params.get('field') : null
   const [editing, setEditing] = useState<{ component: Component | null } | null>(null)
   const [deleting, setDeleting] = useState<Component | null>(null)
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null)
@@ -189,6 +194,7 @@ export function ComponentsPage() {
               <ComponentDetail
                 key={selected.id}
                 component={selected}
+                highlight={highlight}
                 onEdit={() => setEditing({ component: selected })}
                 onDuplicate={() =>
                   void act(async () => {
@@ -251,12 +257,15 @@ export function ComponentsPage() {
 
 function ComponentDetail({
   component: c,
+  highlight,
   onEdit,
   onDuplicate,
   onDelete,
   onExport,
 }: {
   component: Component
+  /** Field to scroll to and mark (a value the workshop asks for). */
+  highlight?: string | null
   onEdit: () => void
   onDuplicate: () => void
   onDelete: () => void
@@ -294,9 +303,14 @@ function ComponentDetail({
       <h3 className="mt-4 pb-1 text-[12px] font-medium text-fg-subtle">Specifications</h3>
       <dl className="border-t border-line" data-testid="spec-list">
         {COMPONENT_FIELDS[c.category].map((f) => (
-          <SpecRow key={f.key} field={f} spec={c.specs[f.key]} />
+          <SpecRow key={f.key} field={f} spec={c.specs[f.key]} highlight={f.key === highlight} />
         ))}
       </dl>
+      {highlight && builtIn && (
+        <p className="mt-2 text-[12px] leading-relaxed text-fg-subtle" data-testid="highlight-note">
+          {lockedNote} Then enter the value in the copy and link the copy in the workshop.
+        </p>
+      )}
     </Section>
   )
 }
@@ -312,10 +326,19 @@ function Meta({ label, value, muted }: { label: string; value: string; muted?: b
 
 const SOURCE_TONE = { manufacturer: 'text-accent', measured: 'text-ok', user: 'text-fg-muted' } as const
 
-function SpecRow({ field, spec }: { field: FieldDef; spec: SpecValue | undefined }) {
+function SpecRow({ field, spec, highlight = false }: { field: FieldDef; spec: SpecValue | undefined; highlight?: boolean }) {
   const ref = formatReference(spec?.reference)
+  const row = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (highlight) row.current?.scrollIntoView({ block: 'center' })
+  }, [highlight])
   return (
-    <div className="border-b border-line/60 py-1.5" data-testid={`spec-${field.key}`}>
+    <div
+      ref={row}
+      className={cn('border-b border-line/60 py-1.5', highlight && '-mx-2 rounded-[var(--radius-sm)] bg-warn/10 px-2 ring-1 ring-warn/60')}
+      data-testid={`spec-${field.key}`}
+      data-highlight={highlight || undefined}
+    >
       <div className="flex items-baseline justify-between gap-4">
         <dt className="shrink-0 text-[12.5px] text-fg-muted">{field.label}</dt>
         <dd className={cn('min-w-0 text-right', spec ? 'num text-fg' : 'text-[12.5px] text-fg-subtle')}>

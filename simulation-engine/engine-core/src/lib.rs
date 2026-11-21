@@ -11,6 +11,7 @@
 //! contain real, tested models, never as empty stubs.
 
 pub mod math;
+pub mod propulsion;
 pub mod sim;
 pub mod vehicle;
 

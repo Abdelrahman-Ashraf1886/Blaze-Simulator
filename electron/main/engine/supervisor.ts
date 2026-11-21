@@ -7,11 +7,13 @@ import {
   PROTOCOL_VERSION,
   SimRunParamsSchema,
   SimRunResultSchema,
+  PropulsionDefinitionSchema,
   VehicleDefinitionSchema,
   VehicleLoadResultSchema,
   isEngineResponse,
   type EngineCommand,
   type HelloResult,
+  type PropulsionDefinition,
   type SimRunParams,
   type SimRunResult,
   type VehicleDefinition,
@@ -121,11 +123,16 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
   /**
    * Sends a vehicle definition. Resolves with the engine's recomputed totals,
    * or with its list of validation errors (`valid: false`); an invalid
-   * definition also clears the engine's loaded vehicle.
+   * definition also clears the engine's loaded vehicle. `propulsion` (4.5) adds
+   * the motors' fitted coefficients and the battery.
    */
-  async loadVehicle(vehicle: VehicleDefinition): Promise<VehicleLoadResult> {
+  async loadVehicle(vehicle: VehicleDefinition, propulsion?: PropulsionDefinition): Promise<VehicleLoadResult> {
     const checked = VehicleDefinitionSchema.parse(vehicle)
-    const result = await this.request({ type: 'vehicle.load', vehicle: checked })
+    const result = await this.request({
+      type: 'vehicle.load',
+      vehicle: checked,
+      ...(propulsion ? { propulsion: PropulsionDefinitionSchema.parse(propulsion) } : {}),
+    })
     return VehicleLoadResultSchema.parse(result)
   }
 

@@ -1,5 +1,55 @@
 # Development log
 
+## 2026-11-21 — Workshop realism: frame, parts, materials, lighting
+
+Display only. Sizes, masses and every check still use the part envelopes and the
+frame's stated parameters, so no engineering value changed.
+
+**Built**
+- **Lighting**: image-based lighting from three.js `RoomEnvironment` (generated in
+  the renderer, nothing downloaded, so the CSP is unchanged), plus a key light, a
+  fill light and a hemisphere light.
+- **Materials** (`src/three/materials.ts`), shared by every model so the scene
+  still compiles only a handful of shaders:
+  - carbon fibre: a 2×2 twill weave drawn on a canvas, repeating every 12 mm,
+    non-metallic with a satin clearcoat;
+  - aluminium, anodized black and accent, steel, copper, plastics, PCB, gold, LEDs.
+- **Frame** (`src/three/frame-shapes.ts`, `FrameModel.tsx`):
+  - carbon plates and arms are extruded outlines with a 0.2 mm bevel:
+    - plate: chamfered, with strap slots, lightening holes and the 30.5 mm FC
+      pattern;
+    - arms: tapered, with lightening slots, ending in a round motor pad with a
+      shaft hole and bolt holes;
+  - socket-head screws clamp the arms; four bolts on each motor pad;
+  - the "Simple" display mode keeps the old boxes.
+- **Parts** (`src/three/part-models.tsx`):
+  - motor: base, stator with copper windings, a lathed bell with vents and band,
+    shaft and prop nut;
+  - propeller: twisted aerofoil blades whose pitch angle follows the stated pitch,
+    θ = atan(P / 2πr), mirrored for CW, with a carbon or plastic finish taken from
+    the component's material;
+  - battery with label, leads, XT60 and balance plug; ESC board; flight controller
+    case with ports and LEDs; GPS puck; telemetry radio; power module.
+
+**Fixed while reviewing screenshots**
+- Carbon looked white at grazing angles: metalness 0.25 and a strong clearcoat
+  reflected the room lights. Carbon is now dielectric (metalness 0), with a weaker
+  clearcoat, a darker weave and a lower environment intensity.
+- Prop plastic was near-white and is now dark grey. The swept disc keeps a lighter
+  colour so it still shows on the dark grid.
+- Switching to "Simple" threw `Cannot read properties of undefined (reading
+  'count')`. React reused the detailed frame's mesh for the simple box, and drei
+  `<Edges>` read its geometry before the box was attached. The two branches are
+  now keyed separately.
+
+**Verified**
+- `npm run test:all`: 11 Rust, 185 unit and 34 e2e tests pass; typecheck and lint
+  are clean. Two e2e tests (a gizmo drag, and a dialog click with "element is not
+  stable") and the 4K perf figure (1.0 fps) failed in one full run while the
+  window was throttled. Re-running those four specs passed all 16 tests, with
+  59.3 fps at 1080p and 42.6 fps at 4K (50 parts).
+- Screenshots reviewed: overview, motor close-up, body close-up, top view.
+
 ## 2026-11-21 — Phase 3, milestone 3.7: electrical calculations
 
 **Built**

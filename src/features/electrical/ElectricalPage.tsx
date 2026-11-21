@@ -12,7 +12,7 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import { Box, Cable, Calculator, Redo2, Trash2, Undo2, Wand2 } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { CATEGORY_LABELS } from '../../../electron/ipc/component-fields'
 import { WIRE_COLORS, type AssemblyDocument, type Project, type Wire, type WireColor } from '../../../electron/ipc/contract'
@@ -26,7 +26,9 @@ import { useProjects } from '@/stores/projects'
 import { buildFrame, type FrameGeometry } from '@/three/frame-geometry'
 import { PORT_KIND_LABELS, canConnect, portsOf, type Port, type PortKind, type WiringPart } from '@/domain/wiring'
 import { useAssembly } from '../workshop/assembly-store'
-import { SEVERITY, allFindings } from '../workshop/ChecksPanel'
+import { SEVERITY } from '../workshop/ChecksPanel'
+import { allFindings } from '../workshop/findings'
+import { useWorkshopView } from '../workshop/view-store'
 import { useComponentIndex } from '../workshop/component-index'
 import { SaveIndicator } from '../workshop/save-indicator'
 import { wiringParts } from '../workshop/wiring-input'
@@ -127,7 +129,11 @@ function Designer({ project }: { project: Project }) {
 
   const geo = useMemo(() => (doc ? buildFrame(project.frameType, doc.frame, doc.motors) : null), [doc, project.frameType])
   const parts = useMemo(() => (doc && geo ? wiringParts(doc, geo, components) : []), [doc, geo, components])
-  const wires = doc?.wires ?? []
+  const index = useMemo(() => portIndex(parts), [parts])
+  const wires = doc?.wires ?? NO_WIRES
+  // Stable callbacks, so the memoised drawer and checks list do not re-render on a selection.
+  const selectWire = useCallback((id: string) => setSelection({ kind: 'wire', id }), [])
+  const selectPart = useCallback((id: string) => setSelection({ kind: 'part', id }), [])
 
   const autoWire = () => {
     let result: string[] = []
@@ -172,8 +178,8 @@ function Designer({ project }: { project: Project }) {
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="relative min-h-[200px] flex-1" data-testid="schematic">
-            {doc && geo && <Schematic doc={doc} parts={parts} selection={selection} onSelect={setSelection} />}
-            {doc && parts.every((p) => portsOf(p).length === 0) && (
+            {doc && geo && <Schematic doc={doc} parts={parts} index={index} selection={selection} onSelect={setSelection} />}
+            {doc && parts.every((p) => index.ports(p.id).length === 0) && (
               <p className="pointer-events-none absolute inset-x-0 top-6 text-center text-[12.5px] text-fg-subtle">
                 No electrical parts yet. Add a battery, ESCs, motors and a flight controller in the workshop.
               </p>
@@ -181,7 +187,7 @@ function Designer({ project }: { project: Project }) {
           </div>
           {doc && showCalc && (
             <div className="h-[45%] min-h-[220px] shrink-0 border-t border-line bg-chrome">
-              <CalculationsPanel parts={parts} wires={wires} onSelectWire={(id) => setSelection({ kind: 'wire', id })} onSelectPart={(id) => setSelection({ kind: 'part', id })} />
+              <CalculationsPanel parts={parts} wires={wires} onSelectWire={selectWire} onSelectPart={selectPart} />
             </div>
           )}
         </div>
@@ -198,12 +204,12 @@ function Designer({ project }: { project: Project }) {
             </Section>
           )}
           {doc && selection?.kind === 'wire' && (
-            <WireInspector key={selection.id} wire={wires.find((w) => w.id === selection.id)} parts={parts} onDone={() => setSelection(null)} />
+            <WireInspector key={selection.id} wire={wires.find((w) => w.id === selection.id)} index={index} onDone={() => setSelection(null)} />
           )}
-          {doc && selection?.kind === 'part' && <PartPorts part={parts.find((p) => p.id === selection.id)} wires={wires} parts={parts} onSelectWire={(id) => setSelection({ kind: 'wire', id })} />}
-          {doc && geo && <Diagnostics doc={doc} geo={geo} onSelect={(partId) => setSelection({ kind: 'part', id: partId })} />}
+          {doc && selection?.kind === 'part' && <PartPorts part={index.part(selection.id)} wires={wires} index={index} onSelectWire={selectWire} />}
+          {doc && geo && <Diagnostics doc={doc} geo={geo} onSelect={selectPart} />}
           <Section title="Wires" count={wires.length}>
-            <WireList wires={wires} parts={parts} selected={selection?.kind === 'wire' ? selection.id : null} onSelect={(id) => setSelection({ kind: 'wire', id })} />
+            <WireList wires={wires} index={index} selected={selection?.kind === 'wire' ? selection.id : null} onSelect={selectWire} />
           </Section>
         </aside>
       </div>
@@ -257,50 +263,88 @@ function defaultPosition(p: WiringPart, index: Record<string, number>): { x: num
 
 const NO_WIRES: Wire[] = []
 
-function Schematic({ doc, parts, selection, onSelect }: { doc: AssemblyDocument; parts: WiringPart[]; selection: Selection; onSelect: (s: Selection) => void }) {
-  const wires = doc.wires ?? NO_WIRES
-  const nodes = useMemo<Node<PartNodeData>[]>(() => {
-    const index: Record<string, number> = {}
-    return parts
-      .map((part) => ({ part, ports: portsOf(part) }))
-      .filter((x) => x.ports.length > 0)
-      .map(({ part, ports }) => {
-        const used = new Set(wires.flatMap((w) => [w.from, w.to]).filter((e) => e.partId === part.id).map((e) => e.port))
-        return {
-          id: part.id,
-          type: 'part',
-          position: doc.schematic?.[part.id] ?? defaultPosition(part, index),
-          data: { part, ports, used },
-          selected: selection?.kind === 'part' && selection.id === part.id,
-        }
-      })
-  }, [parts, wires, doc.schematic, selection])
+/**
+ * Parts and their ports by id, built once per parts list. The schematic, the wire
+ * list and the inspectors look ports up here instead of rebuilding them per wire.
+ */
+interface PortIndex {
+  part: (id: string) => WiringPart | undefined
+  ports: (id: string) => Port[]
+  port: (end: { partId: string; port: string }) => Port | undefined
+  label: (end: { partId: string; port: string }) => string
+}
 
-  const edges = useMemo<Edge[]>(
+function portIndex(parts: readonly WiringPart[]): PortIndex {
+  const byId = new Map(parts.map((p) => [p.id, p]))
+  const ports = new Map(parts.map((p) => [p.id, portsOf(p)]))
+  const port = (e: { partId: string; port: string }) => ports.get(e.partId)?.find((x) => x.id === e.port)
+  return {
+    part: (id) => byId.get(id),
+    ports: (id) => ports.get(id) ?? [],
+    port,
+    label: (e) => `${byId.get(e.partId)?.name ?? 'removed part'} · ${port(e)?.label ?? e.port}`,
+  }
+}
+
+/** Replaces only the items whose `selected` flag differs, so unchanged boxes and cables keep their identity and React Flow skips them. */
+function withSelection<T extends { id: string; selected?: boolean }>(items: T[], selectedId: string | null, restyle?: (item: T, selected: boolean) => T): T[] {
+  if (selectedId === null) return items
+  return items.map((x) => (x.id === selectedId ? (restyle ? restyle(x, true) : { ...x, selected: true }) : x))
+}
+
+function Schematic({ doc, parts, index, selection, onSelect }: { doc: AssemblyDocument; parts: WiringPart[]; index: PortIndex; selection: Selection; onSelect: (s: Selection) => void }) {
+  const wires = doc.wires ?? NO_WIRES
+  // Boxes and cables are built from the document only; a selection change touches one item (see withSelection).
+  const baseNodes = useMemo<Node<PartNodeData>[]>(() => {
+    const column: Record<string, number> = {}
+    const used = new Map<string, Set<string>>()
+    for (const w of wires) {
+      for (const e of [w.from, w.to]) {
+        let s = used.get(e.partId)
+        if (!s) used.set(e.partId, (s = new Set()))
+        s.add(e.port)
+      }
+    }
+    return parts.flatMap((part) => {
+      const ports = index.ports(part.id)
+      if (ports.length === 0) return []
+      return [{ id: part.id, type: 'part', position: doc.schematic?.[part.id] ?? defaultPosition(part, column), data: { part, ports, used: used.get(part.id) ?? NO_PORTS }, selected: false }]
+    })
+  }, [parts, index, wires, doc.schematic])
+  const nodes = useMemo(() => withSelection(baseNodes, selection?.kind === 'part' ? selection.id : null), [baseNodes, selection])
+
+  const baseEdges = useMemo<Edge[]>(
     () =>
       wires.map((w) => {
-        const from = parts.find((p) => p.id === w.from.partId)
-        const kind = from ? portsOf(from).find((x) => x.id === w.from.port)?.kind : undefined
-        const selected = selection?.kind === 'wire' && selection.id === w.id
+        const kind = index.port(w.from)?.kind
         return {
           id: w.id,
           source: w.from.partId,
           sourceHandle: w.from.port,
           target: w.to.partId,
           targetHandle: w.to.port,
-          selected,
-          style: { stroke: kind ? KIND_COLOR[kind] : '#9aa3ad', strokeWidth: selected ? 3 : 1.6 },
+          selected: false,
+          style: { stroke: kind ? KIND_COLOR[kind] : '#9aa3ad', strokeWidth: 1.6 },
         }
       }),
-    [wires, parts, selection],
+    [wires, index],
+  )
+  const edges = useMemo(
+    () => withSelection(baseEdges, selection?.kind === 'wire' ? selection.id : null, (e, selected) => ({ ...e, selected, style: { ...e.style, strokeWidth: 3 } })),
+    [baseEdges, selection],
   )
 
+  const resolve = (c: Connection | Edge) => {
+    const a = index.part(c.source)
+    const b = index.part(c.target)
+    const pa = a && c.sourceHandle ? index.port({ partId: a.id, port: c.sourceHandle }) : undefined
+    const pb = b && c.targetHandle ? index.port({ partId: b.id, port: c.targetHandle }) : undefined
+    return a && b && pa && pb && canConnect({ part: a, port: pa }, { part: b, port: pb }) ? { a, b, pa, pb } : null
+  }
   const onConnect = (c: Connection) => {
-    const a = parts.find((p) => p.id === c.source)
-    const b = parts.find((p) => p.id === c.target)
-    const pa = a && portsOf(a).find((x) => x.id === c.sourceHandle)
-    const pb = b && portsOf(b).find((x) => x.id === c.targetHandle)
-    if (!a || !b || !pa || !pb || !canConnect({ part: a, port: pa }, { part: b, port: pb })) return
+    const r = resolve(c)
+    if (!r) return
+    const { a, b, pa, pb } = r
     edit(`Connect ${a.name} ${pa.label} to ${b.name} ${pb.label}`, (d) => addWire(d, { partId: a.id, port: pa.id }, { partId: b.id, port: pb.id }))
   }
 
@@ -314,16 +358,10 @@ function Schematic({ doc, parts, selection, onSelect }: { doc: AssemblyDocument;
       fitView
       minZoom={0.2}
       proOptions={{ hideAttribution: true }}
-      isValidConnection={(c) => {
-        const a = parts.find((p) => p.id === c.source)
-        const b = parts.find((p) => p.id === c.target)
-        const pa = a && portsOf(a).find((x) => x.id === c.sourceHandle)
-        const pb = b && portsOf(b).find((x) => x.id === c.targetHandle)
-        return !!(a && b && pa && pb && canConnect({ part: a, port: pa }, { part: b, port: pb }))
-      }}
+      isValidConnection={(c) => resolve(c) !== null}
       onConnect={onConnect}
       onNodeDragStop={(_e, node) => {
-        const name = parts.find((p) => p.id === node.id)?.name ?? 'part'
+        const name = index.part(node.id)?.name ?? 'part'
         edit(`Move ${name} in the schematic`, (d) => placeNode(d, node.id, node.position.x, node.position.y))
       }}
       onNodeClick={(_e, node) => onSelect({ kind: 'part', id: node.id })}
@@ -341,7 +379,9 @@ function Schematic({ doc, parts, selection, onSelect }: { doc: AssemblyDocument;
   )
 }
 
-function PartNode({ data, selected }: NodeProps<Node<PartNodeData>>) {
+const NO_PORTS: ReadonlySet<string> = new Set()
+
+const PartNode = memo(function PartNode({ data, selected }: NodeProps<Node<PartNodeData>>) {
   const { part, ports, used } = data
   const left = ports.filter((p) => p.side === 'left')
   const right = ports.filter((p) => p.side === 'right')
@@ -366,7 +406,7 @@ function PartNode({ data, selected }: NodeProps<Node<PartNodeData>>) {
       </div>
     </div>
   )
-}
+})
 const NODE_TYPES = { part: PartNode }
 
 function PortCell({ port, side, used }: { port?: Port; side: 'left' | 'right'; used: boolean }) {
@@ -386,13 +426,7 @@ function PortCell({ port, side, used }: { port?: Port; side: 'left' | 'right'; u
 
 // ---- Side panel --------------------------------------------------------------------------------------------
 
-const endLabel = (parts: readonly WiringPart[], e: { partId: string; port: string }) => {
-  const p = parts.find((x) => x.id === e.partId)
-  const port = p && portsOf(p).find((x) => x.id === e.port)
-  return `${p?.name ?? 'removed part'} · ${port?.label ?? e.port}`
-}
-
-function WireList({ wires, parts, selected, onSelect }: { wires: Wire[]; parts: WiringPart[]; selected: string | null; onSelect: (id: string) => void }) {
+function WireList({ wires, index, selected, onSelect }: { wires: Wire[]; index: PortIndex; selected: string | null; onSelect: (id: string) => void }) {
   if (wires.length === 0) return <p className="border-t border-line py-3 text-[12.5px] text-fg-subtle">No wires. Use Auto-wire, or drag from one port to another.</p>
   return (
     <ul className="border-t border-line">
@@ -405,7 +439,7 @@ function WireList({ wires, parts, selected, onSelect }: { wires: Wire[]; parts: 
             onClick={() => onSelect(w.id)}
             className={cn('w-full border-b border-line/60 py-1.5 text-left text-[12px] hover:bg-hover/50', w.id === selected ? 'text-fg' : 'text-fg-muted')}
           >
-            {endLabel(parts, w.from)} → {endLabel(parts, w.to)}
+            {index.label(w.from)} → {index.label(w.to)}
           </button>
         </li>
       ))}
@@ -413,11 +447,11 @@ function WireList({ wires, parts, selected, onSelect }: { wires: Wire[]; parts: 
   )
 }
 
-function WireInspector({ wire, parts, onDone }: { wire?: Wire; parts: WiringPart[]; onDone: () => void }) {
+function WireInspector({ wire, index, onDone }: { wire?: Wire; index: PortIndex; onDone: () => void }) {
   if (!wire) return null
   const ends = (['from', 'to'] as const).map((end) => {
-    const p = parts.find((x) => x.id === wire[end].partId)
-    const ports = p ? portsOf(p) : []
+    const p = index.part(wire[end].partId)
+    const ports = p ? index.ports(p.id) : []
     const current = ports.find((x) => x.id === wire[end].port)
     return { end, part: p, ports: current ? ports.filter((x) => x.kind === current.kind) : ports, current }
   })
@@ -523,12 +557,12 @@ function NumberInput({ label, testId, value, min, max, onCommit }: { label: stri
   )
 }
 
-function PartPorts({ part, wires, parts, onSelectWire }: { part?: WiringPart; wires: Wire[]; parts: WiringPart[]; onSelectWire: (id: string) => void }) {
+function PartPorts({ part, wires, index, onSelectWire }: { part?: WiringPart; wires: Wire[]; index: PortIndex; onSelectWire: (id: string) => void }) {
   if (!part) return null
   return (
     <Section title={part.name} testId="part-ports">
       <ul className="border-t border-line">
-        {portsOf(part).map((port) => {
+        {index.ports(part.id).map((port) => {
           const at = wires.filter((w) => (w.from.partId === part.id && w.from.port === port.id) || (w.to.partId === part.id && w.to.port === port.id))
           return (
             <li key={port.id} className="flex items-baseline justify-between gap-2 border-b border-line/60 py-1.5 text-[12px]">
@@ -543,7 +577,7 @@ function PartPorts({ part, wires, parts, onSelectWire }: { part?: WiringPart; wi
                     const other = w.from.partId === part.id && w.from.port === port.id ? w.to : w.from
                     return (
                       <button key={w.id} type="button" className="block w-full truncate text-right hover:text-accent" onClick={() => onSelectWire(w.id)}>
-                        {endLabel(parts, other)}
+                        {index.label(other)}
                       </button>
                     )
                   })
@@ -557,9 +591,13 @@ function PartPorts({ part, wires, parts, onSelectWire }: { part?: WiringPart; wi
   )
 }
 
-function Diagnostics({ doc, geo, onSelect }: { doc: AssemblyDocument; geo: FrameGeometry; onSelect: (partId: string) => void }) {
+const Diagnostics = memo(function Diagnostics({ doc, geo, onSelect }: { doc: AssemblyDocument; geo: FrameGeometry; onSelect: (partId: string) => void }) {
   const components = useComponentIndex()
-  const findings = useMemo(() => allFindings(doc, geo, components).filter((f) => f.severity !== 'cannot-check'), [doc, geo, components])
+  const tolerance = useWorkshopView((s) => s.balanceTolerance)
+  const findings = useMemo(
+    () => allFindings(doc, geo, components, tolerance).filter((f) => f.severity !== 'cannot-check'),
+    [doc, geo, components, tolerance],
+  )
   return (
     <Section title="Checks" count={findings.length} testId="electrical-checks">
       {findings.length === 0 ? (
@@ -589,7 +627,7 @@ function Diagnostics({ doc, geo, onSelect }: { doc: AssemblyDocument; geo: Frame
       )}
     </Section>
   )
-}
+})
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (

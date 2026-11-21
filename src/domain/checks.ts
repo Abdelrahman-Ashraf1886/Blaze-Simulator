@@ -297,13 +297,27 @@ function propMotorPairs(input: CheckInput): [CheckPart, CheckPart][] {
 function propBore(input: CheckInput): Finding[] {
   // Identical prop/motor pairs give one finding ("4 × 10x4.5MR on 4 × MN3110 KV700").
   const groups = new Map<string, [CheckPart, CheckPart][]>()
+  const unlinked: [CheckPart, CheckPart][] = []
   for (const pair of propMotorPairs(input)) {
     const [prop, motor] = pair
-    if (!prop.component || !motor.component) continue
+    if (!prop.component || !motor.component) {
+      unlinked.push(pair)
+      continue
+    }
     const key = `${prop.component.id}|${motor.component.id}`
     groups.set(key, [...(groups.get(key) ?? []), pair])
   }
-  return [...groups.values()].flatMap((pairs) => {
+  const out: Finding[] = []
+  if (unlinked.length > 0) {
+    // Missing data is said, not skipped: one finding for every pair with an unlinked part.
+    const one = unlinked.length === 1
+    const props = unlinked.some(([prop]) => !prop.component)
+    const motors = unlinked.some(([, motor]) => !motor.component)
+    const what = [props && (one ? 'the propeller' : 'the propellers'), motors && (one ? 'its motor' : 'their motors')].filter(Boolean).join(' and ')
+    const be = one && !(props && motors) ? 'is' : 'are'
+    out.push(finding('prop-bore', 'cannot-check', `Cannot check the bore of ${names(unlinked.map(([prop]) => prop))}: ${what} ${be} not linked to a component.`, unlinked.flat(), 'unlinked'))
+  }
+  return out.concat([...groups.values()].flatMap((pairs) => {
     const [prop, motor] = pairs[0]!
     const parts = pairs.flat()
     const n = pairs.length
@@ -322,14 +336,30 @@ function propBore(input: CheckInput): Finding[] {
       return [finding('prop-bore', 'warning', `${props} ${have} a ${asStated(prop.component!, 'boreDiameter')} bore on the ${asStated(motor.component!, 'shaftDiameter')} shaft of ${motors}: an adapter ring or prop adapter is needed.`, parts)]
     }
     return []
-  })
+  }))
+}
+
+/** "Propeller 1", "Propeller 1 and Propeller 2", "Propeller 1, Propeller 2 and 3 more". */
+function names(parts: readonly CheckPart[]): string {
+  const n = parts.map((p) => p.name)
+  if (n.length <= 2) return n.join(' and ')
+  if (n.length <= 4) return `${n.slice(0, -1).join(', ')} and ${n.at(-1)}`
+  return `${n.slice(0, 3).join(', ')} and ${n.length - 3} more`
 }
 
 function propHand(input: CheckInput): Finding[] {
-  return propMotorPairs(input).flatMap(([prop, motor]) => {
+  // Propellers on a motor mount (whose spin is set) that cannot be compared, by reason.
+  const unlinked: CheckPart[] = []
+  const unstated: CheckPart[] = []
+  const errors = propMotorPairs(input).flatMap(([prop, motor]) => {
     const hand = text(prop.component, 'hand')
     const spin = motor.motorMount?.spin
-    if (!hand || hand === 'pair' || !spin) return []
+    if (!spin) return []
+    if (!hand) {
+      ;(prop.component ? unstated : unlinked).push(prop)
+      return []
+    }
+    if (hand === 'pair') return []
     if (hand !== spin) {
       return [
         finding('prop-hand', 'error', `${label(prop)} turns ${hand.toUpperCase()} but motor mount ${motor.motorMount!.number} spins ${spin.toUpperCase()}.`, [prop, motor]),
@@ -337,6 +367,15 @@ function propHand(input: CheckInput): Finding[] {
     }
     return []
   })
+  const be = (ps: CheckPart[]) => (ps.length === 1 ? 'is' : 'are')
+  if (unlinked.length > 0) {
+    errors.push(finding('prop-hand', 'cannot-check', `Cannot check the rotation of ${names(unlinked)}: ${unlinked.length === 1 ? 'it' : 'they'} ${be(unlinked)} not linked to a component.`, unlinked, 'unlinked'))
+  }
+  if (unstated.length > 0) {
+    const models = [...new Set(unstated.map((p) => p.component!.name))]
+    errors.push(finding('prop-hand', 'cannot-check', `Cannot check the rotation of ${names(unstated)}: ${models.join(', ')} ${models.length === 1 ? 'states' : 'state'} no hand (CW, CCW or pair).`, unstated, 'unstated'))
+  }
+  return errors
 }
 
 // ---- geometry ----------------------------------------------------------------------------------

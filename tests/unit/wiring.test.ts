@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest'
 import type { Component, SpecValue } from '../../electron/ipc/component-fields'
 import type { AssemblyDocument, Wire } from '../../electron/ipc/contract'
 import { runChecks, type CheckInput } from '../../src/domain/checks'
-import { autoWire, canConnect, escOfMotor, portsOf, wiringFindings, type WiringPart } from '../../src/domain/wiring'
+import { autoWire, canConnect, escOfMotor, portsOf, wireIndex, wiresAt, wiringFindings, type WiringPart } from '../../src/domain/wiring'
+import { calculate, DEFAULT_LOAD_CASE } from '../../src/domain/electrical'
 import { addWire, movePort, placeNode, removeWire } from '../../src/features/electrical/wiring-ops'
 import { deletePart } from '../../src/features/workshop/assembly-ops'
 
@@ -142,6 +143,65 @@ describe('wiring checks', () => {
     expect(f[0]!.partIds).toEqual([by('ESC 2').id, by('Motor 2').id])
     const unwired = runChecks({ ...input, escOfMotor: {} }).filter((x) => x.rule === 'esc-current')
     expect(unwired[0]!.severity).toBe('cannot-check')
+  })
+})
+
+/** A deliberately large assembly: `pairs` single ESCs and motors on one battery, PM02 and Pixhawk 6C. */
+function large(pairs: number) {
+  return [
+    part('Battery 1', 'battery', lib('Tattu G-Tech 5200mAh 4S 35C')),
+    part('Power module', 'payload', PM02),
+    part('Flight controller 1', 'flight-controller', PX),
+    ...Array.from({ length: pairs }, (_, i) => part(`ESC ${i + 1}`, 'esc', T45)),
+    ...Array.from({ length: pairs }, (_, i) => part(`Motor ${i + 1}`, 'motor', lib('MN3110 KV700'), i + 1)),
+    part('GPS', 'payload', lib('M10 GPS')),
+    part('Radio', 'payload', lib('SiK Telemetry Radio V3 100mW')),
+  ]
+}
+
+describe('wire index (3.8 performance)', () => {
+  it('lists the same wires at every port as a scan of all wires, a wire looping on one port once', () => {
+    const parts = large(40)
+    const { wires } = autoWire(parts, id)
+    expect(wires).toHaveLength(100) // 1 + 40 + 1 + 40 + 16 PWM + 2 peripherals
+    const loop: Wire = { id: id(), from: { partId: parts[0]!.id, port: 'power' }, to: { partId: parts[0]!.id, port: 'power' }, gaugeAwg: null, lengthMm: null, color: null }
+    const all = [...wires, loop]
+    const at = wireIndex(all)
+    for (const p of parts) for (const port of [...portsOf(p).map((x) => x.id), 'missing']) {
+      const end = { partId: p.id, port }
+      expect(at(end), `${p.name}/${port}`).toEqual(wiresAt(all, end))
+    }
+    expect(at({ partId: parts[0]!.id, port: 'power' }).filter((w) => w.id === loop.id)).toHaveLength(1)
+  })
+
+  it('checks and calculates the schema maximum of 2000 wires in linear time', () => {
+    // 1 + 995 + 1 + 995 + 16 + 2 = 2010 > 2000, so 990 pairs: 1 + 990 + 1 + 990 + 16 + 2 = 2000.
+    const parts = large(990)
+    const { wires } = autoWire(parts, id)
+    expect(wires).toHaveLength(2000)
+    /** Median of five runs after a warm-up, so one slow run on a busy machine does not fail the test. */
+    const time = (f: () => unknown) => {
+      f()
+      const runs = Array.from({ length: 5 }, () => {
+        const t0 = performance.now()
+        f()
+        return performance.now() - t0
+      }).sort((x, y) => x - y)
+      return runs[2]!
+    }
+    const checks = time(() => wiringFindings(parts, wires))
+    const pairing = time(() => escOfMotor(parts, wires))
+    const calc = time(() => calculate(parts, wires, DEFAULT_LOAD_CASE))
+    console.log(`2000 wires: wiringFindings ${checks.toFixed(1)} ms, escOfMotor ${pairing.toFixed(1)} ms, calculate ${calc.toFixed(1)} ms`)
+    // Before 3.8, calculate took 105 ms here: it copied adjacency lists per cable and scanned all wires per port.
+    // Linear work now: about 40–50 ms for calculate and under 25 ms for the checks when run alone on the
+    // development machine, up to twice that with the whole suite running in parallel. The bound only
+    // catches a return to quadratic work; the measured figures are in the DEVLOG.
+    expect(checks).toBeLessThan(300)
+    expect(pairing).toBeLessThan(300)
+    expect(calc).toBeLessThan(300)
+    // The findings are the expected ones: outputs 17…990 have no PWM left on the Pixhawk 6C.
+    expect(wiringFindings(parts, wires).filter((f) => f.rule === 'unwired')).toHaveLength(990 - 16)
   })
 })
 

@@ -107,8 +107,11 @@ part's shape. Unused assets are removed at startup.
 never touches the disk. ADR 0003 covers the Z-up renderer, ADR 0004 the asset
 store.
 
-Component specifications (Phase 3) store each value with provenance:
-`{value, unit, source: "manufacturer" | "user" | "estimated", reference}`.
+Component specifications (Phase 3) store each value as its source states it, with
+provenance: `{value, unit, source: "manufacturer" | "measured" | "user", reference,
+condition}`, converted to SI only where a check or calculation uses it (ADR 0007).
+Checks, wiring rules and electrical calculations are pure modules in `src/domain/`,
+with no React, three.js, IPC or Node imports; ESLint enforces this (ADR 0008).
 
 ## Security
 

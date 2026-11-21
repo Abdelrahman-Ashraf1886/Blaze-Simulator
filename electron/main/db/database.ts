@@ -8,7 +8,7 @@ import m0006 from '../../../database/migrations/0006_part_components.sql?raw'
 import m0007 from '../../../database/migrations/0007_wiring.sql?raw'
 import m0008 from '../../../database/migrations/0008_frame_mass.sql?raw'
 import m0009 from '../../../database/migrations/0009_part_kinds_inertia.sql?raw'
-import m0010 from '../../../database/migrations/0010_interference.sql?raw'
+import m0010 from '../../../database/migrations/0010_collisions.sql?raw'
 
 export type Db = Database.Database
 
@@ -44,4 +44,33 @@ export function migrate(db: Db): void {
       db.pragma(`user_version = ${v + 1}`)
     })()
   }
+  repairUnshippedMigrations(db)
+}
+
+/**
+ * Columns a migration added after a first version of it had already run on development
+ * databases. 0010 was extended (environment_json, hull_json) before it shipped; a database
+ * that ran the first 0010 (interference_json only) is at v10 without them. Adding a missing
+ * column with the same definition makes it identical to a fresh v10 database. Remove an
+ * entry once its migration has shipped; never use this for shipped migrations.
+ */
+const UNSHIPPED_COLUMNS: readonly { version: number; table: string; column: string; definition: string }[] = [
+  { version: 10, table: 'assemblies', column: 'interference_json', definition: 'TEXT CHECK (interference_json IS NULL OR json_valid(interference_json))' },
+  { version: 10, table: 'assemblies', column: 'environment_json', definition: 'TEXT CHECK (environment_json IS NULL OR json_valid(environment_json))' },
+  { version: 10, table: 'assets', column: 'hull_json', definition: 'TEXT CHECK (hull_json IS NULL OR json_valid(hull_json))' },
+]
+
+export function repairUnshippedMigrations(db: Db): string[] {
+  const added: string[] = []
+  const version = schemaVersion(db)
+  db.transaction(() => {
+    for (const c of UNSHIPPED_COLUMNS) {
+      if (version < c.version) continue
+      const cols = db.prepare(`PRAGMA table_info(${c.table})`).all() as { name: string }[]
+      if (cols.some((x) => x.name === c.column)) continue
+      db.exec(`ALTER TABLE ${c.table} ADD COLUMN ${c.column} ${c.definition}`)
+      added.push(`${c.table}.${c.column}`)
+    }
+  })()
+  return added
 }

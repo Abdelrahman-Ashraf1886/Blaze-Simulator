@@ -31,6 +31,9 @@ const api: DesktopApi = {
     list: () => ipcRenderer.invoke('assets:list'),
     import: () => ipcRenderer.invoke('assets:import'),
   },
+  engine: { dropTest: (input) => ipcRenderer.invoke('engine:dropTest', input) },
+  // Main adds this argument only when started for end-to-end tests (BLAZE_UAV_TEST_HOOKS=1).
+  testHooks: process.argv.includes('--blaze-test-hooks'),
   system: {
     status: () => ipcRenderer.invoke('system:status'),
     onEngineStatus: (listener) => {

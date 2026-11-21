@@ -11,6 +11,7 @@ import { loadBuiltIns } from './components/seed'
 import { z } from 'zod'
 import { openDatabase, schemaVersion, type Db } from './db/database'
 import { createRepositories } from './db/repositories'
+import { dropTest } from './engine/drop-test'
 import { EngineSupervisor } from './engine/supervisor'
 
 const APP_ID = 'com.blazeuav.app'
@@ -110,6 +111,8 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      // Test hooks (window.__blazeTest) for end-to-end tests only; never set in normal use.
+      ...(process.env.BLAZE_UAV_TEST_HOOKS === '1' ? { additionalArguments: ['--blaze-test-hooks'] } : {}),
     },
   })
   win.once('ready-to-show', () => win.show())
@@ -303,6 +306,8 @@ function start(): void {
   ipcMain.on(Channels.assemblySaveSync, (event, payload: unknown) => {
     event.returnValue = handlers[Channels.assemblySave]!(payload)
   })
+
+  ipcMain.handle(Channels.engineDropTest, (_event, payload: unknown) => dropTest(engine!, payload))
 
   engine.on('status', (status) => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(Channels.engineStatusChanged, status)

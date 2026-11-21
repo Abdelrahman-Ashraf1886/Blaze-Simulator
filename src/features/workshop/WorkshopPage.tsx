@@ -58,6 +58,7 @@ import { useComponents } from '@/stores/components'
 import { ComDropLine, ComMarker, MassPanel } from './MassPanel'
 import { CollisionShapes, CollisionStatus } from './CollisionView'
 import { InterferencePanel } from './InterferencePanel'
+import { EnvironmentPanel } from './EnvironmentPanel'
 import { ChecksPanel, ChecksStatus } from './ChecksPanel'
 import { PartsModel } from './PartsModel'
 import { duplicatePart, subtreeIds, updatePart } from './assembly-ops'
@@ -624,6 +625,9 @@ function ProjectPanel({
           </Section>
           <Section title="Mass">
             <MassPanel doc={doc} geo={geo} />
+          </Section>
+          <Section title="Environment">
+            <EnvironmentPanel doc={doc} geo={geo} />
           </Section>
         </>
       )}

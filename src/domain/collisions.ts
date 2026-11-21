@@ -355,6 +355,17 @@ export function penetration(a: CollisionBody, b: CollisionBody): { depthM: numbe
   return depth > EPA_TOLERANCE ? { depthM: depth, normal } : null
 }
 
+/**
+ * Lowest z of a set of placed shapes (body coordinates): the support point of each shape
+ * along −Z. Exact for boxes, cylinders and hulls. Used to release a drop test from a
+ * stated clearance above the ground.
+ */
+export function lowestPoint(bodies: readonly Pick<CollisionBody, 'shape' | 'position' | 'quaternion'>[]): number {
+  let low = Infinity
+  for (const b of bodies) low = Math.min(low, place(b as CollisionBody).support([0, 0, -1])[2])
+  return low
+}
+
 // ---- pairs and findings -------------------------------------------------------------------
 
 const key = (a: string, b: string) => (a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`)

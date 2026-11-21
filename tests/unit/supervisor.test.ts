@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { EngineStatus } from '../../electron/ipc/contract'
 import type { SimRunParams, VehicleDefinition } from '../../electron/main/engine/protocol'
 import { EngineSupervisor, describeStartError } from '../../electron/main/engine/supervisor'
+import { dropTest } from '../../electron/main/engine/drop-test'
+import { lowestPoint } from '../../src/domain/collisions'
+import { simEnvironment } from '../../src/domain/environment'
 
 /** Free space, stated (sim.run has no default environment). */
 const FREE = { ground: null, obstacles: [] }
@@ -189,6 +192,31 @@ describe('EngineSupervisor protocol v2 (real engine binary)', () => {
     await expect(s.runSim({ environment: FREE, durationS: 1.0005 })).rejects.toThrow(/^INVALID_PARAMS: .*whole number of steps/)
     await s.loadVehicle({ ...twoPartVehicle(), missingMass: ['camera'] })
     await expect(s.runSim({ environment: FREE, durationS: 1 })).rejects.toThrow(/^VEHICLE_INCOMPLETE: 1 part\(s\) have no mass: camera/)
+  })
+
+  it('drop test (the workshop IPC): the project environment reaches the engine unchanged; incomplete ones are refused', async () => {
+    const s = await connected()
+    const incomplete = simEnvironment({ ground: { friction: 0.5, restitution: null }, obstacles: [] })
+    expect(incomplete.ok).toBe(false)
+    const env = simEnvironment({ ground: { friction: 0.5, restitution: 0 }, obstacles: [] })
+    if (!env.ok) throw new Error('complete environment refused')
+    const v = twoPartVehicle()
+    // Lowest point: part a's box bottom at -20 mm. Released 100 mm above the ground.
+    const low = lowestPoint(v.parts.map((p) => ({ shape: p.shape, ...p.pose })))
+    expect(low).toBeCloseTo(-0.02, 12)
+    const r = await dropTest(s, { vehicle: v, environment: env.environment, startPositionM: [0, 0, 0.1 - low], durationS: 2 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.data.contacts.length).toBeGreaterThan(0)
+    expect(r.data.contacts.every((c) => c.with === 'ground')).toBe(true)
+    // An environment with a value missing never reaches the engine.
+    const bad = await dropTest(s, { vehicle: v, environment: { ground: { friction: 0.5 }, obstacles: [] }, startPositionM: [0, 0, 0.12], durationS: 1 })
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.error.message).toMatch(/environment\.ground\.restitution/)
+    // Released inside the ground: the engine's refusal comes back with the part named.
+    const inside = await dropTest(s, { vehicle: v, environment: env.environment, startPositionM: [0, 0, 0], durationS: 1 })
+    expect(inside.ok).toBe(false)
+    if (!inside.ok) expect(inside.error.message).toMatch(/^INVALID_PARAMS: .*a is 20\.000 mm inside the ground/)
   })
 
   it('needs the ground friction and restitution; reports contacts with the ground and obstacles', async () => {

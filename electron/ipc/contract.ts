@@ -236,6 +236,63 @@ export interface AssemblyDocument {
    * null = the starting tolerance and no allowed pairs.
    */
   interference?: InterferenceSettingsDoc | null
+  /**
+   * The project's flight environment (src/domain/environment.ts). Absent or null = nothing
+   * entered: the simulation then lists the ground's friction and restitution as missing.
+   */
+  environment?: EnvironmentDoc | null
+}
+
+/**
+ * A surface's contact values, the user's entries. null = not set; there are no defaults
+ * (no source states them), and the simulation refuses to start until they are set.
+ */
+export interface SurfaceValues {
+  /** Coulomb friction coefficient of the contact with the vehicle, ≥ 0. */
+  friction: number | null
+  /** Coefficient of restitution of that contact, 0 to 1. */
+  restitution: number | null
+}
+
+/** A fixed box obstacle, world frame (+Z up, metres). */
+export interface ObstacleDoc extends SurfaceValues {
+  id: string
+  name: string
+  center: [number, number, number]
+  size: [number, number, number]
+  /** Rotation about the world +Z axis, radians. */
+  yaw: number
+}
+
+/** Ground plane z = 0 and box obstacles. */
+export interface EnvironmentDoc {
+  ground: SurfaceValues
+  obstacles: ObstacleDoc[]
+}
+
+export const MAX_OBSTACLES = 50
+
+/** A drop test: the vehicle released from rest above the ground, simulated by the engine. */
+export interface DropTestInput {
+  /** The pinned VehicleDefinition (src/domain/mass.ts); validated in main and in the engine. */
+  vehicle: unknown
+  /** The engine's environment (src/domain/environment.ts `simEnvironment`). */
+  environment: unknown
+  /** Body origin at release, world frame, m. */
+  startPositionM: [number, number, number]
+  durationS: number
+}
+
+export interface DropTestResult {
+  durationS: number
+  state: {
+    positionM: [number, number, number]
+    quaternion: [number, number, number, number]
+    linearVelocityMps: [number, number, number]
+    angularVelocityRadps: [number, number, number]
+  }
+  contacts: { partId: string; with: string; startS: number; endS: number | null }[]
+  contactsDropped: number
 }
 
 /** Id an allowed pair uses for the parametric frame (its plate and arms are one part). */
@@ -320,6 +377,8 @@ export const Channels = {
   viewportSavePng: 'viewport:savePng',
   /** main → renderer push */
   engineStatusChanged: 'engine:statusChanged',
+  /** Loads a vehicle into the engine and drops it in the given environment. */
+  engineDropTest: 'engine:dropTest',
 } as const
 
 /** Shape exposed on `window.api` by the preload script. */
@@ -361,6 +420,11 @@ export interface DesktopApi {
     /** PNG bytes and a proposed file name; resolves to null when the user cancels. */
     savePng(input: { bytes: Uint8Array; name: string }): Promise<IpcResult<{ path: string } | null>>
   }
+  engine: {
+    dropTest(input: DropTestInput): Promise<IpcResult<DropTestResult>>
+  }
+  /** True when main was started for end-to-end tests (BLAZE_UAV_TEST_HOOKS=1); never in normal use. */
+  testHooks: boolean
   system: {
     status(): Promise<IpcResult<SystemStatus>>
     onEngineStatus(listener: (status: EngineStatus) => void): () => void

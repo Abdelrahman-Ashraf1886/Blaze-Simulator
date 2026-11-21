@@ -7,3 +7,7 @@ description = "Pure simulation library: no IO, no transport, no UI."
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
+# Physics: integration and contacts (ADR 0005). Exact pin: a version bump can
+# change results bit-for-bit, so it is a deliberate, reviewed change.
+rapier3d-f64 = { version = "=0.36.1", features = ["enhanced-determinism"] }

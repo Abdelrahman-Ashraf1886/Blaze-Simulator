@@ -48,7 +48,7 @@ test('engine connects, projects persist across restarts, unbuilt sections are di
 
   await expect(engineState(page)).toHaveAttribute('data-state', 'connected', { timeout: 15_000 })
   await expect(page.getByTestId('status-bar').getByTestId('engine-state')).toHaveAttribute('data-state', 'connected')
-  await expect(page.getByTestId('system-status')).toContainText('v1') // protocol / schema
+  await expect(page.getByTestId('system-status')).toContainText('v2') // engine protocol
   await expect(page.getByTestId('recent-projects')).toContainText('No projects yet')
 
   await page.getByTestId('new-project').click()

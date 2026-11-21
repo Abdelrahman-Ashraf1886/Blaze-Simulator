@@ -4,12 +4,15 @@
 //! knows nothing about Electron, IPC or rendering, so every model can be unit
 //! tested in isolation and reused by other hosts.
 //!
-//! Status (Phase 1): only foundational math types exist. Physics, aerodynamics,
-//! motor, battery, controller and sensor models are added in Phases 4–7; see
-//! `documentation/ROADMAP.md`. Modules are added when they contain real,
-//! tested models, never as empty stubs.
+//! Status (Phase 4.3): the vehicle definition and its validation
+//! (`vehicle`), and the fixed-step rigid-body core on rapier (`sim`). Motors,
+//! battery, aerodynamics, contacts and the controller follow in 4.4–4.7; see
+//! `documentation/plans/phase-4-physics.md`. Modules are added when they
+//! contain real, tested models, never as empty stubs.
 
 pub mod math;
+pub mod sim;
+pub mod vehicle;
 
 /// Engine crate version, reported to the host during the handshake.
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");

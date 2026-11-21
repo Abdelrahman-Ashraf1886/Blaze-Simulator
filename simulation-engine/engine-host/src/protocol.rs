@@ -1,4 +1,7 @@
-//! Engine protocol v1.
+//! Engine protocol v2.
+//!
+//! v2 adds `vehicle.load` and `sim.run` (batch); `hello`, `ping` and
+//! `shutdown` are unchanged from v1.
 //!
 //! Transport: newline-delimited JSON (one message per line, UTF-8) on the
 //! engine's stdin (requests) and stdout (responses). stderr is free-form log
@@ -14,7 +17,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -22,6 +25,23 @@ pub enum Command {
     Hello,
     Ping,
     Shutdown,
+    /// Validates a `VehicleDefinition` and, if valid, makes it the vehicle
+    /// that `sim.run` simulates. An invalid one clears the loaded vehicle.
+    #[serde(rename = "vehicle.load")]
+    VehicleLoad { vehicle: Value },
+    /// Runs the loaded vehicle from rest at the origin (identity attitude)
+    /// for `durationS`, with an optional constant body-frame force (through
+    /// the CoM) and torque (about the CoM); returns the final state and hash.
+    #[serde(rename = "sim.run", rename_all = "camelCase")]
+    SimRun {
+        duration_s: f64,
+        #[serde(default)]
+        dt_s: Option<f64>,
+        #[serde(default)]
+        force_body_n: Option<[f64; 3]>,
+        #[serde(default)]
+        torque_body_nm: Option<[f64; 3]>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -51,6 +71,12 @@ pub struct PongResult {
 pub enum ErrorCode {
     InvalidJson,
     InvalidRequest,
+    /// Parameters parsed but are out of range (e.g. a negative duration).
+    InvalidParams,
+    /// `sim.run` before a valid `vehicle.load`.
+    NoVehicle,
+    /// The loaded vehicle lists parts without a mass; it cannot fly.
+    VehicleIncomplete,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -107,6 +133,21 @@ mod tests {
             parse_request(r#"{"id":3,"type":"shutdown"}"#).unwrap().command,
             Command::Shutdown
         );
+        assert_eq!(
+            parse_request(r#"{"id":4,"type":"sim.run","durationS":1.5,"forceBodyN":[0,0,9]}"#)
+                .unwrap()
+                .command,
+            Command::SimRun {
+                duration_s: 1.5,
+                dt_s: None,
+                force_body_n: Some([0.0, 0.0, 9.0]),
+                torque_body_nm: None
+            }
+        );
+        assert!(matches!(
+            parse_request(r#"{"id":5,"type":"vehicle.load","vehicle":{}}"#).unwrap().command,
+            Command::VehicleLoad { .. }
+        ));
     }
 
     #[test]

@@ -1,5 +1,53 @@
 # Development log
 
+## 2026-11-21 — Phase 4 data sources: APC performance, reference data, gaps
+
+Data only, plus the units and the propeller field needed to hold it. No simulation
+code yet.
+
+**Built**
+- **APC performance tables**:
+  - new propeller field `performanceTable` ("Manufacturer performance data");
+  - the seed now holds the static rows of APC's `PER3_*x45MR.dat` files for the
+    three APC props (22, 20 and 19 RPM rows), with all 15 source columns in the
+    file's units;
+  - the condition records that APC computes this data and does not measure it;
+  - the component library shows the table like the motor test tables, and
+    dimensionless columns show no unit;
+  - seed version 3.
+- **Units** (`src/domain/units.ts`), all with exact definitions:
+  - imperial: lbf, hp (mechanical), in·lbf, mph;
+  - SI: N·m, m/s, m/s², Pa, K, kg/m³, g/cm³, K/km, kg/kmol, N·m/(kmol·K),
+    J/(kg·K);
+  - also deg/s, g/W, and "1" for dimensionless numbers.
+- **`database/reference/physics.v1.json`** (format in
+  `database/reference/README.md`), with cited sets:
+  - ISA (U.S. Standard Atmosphere 1976);
+  - carbon-fibre plate density (two datasheets);
+  - PX4 v1.13.3 multicopter controller defaults (38 parameters, each pointing at
+    its `PARAM_DEFINE` line).
+- The plan has a new section, "Data sources found / not found". No source states
+  the MN3110 rotor inertia, the Tattu pack's internal resistance, or Ct/Cp for the
+  T-Motor props; these stay user inputs.
+
+**Tests**
+- `reference-data.test.ts` checks that:
+  - every entry is complete (source, locator, date, condition, known unit);
+  - the derived R equals R*/M0;
+  - the cited ρ0 matches P0·M0/(R*·T0) to the standard's 5 figures;
+  - the PX4 keys are the exact parameter names on their cited lines.
+- `seed.test.ts` checks the APC tables: the imperial and SI columns agree within
+  the printed rounding, and P = T·n·D·Cp/Ct holds within 1 % (this check does not
+  depend on the unstated density).
+- `units.test.ts` covers the new definitions.
+
+**Notes**
+- apcprop.com blocks scripted downloads (Cloudflare), so the files were read in a
+  browser.
+- The NTRS scan of USSA 1976 has no usable text layer, so its pages were read as
+  images. Its Table 2 prints R* as "8.31432 × 10⁻³"; the body text (p. 3) gives
+  10³, which is the value used.
+
 ## 2026-11-21 — Workshop realism: frame, parts, materials, lighting
 
 Display only. Sizes, masses and every check still use the part envelopes and the

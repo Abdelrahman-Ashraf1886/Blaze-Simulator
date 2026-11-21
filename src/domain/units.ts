@@ -14,6 +14,11 @@
  * - C rating: a current of n·C draws the full capacity in 1/n hours, so its SI
  *   factor is 1/3600 s⁻¹ (current = rate × charge);
  * - gram-force = 9.80665 × 10⁻³ N (standard gravity, exact), used by thrust tables;
+ * - pound-force = 0.45359237 kg × 9.80665 m/s² = 4.4482216152605 N (exact);
+ * - horsepower (mechanical) = 550 ft·lbf/s = 745.69987158227022 W (exact; ft = 0.3048 m);
+ * - mile per hour = 1609.344 m / 3600 s = 0.44704 m/s (exact);
+ * - "1" is the unit of a dimensionless number (coefficients, ratios, Mach, Reynolds);
+ * - kmol = 1000 mol, so kg/kmol and N·m/(kmol·K) carry a factor 10⁻³ to SI;
  * - AWG → cross-section (ASTM B258): d = 0.127 mm × 92^((36 − n)/39), A = π·d²/4.
  */
 
@@ -32,6 +37,17 @@ export type Dimension =
   | 'force'
   | 'ratio'
   | 'angularSpeed'
+  | 'torque'
+  | 'speed'
+  | 'acceleration'
+  | 'thrustPerPower'
+  | 'dimensionless'
+  | 'density'
+  | 'pressure'
+  | 'temperatureGradient'
+  | 'molarMass'
+  | 'molarGasConstant'
+  | 'specificGasConstant'
 
 interface UnitDef {
   dimension: Dimension
@@ -42,6 +58,8 @@ interface UnitDef {
   toSI?: (v: number) => number
   fromSI?: (si: number) => number
 }
+
+const LBF_N = 0.45359237 * 9.80665
 
 const awgDiameterM = (n: number) => 0.127e-3 * 92 ** ((36 - n) / 39)
 
@@ -70,8 +88,27 @@ export const UNITS = {
   // Gram- and kilogram-force, as motor thrust tables state thrust (standard gravity 9.80665 m/s², exact).
   gf: { dimension: 'force', factor: 0.00980665 },
   kgf: { dimension: 'force', factor: 9.80665 },
+  lbf: { dimension: 'force', factor: LBF_N },
+  hp: { dimension: 'power', factor: 550 * 0.3048 * LBF_N },
+  'N·m': { dimension: 'torque', factor: 1 },
+  'in·lbf': { dimension: 'torque', factor: 0.0254 * LBF_N },
+  'm/s': { dimension: 'speed', factor: 1 },
+  mph: { dimension: 'speed', factor: 0.44704 },
+  'm/s²': { dimension: 'acceleration', factor: 1 },
+  // Gram-force of thrust per watt, as propeller and motor tables state efficiency.
+  'g/W': { dimension: 'thrustPerPower', factor: 0.00980665 },
+  '1': { dimension: 'dimensionless', factor: 1 },
+  'kg/m³': { dimension: 'density', factor: 1 },
+  'g/cm³': { dimension: 'density', factor: 1000 },
+  Pa: { dimension: 'pressure', factor: 1 },
+  K: { dimension: 'temperature', factor: 1 },
+  'K/km': { dimension: 'temperatureGradient', factor: 0.001 },
+  'kg/kmol': { dimension: 'molarMass', factor: 0.001 },
+  'N·m/(kmol·K)': { dimension: 'molarGasConstant', factor: 0.001 },
+  'J/(kg·K)': { dimension: 'specificGasConstant', factor: 1 },
   '%': { dimension: 'ratio', factor: 0.01 },
   rpm: { dimension: 'angularSpeed', factor: (2 * Math.PI) / 60 },
+  'deg/s': { dimension: 'angularSpeed', factor: Math.PI / 180 },
   'mm²': { dimension: 'area', factor: 1e-6 },
   AWG: {
     dimension: 'area',

@@ -201,6 +201,51 @@ motor rotor inertia (or time constant), ground friction and restitution, and k_T
 for any motor and prop pair without data. A "Ready to fly" checklist lists exactly
 what is missing for the current build, with a link to each field.
 
+## Data sources found / not found
+
+Searched on 2026-11-21. The found values are in the seed (APC) and in
+`database/reference/physics.v1.json` (format: `database/reference/README.md`).
+
+**Found**
+- **APC 10x4.5MR, 11x4.5MR, 12x4.5MR performance**:
+  - source: `PER3_10x45MR.dat`, `PER3_11x45MR.dat`, `PER3_12x45MR.dat` from
+    https://www.apcprop.com/performance-data-new/ (file version v2022-0915,
+    simulation date 09/22/2022);
+  - stored: the static (V = 0) row of every RPM block, with all 15 columns in the
+    file's units;
+  - caveat: APC states this data is **computed** by vortex-theory analysis of the
+    blade geometry, not measured, and the file does not state the air density.
+    A k_T fitted to it (4.5) must say it comes from computed data.
+- **Carbon-fibre plate density**: 1.6 g/cm³ from two datasheets:
+  - Elevated Materials EM-CF Sheet: 0/90 layup, toughened epoxy, fibre fraction
+    not stated;
+  - RS PRO carbon fibre epoxy sheet: quasi-isotropic, 50 % fibre volume fraction.
+- **PX4 v1.13.3 defaults**: 38 parameters, each cited to its `PARAM_DEFINE` line
+  at tag v1.13.3:
+  - angle P;
+  - rate P/I/D/FF/K and integrator limits;
+  - max rates (`MC_*RATE_MAX`, `MC_ACRO_*_MAX`);
+  - the vertical position/velocity gains (`MPC_Z_P`, `MPC_Z_VEL_P/I/D_ACC`), with
+    the thrust limits and hover thrust.
+- **ISA**: U.S. Standard Atmosphere 1976 (NASA NTRS 19770009539), giving g0, P0,
+  T0, ρ0, the 0–11 km lapse rate, R* and M0.
+  - The specific gas constant is not stated in that document, so it is derived as
+    R*/M0 = 287.053 J/(kg·K).
+  - Table 2 misprints R*'s exponent; the body text on p. 3 is used.
+
+**Not found (stays a user input, as planned)**
+- **T-Motor MN3110 rotor (bell) inertia**:
+  - the product page (Specification tab) states configuration, internal
+    resistance, dimensions, mass, idle current, limits and the test table;
+  - it gives no rotor inertia, rotor mass or mechanical time constant;
+  - a web search found none either.
+- **Tattu G-Tech 5200 mAh 4S 35C internal resistance**: the product page only says
+  "Low IR", and retailer listings give no number.
+- **T-Motor prop Ct/Cp**: the P13*4.4 and P15*5 pages state model, blade weight,
+  material, thrust limitation, optimum RPM and temperatures, with no Ct, Cp or
+  performance table. So k_T for these props can only come from the motor's thrust
+  table (or the user).
+
 ## Milestones
 
 Each milestone ends with `npm run test:all` green, a DEVLOG entry and screenshots.

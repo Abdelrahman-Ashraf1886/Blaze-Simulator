@@ -1,0 +1,586 @@
+{
+  "format": "blaze-uav.reference",
+  "version": 1,
+  "note": "Physical reference data for the simulation. Every value is stored as its source states it (units from src/domain/units.ts) with the source, the place in it, the date it was read and the stated condition. Format: database/reference/README.md.",
+  "sets": [
+    {
+      "id": "isa",
+      "title": "Standard atmosphere (U.S. Standard Atmosphere, 1976)",
+      "note": "The NASA NTRS PDF is a scan; page numbers below are the printed page with the PDF page in brackets.",
+      "values": [
+        {
+          "key": "standardGravity",
+          "value": 9.80665,
+          "unit": "m/s²",
+          "source": "standard",
+          "reference": {
+            "url": "https://ntrs.nasa.gov/api/citations/19770009539/downloads/19770009539.pdf",
+            "document": "U.S. Standard Atmosphere, 1976 (NOAA-S/T 76-1562, NASA-TM-X-74335)",
+            "locator": "Table 2 (Category II constants), p. 2 [PDF 18]; text p. 3 [PDF 19]",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "g0, sea-level value of the acceleration of gravity adopted for the Standard"
+        },
+        {
+          "key": "seaLevelPressure",
+          "value": 101325,
+          "unit": "Pa",
+          "source": "standard",
+          "reference": {
+            "url": "https://ntrs.nasa.gov/api/citations/19770009539/downloads/19770009539.pdf",
+            "document": "U.S. Standard Atmosphere, 1976 (NOAA-S/T 76-1562, NASA-TM-X-74335)",
+            "locator": "Table 2, p. 2 [PDF 18]; text p. 3 [PDF 19]",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "P0, stated as 1.013250 × 10^5 N/m² (or Pa)"
+        },
+        {
+          "key": "seaLevelTemperature",
+          "value": 288.15,
+          "unit": "K",
+          "source": "standard",
+          "reference": {
+            "url": "https://ntrs.nasa.gov/api/citations/19770009539/downloads/19770009539.pdf",
+            "document": "U.S. Standard Atmosphere, 1976 (NOAA-S/T 76-1562, NASA-TM-X-74335)",
+            "locator": "Table 2, p. 2 [PDF 18]; text p. 4 [PDF 20]",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "T0, standard sea-level temperature (15 °C)"
+        },
+        {
+          "key": "seaLevelDensity",
+          "value": 1.225,
+          "unit": "kg/m³",
+          "source": "standard",
+          "reference": {
+            "url": "https://ntrs.nasa.gov/api/citations/19770009539/downloads/19770009539.pdf",
+            "document": "U.S. Standard Atmosphere, 1976 (NOAA-S/T 76-1562, NASA-TM-X-74335)",
+            "locator": "Table I (metric units), altitude 0 row, PDF p. 67",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "ρ at 0 m, printed as 1.2250 kg/m³"
+        },
+        {
+          "key": "troposphereLapseRate",
+          "value": -6.5,
+          "unit": "K/km",
+          "source": "standard",
+          "reference": {
+            "url": "https://ntrs.nasa.gov/api/citations/19770009539/downloads/19770009539.pdf",
+            "document": "U.S. Standard Atmosphere, 1976 (NOAA-S/T 76-1562, NASA-TM-X-74335)",
+            "locator": "Table 4, p. 3 [PDF 19], b = 0",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "L_M,0 = dT_M/dH from 0 to 11 km′; per geopotential km, of molecular-scale temperature (equal to T below 80 km)"
+        },
+        {
+          "key": "universalGasConstant",
+          "value": 8314.32,
+          "unit": "N·m/(kmol·K)",
+          "source": "standard",
+          "reference": {
+            "url": "https://ntrs.nasa.gov/api/citations/19770009539/downloads/19770009539.pdf",
+            "document": "U.S. Standard Atmosphere, 1976 (NOAA-S/T 76-1562, NASA-TM-X-74335)",
+            "locator": "Text under R*, p. 3 [PDF 19]",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "R* = 8.31432 × 10^3 N·m/(kmol·K); Table 2 on p. 2 misprints the exponent as 10^-3"
+        },
+        {
+          "key": "seaLevelMolarMass",
+          "value": 28.9644,
+          "unit": "kg/kmol",
+          "source": "standard",
+          "reference": {
+            "url": "https://ntrs.nasa.gov/api/citations/19770009539/downloads/19770009539.pdf",
+            "document": "U.S. Standard Atmosphere, 1976 (NOAA-S/T 76-1562, NASA-TM-X-74335)",
+            "locator": "Section 1.2.4, eq. (21), p. 9 [PDF 25]",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "M0, mean molecular weight of sea-level dry air"
+        },
+        {
+          "key": "specificGasConstant",
+          "value": 287.053,
+          "unit": "J/(kg·K)",
+          "source": "derived",
+          "formula": "universalGasConstant / seaLevelMolarMass",
+          "inputs": [
+            "universalGasConstant",
+            "seaLevelMolarMass"
+          ],
+          "condition": "Not stated in USSA 1976; R = R*/M0 from its equation of state P = ρR*T/M (eq. 1, p. 6), rounded to 6 significant figures"
+        }
+      ]
+    },
+    {
+      "id": "carbonFibrePlate",
+      "title": "Carbon-fibre plate density (manufacturer datasheets)",
+      "note": "For a frame mass computed from plate volume. The frame plates' own manufacturer is not known, so the user picks the datasheet that matches their plate or enters their own.",
+      "values": [
+        {
+          "key": "elevatedMaterialsEmCfSheet",
+          "value": 1.6,
+          "unit": "g/cm³",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.elevatedmaterials.com/wp-content/uploads/2022/03/Elevated-Materials-Sheet-Product-Data-Sheet.pdf",
+            "document": "Elevated Materials, EM-CF Sheet - Product Data Sheet",
+            "locator": "Density line, p. 1",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Stated as \"Density lbs/in3 (g/cm3): .057 (1.6)\"; carbon fiber plate, balanced 0/90 layup (woven or UD), toughened epoxy; fibre volume fraction not stated"
+        },
+        {
+          "key": "rsProCarbonFibreEpoxySheet",
+          "value": 1.6,
+          "unit": "g/cm³",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.rs-online.com/387c/A700000015513457.pdf",
+            "document": "RS PRO High Strength Carbon Fibre Epoxy Sheet, 300 × 300 × 1.3 mm (RS 0783211)",
+            "locator": "Mechanical Specifications, p. 3",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Quasi-isotropic carbon fibre + epoxy sheet; volume fraction of fibres 50 % (stated)"
+        }
+      ]
+    },
+    {
+      "id": "px4",
+      "title": "PX4 multicopter controller defaults (PX4-Autopilot v1.13.3)",
+      "note": "Firmware parameter defaults from the parameter definitions at tag v1.13.3 (commit 1c8ab2a0d7db2d14a6f320ebd8766b5ffaea28fa). Airframe start-up files may override them. A unit is given only where the source states one (@unit); otherwise the condition quotes how the source defines the value. Rate-loop outputs are normalised torque commands.",
+      "values": [
+        {
+          "key": "MC_ROLL_P",
+          "value": 6.5,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_att_control/mc_att_control_params.c#L53",
+            "locator": "mc_att_control_params.c line 53: PARAM_DEFINE_FLOAT(MC_ROLL_P, 6.5f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Roll P gain — Roll proportional gain, i.e. desired angular speed in rad/s for error 1 rad."
+        },
+        {
+          "key": "MC_PITCH_P",
+          "value": 6.5,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_att_control/mc_att_control_params.c#L66",
+            "locator": "mc_att_control_params.c line 66: PARAM_DEFINE_FLOAT(MC_PITCH_P, 6.5f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Pitch P gain — Pitch proportional gain, i.e. desired angular speed in rad/s for error 1 rad."
+        },
+        {
+          "key": "MC_YAW_P",
+          "value": 2.8,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_att_control/mc_att_control_params.c#L79",
+            "locator": "mc_att_control_params.c line 79: PARAM_DEFINE_FLOAT(MC_YAW_P, 2.8f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Yaw P gain — Yaw proportional gain, i.e. desired angular speed in rad/s for error 1 rad."
+        },
+        {
+          "key": "MC_YAW_WEIGHT",
+          "value": 0.4,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_att_control/mc_att_control_params.c#L97",
+            "locator": "mc_att_control_params.c line 97: PARAM_DEFINE_FLOAT(MC_YAW_WEIGHT, 0.4f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Yaw weight — A fraction [0,1] deprioritizing yaw compared to roll and pitch in non-linear attitude control."
+        },
+        {
+          "key": "MC_ROLLRATE_MAX",
+          "value": 220,
+          "unit": "deg/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_att_control/mc_att_control_params.c#L116",
+            "locator": "mc_att_control_params.c line 116: PARAM_DEFINE_FLOAT(MC_ROLLRATE_MAX, 220.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Max roll rate — Limit for roll rate in manual and auto modes (except acro)."
+        },
+        {
+          "key": "MC_PITCHRATE_MAX",
+          "value": 220,
+          "unit": "deg/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_att_control/mc_att_control_params.c#L135",
+            "locator": "mc_att_control_params.c line 135: PARAM_DEFINE_FLOAT(MC_PITCHRATE_MAX, 220.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Max pitch rate — Limit for pitch rate in manual and auto modes (except acro)."
+        },
+        {
+          "key": "MC_YAWRATE_MAX",
+          "value": 200,
+          "unit": "deg/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_att_control/mc_att_control_params.c#L147",
+            "locator": "mc_att_control_params.c line 147: PARAM_DEFINE_FLOAT(MC_YAWRATE_MAX, 200.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Max yaw rate"
+        },
+        {
+          "key": "MC_ROLLRATE_P",
+          "value": 0.15,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L53",
+            "locator": "mc_rate_control_params.c line 53: PARAM_DEFINE_FLOAT(MC_ROLLRATE_P, 0.15f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Roll rate P gain — Roll rate proportional gain, i.e. control output for angular speed error 1 rad/s."
+        },
+        {
+          "key": "MC_ROLLRATE_I",
+          "value": 0.2,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L65",
+            "locator": "mc_rate_control_params.c line 65: PARAM_DEFINE_FLOAT(MC_ROLLRATE_I, 0.2f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Roll rate I gain — Roll rate integral gain. Can be set to compensate static thrust difference or gravity center offset."
+        },
+        {
+          "key": "MC_RR_INT_LIM",
+          "value": 0.3,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L77",
+            "locator": "mc_rate_control_params.c line 77: PARAM_DEFINE_FLOAT(MC_RR_INT_LIM, 0.30f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Roll rate integrator limit — Roll rate integrator limit. Can be set to increase the amount of integrator available to counteract disturbances or reduced to improve settling time after large roll moment trim changes."
+        },
+        {
+          "key": "MC_ROLLRATE_D",
+          "value": 0.003,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L90",
+            "locator": "mc_rate_control_params.c line 90: PARAM_DEFINE_FLOAT(MC_ROLLRATE_D, 0.003f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Roll rate D gain — Roll rate differential gain. Small values help reduce fast oscillations. If value is too big oscillations will appear again."
+        },
+        {
+          "key": "MC_ROLLRATE_FF",
+          "value": 0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L101",
+            "locator": "mc_rate_control_params.c line 101: PARAM_DEFINE_FLOAT(MC_ROLLRATE_FF, 0.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Roll rate feedforward — Improves tracking performance."
+        },
+        {
+          "key": "MC_ROLLRATE_K",
+          "value": 1,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L121",
+            "locator": "mc_rate_control_params.c line 121: PARAM_DEFINE_FLOAT(MC_ROLLRATE_K, 1.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Global gain of the rate controller: output = MC_ROLLRATE_K * (MC_ROLLRATE_P * error + MC_ROLLRATE_I * error_integral + MC_ROLLRATE_D * error_derivative)"
+        },
+        {
+          "key": "MC_PITCHRATE_P",
+          "value": 0.15,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L134",
+            "locator": "mc_rate_control_params.c line 134: PARAM_DEFINE_FLOAT(MC_PITCHRATE_P, 0.15f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Pitch rate P gain — Pitch rate proportional gain, i.e. control output for angular speed error 1 rad/s."
+        },
+        {
+          "key": "MC_PITCHRATE_I",
+          "value": 0.2,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L146",
+            "locator": "mc_rate_control_params.c line 146: PARAM_DEFINE_FLOAT(MC_PITCHRATE_I, 0.2f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Pitch rate I gain — Pitch rate integral gain. Can be set to compensate static thrust difference or gravity center offset."
+        },
+        {
+          "key": "MC_PR_INT_LIM",
+          "value": 0.3,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L158",
+            "locator": "mc_rate_control_params.c line 158: PARAM_DEFINE_FLOAT(MC_PR_INT_LIM, 0.30f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Pitch rate integrator limit — Pitch rate integrator limit. Can be set to increase the amount of integrator available to counteract disturbances or reduced to improve settling time after large pitch moment trim changes."
+        },
+        {
+          "key": "MC_PITCHRATE_D",
+          "value": 0.003,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L170",
+            "locator": "mc_rate_control_params.c line 170: PARAM_DEFINE_FLOAT(MC_PITCHRATE_D, 0.003f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Pitch rate D gain — Pitch rate differential gain. Small values help reduce fast oscillations. If value is too big oscillations will appear again."
+        },
+        {
+          "key": "MC_PITCHRATE_FF",
+          "value": 0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L181",
+            "locator": "mc_rate_control_params.c line 181: PARAM_DEFINE_FLOAT(MC_PITCHRATE_FF, 0.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Pitch rate feedforward — Improves tracking performance."
+        },
+        {
+          "key": "MC_PITCHRATE_K",
+          "value": 1,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L201",
+            "locator": "mc_rate_control_params.c line 201: PARAM_DEFINE_FLOAT(MC_PITCHRATE_K, 1.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Global gain of the rate controller: output = MC_PITCHRATE_K * (MC_PITCHRATE_P * error + MC_PITCHRATE_I * error_integral + MC_PITCHRATE_D * error_derivative)"
+        },
+        {
+          "key": "MC_YAWRATE_P",
+          "value": 0.2,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L214",
+            "locator": "mc_rate_control_params.c line 214: PARAM_DEFINE_FLOAT(MC_YAWRATE_P, 0.2f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Yaw rate P gain — Yaw rate proportional gain, i.e. control output for angular speed error 1 rad/s."
+        },
+        {
+          "key": "MC_YAWRATE_I",
+          "value": 0.1,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L226",
+            "locator": "mc_rate_control_params.c line 226: PARAM_DEFINE_FLOAT(MC_YAWRATE_I, 0.1f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Yaw rate I gain — Yaw rate integral gain. Can be set to compensate static thrust difference or gravity center offset."
+        },
+        {
+          "key": "MC_YR_INT_LIM",
+          "value": 0.3,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L238",
+            "locator": "mc_rate_control_params.c line 238: PARAM_DEFINE_FLOAT(MC_YR_INT_LIM, 0.30f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Yaw rate integrator limit — Yaw rate integrator limit. Can be set to increase the amount of integrator available to counteract disturbances or reduced to improve settling time after large yaw moment trim changes."
+        },
+        {
+          "key": "MC_YAWRATE_D",
+          "value": 0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L250",
+            "locator": "mc_rate_control_params.c line 250: PARAM_DEFINE_FLOAT(MC_YAWRATE_D, 0.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Yaw rate D gain — Yaw rate differential gain. Small values help reduce fast oscillations. If value is too big oscillations will appear again."
+        },
+        {
+          "key": "MC_YAWRATE_FF",
+          "value": 0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L262",
+            "locator": "mc_rate_control_params.c line 262: PARAM_DEFINE_FLOAT(MC_YAWRATE_FF, 0.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Yaw rate feedforward — Improves tracking performance."
+        },
+        {
+          "key": "MC_YAWRATE_K",
+          "value": 1,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L282",
+            "locator": "mc_rate_control_params.c line 282: PARAM_DEFINE_FLOAT(MC_YAWRATE_K, 1.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Global gain of the rate controller: output = MC_YAWRATE_K * (MC_YAWRATE_P * error + MC_YAWRATE_I * error_integral + MC_YAWRATE_D * error_derivative)"
+        },
+        {
+          "key": "MC_ACRO_R_MAX",
+          "value": 720,
+          "unit": "deg/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L296",
+            "locator": "mc_rate_control_params.c line 296: PARAM_DEFINE_FLOAT(MC_ACRO_R_MAX, 720.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Max acro roll rate — default: 2 turns per second"
+        },
+        {
+          "key": "MC_ACRO_P_MAX",
+          "value": 720,
+          "unit": "deg/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L310",
+            "locator": "mc_rate_control_params.c line 310: PARAM_DEFINE_FLOAT(MC_ACRO_P_MAX, 720.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Max acro pitch rate — default: 2 turns per second"
+        },
+        {
+          "key": "MC_ACRO_Y_MAX",
+          "value": 540,
+          "unit": "deg/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L324",
+            "locator": "mc_rate_control_params.c line 324: PARAM_DEFINE_FLOAT(MC_ACRO_Y_MAX, 540.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Max acro yaw rate — default 1.5 turns per second"
+        },
+        {
+          "key": "MPC_Z_P",
+          "value": 1,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L162",
+            "locator": "mc_pos_control_params.c line 162: PARAM_DEFINE_FLOAT(MPC_Z_P, 1.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Proportional gain for vertical position error"
+        },
+        {
+          "key": "MPC_Z_VEL_P_ACC",
+          "value": 4,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L174",
+            "locator": "mc_pos_control_params.c line 174: PARAM_DEFINE_FLOAT(MPC_Z_VEL_P_ACC, 4.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Proportional gain for vertical velocity error — defined as correction acceleration in m/s^2 per m/s velocity error"
+        },
+        {
+          "key": "MPC_Z_VEL_I_ACC",
+          "value": 2,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L188",
+            "locator": "mc_pos_control_params.c line 188: PARAM_DEFINE_FLOAT(MPC_Z_VEL_I_ACC, 2.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Integral gain for vertical velocity error — defined as correction acceleration in m/s^2 per m velocity integral"
+        },
+        {
+          "key": "MPC_Z_VEL_D_ACC",
+          "value": 0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L200",
+            "locator": "mc_pos_control_params.c line 200: PARAM_DEFINE_FLOAT(MPC_Z_VEL_D_ACC, 0.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Differential gain for vertical velocity error — defined as correction acceleration in m/s^2 per m/s^2 velocity derivative"
+        },
+        {
+          "key": "MPC_THR_HOVER",
+          "value": 0.5,
+          "unit": "1",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L75",
+            "locator": "mc_pos_control_params.c line 75: PARAM_DEFINE_FLOAT(MPC_THR_HOVER, 0.5f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Source unit \"norm\" (normalised 0–1). Hover thrust — Vertical thrust required to hover."
+        },
+        {
+          "key": "MPC_USE_HTE",
+          "value": 1,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L86",
+            "locator": "mc_pos_control_params.c line 86: PARAM_DEFINE_INT32(MPC_USE_HTE, 1);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Hover thrust source selector — Set false to use the fixed parameter MPC_THR_HOVER"
+        },
+        {
+          "key": "MPC_THR_MIN",
+          "value": 0.12,
+          "unit": "1",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L54",
+            "locator": "mc_pos_control_params.c line 54: PARAM_DEFINE_FLOAT(MPC_THR_MIN, 0.12f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Source unit \"norm\" (normalised 0–1). Minimum collective thrust in auto thrust control — It's recommended to set it > 0 to avoid free fall with zero thrust."
+        },
+        {
+          "key": "MPC_THR_MAX",
+          "value": 1,
+          "unit": "1",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L137",
+            "locator": "mc_pos_control_params.c line 137: PARAM_DEFINE_FLOAT(MPC_THR_MAX, 1.0f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Source unit \"norm\" (normalised 0–1). Maximum thrust in auto thrust control — Limit max allowed thrust"
+        },
+        {
+          "key": "MPC_Z_VEL_MAX_UP",
+          "value": 3,
+          "unit": "m/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L230",
+            "locator": "mc_pos_control_params.c line 230: PARAM_DEFINE_FLOAT(MPC_Z_VEL_MAX_UP, 3.f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Maximum ascent velocity — Ascent velocity in manual modes and offboard."
+        },
+        {
+          "key": "MPC_Z_VEL_MAX_DN",
+          "value": 1,
+          "unit": "m/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L260",
+            "locator": "mc_pos_control_params.c line 260: PARAM_DEFINE_FLOAT(MPC_Z_VEL_MAX_DN, 1.f);",
+            "retrieved": "2026-11-21"
+          },
+          "condition": "Maximum descent velocity — Descent velocity in manual modes and offboard."
+        }
+      ]
+    }
+  ]
+}

@@ -360,7 +360,7 @@ function TablePreview({ field, spec }: { field: Extract<FieldDef, { kind: 'table
             {cols.map((c) => (
               <th key={c.key} className="px-1 text-right font-medium text-fg-muted first:text-left">
                 {c.label}
-                {t.units[c.key] ? ` (${t.units[c.key]})` : ''}
+                {t.units[c.key] && t.units[c.key] !== '1' ? ` (${t.units[c.key]})` : ''}
               </th>
             ))}
           </tr>

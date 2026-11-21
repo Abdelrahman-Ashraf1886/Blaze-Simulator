@@ -5,6 +5,7 @@ import type { Component, SpecValue } from '../../electron/ipc/component-fields'
 import { loadBuiltIns } from '../../electron/main/components/seed'
 import { openDatabase } from '../../electron/main/db/database'
 import { createRepositories } from '../../electron/main/db/repositories'
+import { toSI, type Unit } from '../../src/domain/units'
 
 const seedPath = join(__dirname, '../../database/seed/components.v1.json')
 const seedText = readFileSync(seedPath, 'utf8')
@@ -60,6 +61,29 @@ describe('built-in components', () => {
       for (const r of rows) {
         expect(Math.abs(r.voltage! * r.current! - r.power!), `${m.name} ${JSON.stringify(r)}`).toBeLessThan(0.011)
         expect(r.thrust! > 0 && r.rpm! > 0 && r.throttle! > 0 && r.throttle! <= 100).toBe(true)
+      }
+    }
+  })
+
+  it('APC performance tables are static rows whose duplicated columns agree within the printed rounding', () => {
+    const props = seed.components.filter((c) => c.specs.performanceTable)
+    expect(props.map((p) => p.name).sort()).toEqual(['10x4.5MR', '11x4.5MR', '12x4.5MR'])
+    for (const p of props) {
+      const t = p.specs.performanceTable!.value as { units: Record<string, Unit>; rows: Record<string, number>[] }
+      const dia = p.specs.diameter as { value: number; unit: Unit }
+      const D = toSI(dia.value, dia.unit)
+      expect(t.rows.length, p.name).toBeGreaterThan(10)
+      for (const r of t.rows) {
+        const where = `${p.name} @ ${r.rpm} rpm`
+        expect(r.airspeed === 0 && r.advanceRatio === 0, where).toBe(true)
+        // Imperial and SI columns: each printed to 3 decimals; APC's own conversion adds up to ~0.05 %.
+        const near = (a: number, b: number, rounding: number) => Math.abs(a - b) <= rounding + 0.0005 * Math.abs(b)
+        expect(near(toSI(r.powerImperial!, 'hp'), r.power!, 0.0005 * 745.7 + 0.0005), where).toBe(true)
+        expect(near(toSI(r.thrustImperial!, 'lbf'), r.thrust!, 0.0005 * 4.45 + 0.0005), where).toBe(true)
+        expect(near(toSI(r.torqueImperial!, 'in·lbf'), r.torque!, 0.0005 * 0.113 + 0.0005), where).toBe(true)
+        // Ct/Cp definitions (file header): P = T·n·D·Cp/Ct, independent of the unstated air density.
+        const n = r.rpm! / 60
+        expect(Math.abs((r.thrust! * n * D * r.cp!) / r.ct! / r.power! - 1), where).toBeLessThan(0.01)
       }
     }
   })

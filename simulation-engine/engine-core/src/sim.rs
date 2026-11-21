@@ -17,6 +17,7 @@
 //!   v ← v + a·dt, then x ← x + v·dt. The analytical tests below state the
 //!   resulting error bounds.
 
+use crate::environment::{ContactEvent, Environment, Placed};
 use crate::math::STANDARD_GRAVITY;
 use crate::vehicle::{arr, inertia_matrix, Vehicle};
 use rapier3d_f64::math::{Matrix, Vector};
@@ -25,6 +26,17 @@ use serde::Serialize;
 
 /// Default fixed step, s (plan: rapier at 1 ms, controller at 1 kHz).
 pub const DEFAULT_DT_S: f64 = 1e-3;
+
+/// Contact solver: penetration rapier leaves uncorrected, m. rapier's default
+/// is 5 mm (`normalized_allowed_linear_error` 0.005 × `length_unit` 1), the
+/// scale of a game object; a drone's skids are a few mm, so 0.1 mm is used.
+/// A numerical tolerance of the solver, not a physical value; the drop test
+/// states the resting error it gives.
+pub const ALLOWED_LINEAR_ERROR_M: f64 = 1e-4;
+
+/// A vehicle may start touching the ground or an obstacle, but not inside it
+/// by more than this (m): rapier would push it out violently.
+pub const START_PENETRATION_TOLERANCE_M: f64 = 1e-9;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SimConfig {
@@ -72,6 +84,8 @@ pub struct Simulation {
     inertia_body: Matrix,
     config: SimConfig,
     steps: u64,
+    /// Ground, obstacles and the contact log; None for free space (`Simulation::new`).
+    env: Option<Placed>,
 }
 
 impl Simulation {
@@ -94,7 +108,42 @@ impl Simulation {
             inertia_body: inertia_matrix(vehicle.totals.inertia),
             config,
             steps: 0,
+            env: None,
         })
+    }
+
+    /// Starts from rest with identity attitude and the body origin at
+    /// `start_m` (world frame), in `env` (ground and obstacles, see
+    /// `environment.rs`). Fails if a part starts inside the ground or an
+    /// obstacle, naming it.
+    pub fn with_environment(vehicle: &Vehicle, config: SimConfig, env: &Environment, start_m: [f64; 3]) -> Result<Simulation, String> {
+        if !start_m.iter().all(|x| x.is_finite()) {
+            return Err("the start position must be finite".into());
+        }
+        let mut sim = Simulation::new(vehicle, config)?;
+        sim.world.integration_parameters.normalized_allowed_linear_error = ALLOWED_LINEAR_ERROR_M;
+        // Contact distances must be current every step for the contact log (environment.rs).
+        sim.world.integration_parameters.contact_recycling = false;
+        let rb = &mut sim.world.bodies[sim.body];
+        rb.set_translation(Vector::new(start_m[0], start_m[1], start_m[2]), true);
+        let ids = vehicle.definition.parts.iter().map(|p| p.part_id.clone()).collect();
+        let placed = Placed::insert(env, &mut sim.world, sim.body, ids);
+        // Colliders follow their body only after a step; place them now for the start check.
+        sim.world.bodies.propagate_modified_body_positions_to_colliders(&mut sim.world.colliders);
+        let inside = placed.initial_penetrations(&sim.world, sim.body, START_PENETRATION_TOLERANCE_M);
+        if !inside.is_empty() {
+            let list: Vec<String> =
+                inside.iter().map(|(p, o, d)| format!("{p} is {:.3} mm inside the {}", d * 1000.0, o.replace(':', " "))).collect();
+            return Err(format!("the vehicle starts inside the environment: {}; raise the start position", list.join("; ")));
+        }
+        sim.env = Some(placed);
+        Ok(sim)
+    }
+
+    /// Contacts with the environment so far (open ones have no end), and how
+    /// many were dropped beyond `MAX_CONTACT_EVENTS`.
+    pub fn contacts(&self) -> (Vec<ContactEvent>, u64) {
+        self.env.as_ref().map_or((Vec::new(), 0), Placed::events)
     }
 
     pub fn config(&self) -> SimConfig {
@@ -111,6 +160,9 @@ impl Simulation {
         rb.add_torque(r * input.torque_body_nm, true);
         self.world.step();
         self.steps += 1;
+        if let Some(env) = &mut self.env {
+            env.record(&self.world, (self.steps - 1) as f64 * self.config.dt_s);
+        }
     }
 
     pub fn state(&self) -> SimState {

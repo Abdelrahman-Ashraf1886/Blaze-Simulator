@@ -1,6 +1,7 @@
 //! Request dispatch and the sidecar's state (the loaded vehicle).
 
 use crate::protocol::{Command, ErrorCode, HelloResult, PongResult, Request, Response, PROTOCOL_VERSION};
+use engine_core::environment::{ContactEvent, Environment};
 use engine_core::sim::{hash_hex, BodyInput, SimConfig, SimState, Simulation, DEFAULT_DT_S};
 use engine_core::vehicle::{vec, MassTotals, Vehicle, VehicleError};
 use serde::Serialize;
@@ -40,7 +41,12 @@ struct SimRunResult {
     state: SimState,
     /// 16 hex digits, see `Simulation::state_hash`.
     state_hash: String,
+    /// Which part touched the ground or an obstacle, and when (s).
+    contacts: Vec<ContactEvent>,
+    /// Events beyond `MAX_CONTACT_EVENTS`, not listed.
+    contacts_dropped: u64,
 }
+
 
 pub struct Engine {
     started: Instant,
@@ -73,8 +79,8 @@ impl Engine {
             ),
             Command::Shutdown => (Response::ok(id, serde_json::json!({})), true),
             Command::VehicleLoad { vehicle } => (self.load(id, vehicle), false),
-            Command::SimRun { duration_s, dt_s, force_body_n, torque_body_nm } => {
-                (self.run(id, duration_s, dt_s, force_body_n, torque_body_nm), false)
+            Command::SimRun { duration_s, environment, start_position_m, dt_s, force_body_n, torque_body_nm } => {
+                (self.run(id, duration_s, environment, start_position_m, dt_s, force_body_n, torque_body_nm), false)
             }
         }
     }
@@ -102,10 +108,13 @@ impl Engine {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &self,
         id: u64,
         duration_s: f64,
+        environment: Option<serde_json::Value>,
+        start_position_m: Option<[f64; 3]>,
         dt_s: Option<f64>,
         force: Option<[f64; 3]>,
         torque: Option<[f64; 3]>,
@@ -122,6 +131,20 @@ impl Engine {
                 format!("{} part(s) have no mass: {}", missing.len(), missing.join(", ")),
             );
         }
+        let Some(environment) = environment else {
+            return Response::err(
+                Some(id),
+                ErrorCode::EnvironmentIncomplete,
+                "environment is not set: give the ground's friction and restitution (or \"ground\": null for free space) and the obstacles",
+            );
+        };
+        let environment = match Environment::from_json(&environment) {
+            Ok(e) => e,
+            Err(errors) => {
+                let list: Vec<String> = errors.iter().map(|e| format!("{}: {}", e.path, e.message)).collect();
+                return Response::err(Some(id), ErrorCode::EnvironmentIncomplete, list.join("; "));
+            }
+        };
         let dt = dt_s.unwrap_or(DEFAULT_DT_S);
         if !(dt.is_finite() && dt > 0.0) {
             return bad(format!("dtS must be a positive number (got {dt})"));
@@ -141,7 +164,7 @@ impl Engine {
             return bad("forceBodyN and torqueBodyNm must be finite".into());
         }
         let config = SimConfig { dt_s: dt, ..SimConfig::default() };
-        let mut sim = match Simulation::new(vehicle, config) {
+        let mut sim = match Simulation::with_environment(vehicle, config, &environment, start_position_m.unwrap_or([0.0; 3])) {
             Ok(s) => s,
             Err(e) => return bad(e),
         };
@@ -150,6 +173,7 @@ impl Engine {
         for _ in 0..steps {
             sim.step(&input);
         }
+        let (contacts, contacts_dropped) = sim.contacts();
         Response::ok(
             id,
             SimRunResult {
@@ -159,6 +183,8 @@ impl Engine {
                 gravity_mps2: config.gravity_mps2,
                 state: sim.state(),
                 state_hash: hash_hex(sim.state_hash()),
+                contacts,
+                contacts_dropped,
             },
         )
     }

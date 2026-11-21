@@ -112,11 +112,16 @@ fn two_part_vehicle() -> Value {
     })
 }
 
+/// Free space: no ground, no obstacles (stated, never assumed).
+fn free() -> serde_json::Value {
+    serde_json::json!({"ground": null, "obstacles": []})
+}
+
 #[test]
 fn vehicle_load_then_sim_run() {
     let mut e = Engine::start();
 
-    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 1.0}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "environment": free(), "durationS": 1.0}));
     assert_eq!(r["error"]["code"], "NO_VEHICLE");
 
     let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": two_part_vehicle()}));
@@ -126,7 +131,7 @@ fn vehicle_load_then_sim_run() {
     assert_eq!(r["result"]["totals"]["massKg"], 4.0);
 
     // Free fall for 1 s: v = −g t exactly; z within the substep bound ½ g t (dt/4).
-    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 1.0}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "environment": free(), "durationS": 1.0}));
     assert_eq!(r["ok"], true, "{r}");
     let res = &r["result"];
     assert_eq!(res["steps"], 1000);
@@ -140,11 +145,11 @@ fn vehicle_load_then_sim_run() {
     // Same run in a second engine process: bit-identical.
     let mut e2 = Engine::start();
     e2.call(serde_json::json!({"type": "vehicle.load", "vehicle": two_part_vehicle()}));
-    let r2 = e2.call(serde_json::json!({"type": "sim.run", "durationS": 1.0}));
+    let r2 = e2.call(serde_json::json!({"type": "sim.run", "environment": free(), "durationS": 1.0}));
     assert_eq!(r2["result"]["stateHash"], hash.as_str());
 
     // Hover: a body force of m·g along +Z holds position.
-    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.5, "forceBodyN": [0.0, 0.0, 4.0 * 9.80665]}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "environment": free(), "durationS": 0.5, "forceBodyN": [0.0, 0.0, 4.0 * 9.80665]}));
     assert!(r["result"]["state"]["linearVelocityMps"][2].as_f64().unwrap().abs() < 1e-12);
 }
 
@@ -160,7 +165,7 @@ fn invalid_vehicle_lists_errors_and_clears_the_loaded_one() {
     assert_eq!(r["result"]["valid"], false);
     let errors = r["result"]["errors"].as_array().unwrap();
     assert!(errors.iter().any(|e| e["path"] == "parts[0].massKg"), "{errors:?}");
-    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 1.0}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "environment": free(), "durationS": 1.0}));
     assert_eq!(r["error"]["code"], "NO_VEHICLE");
 }
 
@@ -176,6 +181,7 @@ fn sim_run_rejects_bad_params_and_incomplete_vehicles() {
     ] {
         let mut msg = params.clone();
         msg["type"] = "sim.run".into();
+        msg["environment"] = free();
         let r = e.call(msg);
         assert_eq!(r["error"]["code"], "INVALID_PARAMS", "{params} → {r}");
     }
@@ -183,7 +189,7 @@ fn sim_run_rejects_bad_params_and_incomplete_vehicles() {
     incomplete["missingMass"] = serde_json::json!(["camera"]);
     let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": incomplete}));
     assert_eq!(r["result"]["missingMass"][0], "camera");
-    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 1.0}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "environment": free(), "durationS": 1.0}));
     assert_eq!(r["error"]["code"], "VEHICLE_INCOMPLETE");
 }
 
@@ -194,11 +200,42 @@ fn sim_run_at_the_step_limit() {
     let mut e = Engine::start();
     e.call(serde_json::json!({"type": "vehicle.load", "vehicle": two_part_vehicle()}));
     let t0 = std::time::Instant::now();
-    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 120.0}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "environment": free(), "durationS": 120.0}));
     let elapsed = t0.elapsed();
     eprintln!("120 000 steps took {elapsed:?}");
     assert_eq!(r["result"]["steps"], 120_000);
     if !cfg!(debug_assertions) {
         assert!(elapsed.as_secs_f64() < 2.5, "took {elapsed:?}");
     }
+}
+
+/// Contacts through the protocol (the resting height itself is checked in
+/// engine-core `environment/tests.rs`): the two-part vehicle dropped from
+/// 0.5 m lands, tips onto both parts and comes to rest, with the contacts
+/// reported. At the origin part a (box bottom at −20 mm) starts inside the
+/// ground, which is refused; and sim.run refuses to start without the
+/// ground's friction and restitution.
+#[test]
+fn sim_run_with_ground_reports_contacts_and_needs_the_surface_values() {
+    let mut e = Engine::start();
+    e.call(serde_json::json!({"type": "vehicle.load", "vehicle": two_part_vehicle()}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 1.0}));
+    assert_eq!(r["error"]["code"], "ENVIRONMENT_INCOMPLETE", "{r}");
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 1.0, "environment": {"ground": {"friction": 0.5}, "obstacles": []}}));
+    assert_eq!(r["error"]["code"], "ENVIRONMENT_INCOMPLETE", "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().contains("environment.ground.restitution: not set"), "{r}");
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 1.0, "environment": {"ground": {"friction": 0.5, "restitution": 0.0}, "obstacles": []}}));
+    assert_eq!(r["error"]["code"], "INVALID_PARAMS", "starts inside the ground: {r}");
+    let r = e.call(serde_json::json!({
+        "type": "sim.run", "durationS": 2.0, "startPositionM": [0.0, 0.0, 0.5],
+        "environment": {"ground": {"friction": 0.5, "restitution": 0.0}, "obstacles": []}
+    }));
+    assert_eq!(r["ok"], true, "{r}");
+    let contacts = r["result"]["contacts"].as_array().unwrap();
+    assert!(!contacts.is_empty());
+    assert!(contacts.iter().all(|c| c["with"] == "ground" && c["startS"].as_f64().unwrap() > 0.2), "{contacts:?}");
+    assert!(contacts.iter().any(|c| c["endS"].is_null()), "still resting at the end: {contacts:?}");
+    assert_eq!(r["result"]["contactsDropped"], 0);
+    let v = &r["result"]["state"]["linearVelocityMps"];
+    assert!((0..3).all(|i| v[i].as_f64().unwrap().abs() < 1e-5), "{v}");
 }

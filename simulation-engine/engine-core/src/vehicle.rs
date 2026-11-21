@@ -569,9 +569,9 @@ impl Vehicle {
         colliders: &mut ColliderSet,
     ) -> RigidBodyHandle {
         let handle = bodies.insert(RigidBodyBuilder::dynamic().can_sleep(false).build());
-        let mut order: Vec<&PartBody> = self.definition.parts.iter().collect();
-        order.sort_by(|a, b| b.mass_kg.total_cmp(&a.mass_kg).then_with(|| a.part_id.cmp(&b.part_id)));
-        for part in order {
+        let mut order: Vec<(usize, &PartBody)> = self.definition.parts.iter().enumerate().collect();
+        order.sort_by(|(_, a), (_, b)| b.mass_kg.total_cmp(&a.mass_kg).then_with(|| a.part_id.cmp(&b.part_id)));
+        for (index, part) in order {
             let (shape, pose) = collider_shape(part).expect("shape was validated");
             let (moments, axes) = principal_axes(&inertia_matrix(part.inertia));
             let local_com = pose.inverse_transform_point(vec(part.com));
@@ -581,7 +581,9 @@ impl Vehicle {
                 moments,
                 (pose.rotation.inverse() * axes).normalize(),
             );
-            let collider = ColliderBuilder::new(shape).position(pose).mass_properties(mprops).build();
+            // user_data = the part's index in `definition.parts`, so contacts can name the part (4.4).
+            let collider =
+                ColliderBuilder::new(shape).position(pose).mass_properties(mprops).user_data(index as u128).build();
             colliders.insert_with_parent(collider, handle, bodies);
         }
         bodies[handle].recompute_mass_properties_from_colliders(colliders);

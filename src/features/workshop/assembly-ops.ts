@@ -186,10 +186,13 @@ export function subtreeIds(doc: AssemblyDocument, id: string): Set<string> {
   return ids
 }
 
-/** Removes a part and everything attached to it. */
+/** Removes a part and everything attached to it, with their wires and schematic positions. */
 export function deletePart(doc: AssemblyDocument, id: string): AssemblyDocument {
   const ids = subtreeIds(doc, id)
-  return { ...doc, parts: doc.parts.filter((p) => !ids.has(p.id)) }
+  const next: AssemblyDocument = { ...doc, parts: doc.parts.filter((p) => !ids.has(p.id)) }
+  if (doc.wires) next.wires = doc.wires.filter((w) => !ids.has(w.from.partId) && !ids.has(w.to.partId))
+  if (doc.schematic) next.schematic = Object.fromEntries(Object.entries(doc.schematic).filter(([k]) => !ids.has(k)))
+  return next
 }
 
 /**

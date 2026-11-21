@@ -7,7 +7,7 @@ builds and its acceptance tests pass. Status is updated in `DEVLOG.md` entries.
 |---|---|---|
 | 1 Foundation | Architecture, Electron + React + TS, Rust sidecar integration, navigation, dashboard, SQLite, installer smoke test | **Done** (2026-11-20). Awaiting user review |
 | 2 3D Workshop | three/R3F scene, frames (quad/hex/octo), placement, selection + transform gizmos, properties, GLTF/GLB import, exploded view, ortho/persp cameras | **Done** (2026-11-21), 2.1–2.7 ([plan](plans/phase-2-workshop.md)). Awaiting user review |
-| 3 Components & Electrical | Component DB with provenance, compatibility validation, wiring editor, electrical calculations, diagnostics | **In progress**: 3.1–3.5 done ([plan](plans/phase-3-components.md)) |
+| 3 Components & Electrical | Component DB with provenance, compatibility validation, wiring editor, electrical calculations, diagnostics | **In progress**: 3.1–3.7 done ([plan](plans/phase-3-components.md)) |
 | 4 Physics engine | 6-DOF rigid body, inertia tensor, motor/prop/battery models, drag, wind, ground effect; analytical validation | Not started |
 | 5 Flight control | PID cascade (rate/angle/alt/pos), mixing/allocation, tuning tools, step-response metrics | Not started |
 | 6 Flight environment | Real-time engine ↔ renderer stream, terrain/obstacles, input devices, flight modes, cameras | Not started |

@@ -1,5 +1,159 @@
 # Development log
 
+## 2026-11-21 — Phase 3, milestone 3.7: electrical calculations
+
+**Built**
+- `src/domain/electrical.ts` (pure, steady state). The model is documented at the
+  top of the file and in the designer's "Method" block:
+  - **Load case**: every motor at its stated maximum current (with the stated
+    condition, e.g. 180 s), or one current the user enters. Battery at nominal
+    voltage or full charge. Conductor temperature 20/40/60/80 °C.
+  - **Currents**: the power wiring is walked as a tree from the battery; a power
+    module passes current through. Each cable carries the sum of the loads
+    downstream. A loop, or two batteries in one network, is refused with a reason
+    instead of an assumed split.
+  - **Cables**: R = ρ(T)·2L/A (both conductors of the lead), copper ρ₂₀ = 1/58
+    Ω·mm²/m and α₂₀ = 0.00393 K⁻¹ (IEC 60028, annealed copper), A from AWG
+    (ASTM B258). ΔV = I·R, P = I²·R.
+  - **Battery**: V = V_oc − I·R_int with the pack's stated internal resistance;
+    without it the terminal voltage is shown as not specified.
+  - **Voltage at each ESC** (and so each motor) = terminal voltage − the drops on
+    its path.
+  - **Ratings for the load case**: battery continuous discharge (C × capacity),
+    power-module continuous current, ESC continuous current per output.
+  - Every missing value is a dash with the reason as a tooltip, and the reasons
+    are listed under "Not calculated". Nothing is guessed.
+- **Calculations drawer** in the Electrical Designer (toolbar button): load-case
+  controls, battery, ratings (over-rated items in red; click selects the part),
+  supply per ESC, power cables (click opens the wire to set gauge and length),
+  method.
+- The battery's internal-resistance field now says it is the whole pack's.
+- The Markdown report no longer says wiring checks are missing (they have been
+  included since 3.6).
+
+**Found with the built-in hex**: six MN3110s at their stated 21 A (180 s) draw
+126 A through the PM02 V3, whose PCB is rated 60 A continuous. The drawer shows it
+in red; at 8 A per motor (48 A) it is within rating. The Tattu pack states no
+internal resistance and no full-charge cell voltage, so sag and "full charge" are
+shown as not specified.
+
+**Deferred**
+- Wire ampacity and connector ratings: the plan wants a cited ampacity table with
+  its conditions, and none has been sourced yet. Until then cables show current,
+  drop and loss but no rating.
+- Motor-phase cables: their current depends on commutation (Phase 4 motor model).
+- The load case is a view setting and is not saved with the project.
+
+**Verified** (`npm run test:all`, exit 0)
+- `cargo test`: 11 passed. Typecheck and lint clean.
+- `vitest`: 185 passed, 8 new, each against a hand calculation written out in the test
+  file and matched to 0.1 %: IEC resistivity at 20 and 60 °C; 12 AWG 150 mm =
+  1.56324 mΩ; a two-motor network (42 A, sag 16.8 → 15.96 V, ESC voltages 15.85954
+  and 15.82475 V, total loss 40.2299 W); temperature and an entered current;
+  missing values with their reasons; loops, two batteries and no battery; ratings;
+  the auto-wired hex overloading the PM02.
+- `playwright`: 34 passed, 1 new (auto-wired hex: 126 A, 14.80 V, PM02 over its rating;
+  12 AWG 150 mm main lead → 197.0 mV, 227.9 mV at 60 °C; 8 A per motor → 48 A
+  within rating; no console errors).
+
+## 2026-11-21 — Phase 3, milestone 3.6: Electrical Designer
+
+**Built**
+- **Wiring model**
+  - Migration `0007_wiring.sql` (schema v7): `assemblies.wiring_json` holds the
+    wires and the schematic positions. It is saved with the assembly in the same
+    transaction, so undo/redo and the stale-revision check cover wiring like any
+    edit.
+  - Validation: unique wire ids, both ends on existing parts, no wire from a port
+    to itself, schematic entries only for existing parts, up to 2000 wires.
+  - Deleting a part removes its wires and its schematic position.
+  - A wire is one cable: a power lead, the three motor phases, an ESC signal, or a
+    peripheral cable. It can carry a gauge (AWG), a length (mm) and a colour; all
+    three stay "not set" until the user enters them.
+- **Ports** (`src/domain/wiring.ts`, pure), from the part's kind and linked
+  component:
+  - battery: power out;
+  - power module: power in and out, plus sense (analog → ADC, digital → CAN);
+  - ESC: power in, plus a signal and a motor output per channel (4-in-1 = 4);
+  - motor: phases;
+  - flight controller: its component's listed ports by name (Pixhawk 6C: Telem1–3,
+    GPS1–2, I2C, CAN1–2, DSM RC, PPM/SBUS RC, USB, Power1–2) plus "PWM 1…n" (16
+    stated outputs); a generic set when unlinked;
+  - peripheral: one connector of its required type.
+
+  Only ports of the same kind connect. Power, CAN and I²C are shared buses; every
+  other port takes one cable.
+- **Auto-wire** (PX4 convention):
+  - battery → power module → every ESC;
+  - power-module sense → "Power1";
+  - ESC output n → motor n, by motor-mount number, so a missing motor leaves a gap;
+  - PWM n → that ESC's signal;
+  - GPS → "GPS1", telemetry radio → "Telem1", RC receiver → an RC input, others →
+    the first free port of their type.
+
+  It reports what it could not wire (e.g. two batteries: series or parallel is the
+  user's choice). It is one undo step, and replacing existing wiring asks first.
+- **Wiring checks**, added to the Checks panel in both the workshop and the
+  designer:
+  - wire-port: a wire on a port the part no longer has;
+  - wire-kind: a wire joining different kinds;
+  - port-conflict: two cables on a point-to-point port, naming the devices;
+  - unwired: once wiring has started, a battery, power-module input/output, ESC
+    power, motor, used ESC output without a signal, peripheral, or flight
+    controller power left unconnected.
+- With wiring, the **ESC-current check pairs different ESCs with their motors**
+  one by one (before, it said "cannot check").
+- **Electrical Designer page** (enabled in the sidebar; lazy-loaded with
+  `@xyflow/react` 12.12.1, MIT):
+  - one box per electrical part, with its ports on the sides, coloured by kind;
+  - drag between ports to connect (only valid pairs are accepted); Delete removes
+    a cable; moving a box is saved as an undoable step;
+  - the side panel has:
+    - the wire inspector: either end can be moved to another port of the same
+      kind, and gauge, length and colour can be set;
+    - a part's ports and what is on each;
+    - the checks;
+    - a wire list, which keyboard users can use without the canvas;
+  - Undo/redo (Ctrl+Z/Y), a save indicator, and a link to the workshop.
+
+**Bugs found and fixed**
+- The assembly store saved and loaded only frame, motors and parts, so wiring was
+  silently dropped on restart (caught by the e2e restart check). It now saves the
+  whole document, and loads the optional fields when present.
+- Deleting the battery's cable raised no warning: "unwired" now covers batteries
+  and power modules.
+- Peripheral connectors were drawn on the wrong side, so cables looped backwards.
+  They are now on the right side.
+- The performance test measured 1 fps once. Chromium throttles a hidden or covered
+  window to 1 fps, and the screen was evidently not visible during that run. The
+  test now disables background throttling for its window and logs visibility.
+  Measured again: 59.3 fps at 1080p, 46.6 fps at 4K, unchanged from before.
+
+**Deviation from the plan**: wiring lives in one JSON column of the assembly rather
+than separate `wires`/`wire_ends` tables, so it shares the assembly's atomic save,
+revision check and undo history. Calculations in 3.7 read it from there.
+
+**Verified**
+- `cargo test`: 11 passed.
+- `vitest`: 177 passed, 8 new:
+  - ports per part (the Pixhawk 6C's 13 named ports plus 16 PWM, 4-in-1 channels,
+    analog and CAN sense, GPS UART, none for props or unlinked payloads);
+  - connection rules;
+  - auto-wire on a hex (22 cables, exact pairs, passes its own checks);
+  - PX4 numbering with a missing motor, and the notes;
+  - port conflict naming GPS and Radio;
+  - missing ports, wrong kinds, and unwired warnings only once wiring has started;
+  - motor-by-motor ESC pairing through the wiring;
+  - wiring edits and deletion clean-up.
+- `playwright`: 33 passed, 2 new:
+  - a 17-part hex: auto-wire gives 22 wires and no errors or warnings; moving the
+    GPS cable to Telem1 gives the exact port-conflict error; clicking it shows the
+    flight controller's ports; undo clears it; a gauge of 12 AWG and a length of
+    150 mm survive a restart along with all 22 wires;
+  - deleting a wire raises a warning; a second auto-wire asks before replacing 21
+    wires and restores 22.
+- Typecheck and lint clean; no console errors.
+
 ## 2026-11-21 — Phase 3, milestone 3.5: compatibility checks and diagnostics
 
 **Built**

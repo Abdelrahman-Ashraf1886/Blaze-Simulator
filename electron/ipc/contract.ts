@@ -162,11 +162,38 @@ export interface MotorMount {
 
 export const MAX_MOTOR_TILT = (30 * Math.PI) / 180
 
+/** One end of a wire: a port of a part (port ids come from src/domain/ports.ts). */
+export interface WireEnd {
+  partId: string
+  port: string
+}
+
+export const WIRE_COLORS = ['red', 'black', 'yellow', 'blue', 'white', 'green', 'orange', 'grey'] as const
+export type WireColor = (typeof WIRE_COLORS)[number]
+
+/**
+ * A connection in the Electrical Designer. A wire stands for the whole cable between
+ * two ports (both conductors of a power lead, all three motor phases). Gauge and length
+ * are the user's entries, used by the electrical calculations (3.7); null = not set.
+ */
+export interface Wire {
+  id: string
+  from: WireEnd
+  to: WireEnd
+  gaugeAwg: number | null
+  lengthMm: number | null
+  color: WireColor | null
+}
+
 export interface AssemblyDocument {
   frame: FrameParams
   /** Keyed by mount id (`motor-1` …); motors not listed use PX4 defaults. */
   motors: Record<string, MotorMount>
   parts: AssemblyPart[]
+  /** Electrical connections; absent or empty until the project is wired. */
+  wires?: Wire[]
+  /** Schematic position of each part's box in the Electrical Designer, by part id. */
+  schematic?: Record<string, { x: number; y: number }>
 }
 
 export interface Assembly extends AssemblyDocument {

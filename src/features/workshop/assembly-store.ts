@@ -73,7 +73,8 @@ export function createAssemblyStore(api: () => DesktopApi = getApi, opts: Assemb
 
     const payload = (baseRevision: number) => {
       const { projectId, doc } = get()
-      return { projectId: projectId!, baseRevision, frame: doc!.frame, motors: doc!.motors, parts: doc!.parts }
+      // The whole document: any field added to it (wiring, schematic…) is saved too.
+      return { ...doc!, projectId: projectId!, baseRevision }
     }
 
     const save = async (): Promise<void> => {
@@ -126,8 +127,10 @@ export function createAssemblyStore(api: () => DesktopApi = getApi, opts: Assemb
           const res = await api().assembly.load(projectId)
           if (get().projectId !== projectId) return // another project was opened meanwhile
           if (res.ok) {
-            const { frame, motors, parts, revision } = res.data
-            set({ doc: { frame, motors, parts }, revision, loading: false })
+            const { revision, frame, motors, parts, wires, schematic } = res.data
+            // Optional fields only when present, so documents without them stay identical.
+            const doc: AssemblyDocument = { frame, motors, parts, ...(wires ? { wires } : {}), ...(schematic ? { schematic } : {}) }
+            set({ doc, revision, loading: false })
           } else {
             set({ loading: false, saveState: 'error', error: res.error.message })
           }

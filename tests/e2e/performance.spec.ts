@@ -64,6 +64,11 @@ test('50-part assembly: orbit frame rate at 1080p and 4K; idle renders nothing',
   app = r.app
   const page = r.page
   await page.setViewportSize({ width: 1920, height: 1080 })
+  // Chromium throttles a hidden or covered window to 1 frame per second, which would
+  // measure the screen state, not rendering. Measure rendering regardless.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setBackgroundThrottling(false))
+  const visible = await page.evaluate(() => document.visibilityState)
+  console.log(`[perf] window ${visible}`)
   await createProject(page, 'Perf quad')
   await page.getByTestId('recent-projects').getByRole('link', { name: 'Perf quad' }).click()
   await expect(page.getByTestId('viewport-3d').locator('canvas')).toBeVisible()

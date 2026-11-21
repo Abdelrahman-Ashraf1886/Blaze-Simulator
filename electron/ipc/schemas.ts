@@ -6,6 +6,7 @@ import {
   MAX_MOTOR_TILT,
   MODEL_UNITS,
   PART_KINDS,
+  WIRE_COLORS,
   type CreateProjectInput,
   type RenameProjectInput,
   type SaveAssemblyInput,
@@ -86,6 +87,19 @@ const motorMountSchema = z.object({
 })
 
 export const MAX_PARTS = 500
+export const MAX_WIRES = 2000
+
+const wireEnd = z.object({ partId: z.uuid(), port: z.string().min(1).max(40) }).strict()
+const wireSchema = z
+  .object({
+    id: z.uuid(),
+    from: wireEnd,
+    to: wireEnd,
+    gaugeAwg: z.number().min(0).max(40).nullable(),
+    lengthMm: z.number().gt(0, 'Wire length must be positive').max(10_000, 'Wire length must be 10 m or less').nullable(),
+    color: z.enum(WIRE_COLORS).nullable(),
+  })
+  .strict()
 
 export const saveAssemblySchema = z
   .object({
@@ -98,9 +112,27 @@ export const saveAssemblySchema = z
       }
     }),
     parts: z.array(partSchema).max(MAX_PARTS, `An assembly can hold at most ${MAX_PARTS} parts`),
+    wires: z.array(wireSchema).max(MAX_WIRES, `A project can hold at most ${MAX_WIRES} wires`).optional(),
+    schematic: z
+      .record(z.uuid(), z.object({ x: z.number().min(-1e5).max(1e5), y: z.number().min(-1e5).max(1e5) }).strict())
+      .optional(),
   })
   .superRefine((doc, ctx) => {
     const byId = new Map(doc.parts.map((p) => [p.id, p]))
+    const wireIds = new Set<string>()
+    for (const w of doc.wires ?? []) {
+      if (wireIds.has(w.id)) ctx.addIssue({ code: 'custom', message: 'Wire ids must be unique' })
+      wireIds.add(w.id)
+      for (const end of [w.from, w.to]) {
+        if (!byId.has(end.partId)) ctx.addIssue({ code: 'custom', message: 'A wire is connected to a part that does not exist' })
+      }
+      if (w.from.partId === w.to.partId && w.from.port === w.to.port) {
+        ctx.addIssue({ code: 'custom', message: 'A wire cannot connect a port to itself' })
+      }
+    }
+    for (const id of Object.keys(doc.schematic ?? {})) {
+      if (!byId.has(id)) ctx.addIssue({ code: 'custom', message: 'The schematic places a part that does not exist' })
+    }
     if (byId.size !== doc.parts.length) ctx.addIssue({ code: 'custom', message: 'Part ids must be unique' })
     for (const p of doc.parts) {
       if (p.parentId === null) continue

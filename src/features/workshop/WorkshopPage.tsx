@@ -19,7 +19,8 @@ import { useProjects } from '@/stores/projects'
 import { buildFrame, type FrameGeometry } from '@/three/frame-geometry'
 import { VIEW_LABELS, type ViewPreset } from '@/three/views'
 import { CreateProjectDialog } from '../projects/CreateProjectDialog'
-import { useAssembly, type SaveState } from './assembly-store'
+import { useAssembly } from './assembly-store'
+import { SaveIndicator } from './save-indicator'
 import { useAssets } from './asset-store'
 import { captureViewport } from './capture'
 import { MeasureCapture, MeasureLabel, MeasureLine, measureStatus } from './Measure'
@@ -472,49 +473,6 @@ function Workshop({ project }: { project: Project }) {
 }
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1)
-
-const SAVE_TEXT: Record<SaveState, string> = {
-  idle: '',
-  dirty: 'Unsaved changes',
-  saving: 'Saving…',
-  saved: 'All changes saved',
-  error: 'Could not save',
-  conflict: 'Changed elsewhere',
-}
-
-function SaveIndicator() {
-  const state = useAssembly((s) => s.saveState)
-  const error = useAssembly((s) => s.error)
-  const projectId = useAssembly((s) => s.projectId)
-  if (state === 'idle') return null
-  return (
-    <span
-      data-testid="save-state"
-      data-state={state}
-      title={error ?? undefined}
-      className={cn('flex min-w-0 items-center gap-2', (state === 'error' || state === 'conflict') && 'text-fault')}
-    >
-      <span className="truncate">
-        {SAVE_TEXT[state]}
-        {state === 'error' && error ? `: ${error}` : ''}
-      </span>
-      {state === 'conflict' && projectId && (
-        <button
-          type="button"
-          className="text-accent hover:underline"
-          onClick={() => void useAssembly.getState().load(projectId)}
-        >
-          Reload
-        </button>
-      )}
-      {state === 'error' && (
-        <button type="button" className="text-accent hover:underline" onClick={() => void useAssembly.getState().flush()}>
-          Retry
-        </button>
-      )}
-    </span>
-  )
-}
 
 /** Part count, then each issue as a button that selects the first part it applies to. */
 function AssemblyStatusStrip({ doc, geo }: { doc: AssemblyDocument; geo: FrameGeometry }) {

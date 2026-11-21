@@ -8,8 +8,8 @@
  * - Values are compared in SI (`toSI`), so "1300 mAh" and "1.3 Ah" agree.
  * - Each message names the parts, states both numbers with their conditions, and
  *   says why it matters.
- * - Checks that need wiring (port conflicts, wire and connector ratings, which ESC
- *   drives which motor when ESCs differ) belong to the Electrical Designer (3.6–3.7).
+ * - Checks that need wiring (port conflicts, unwired parts) are in wiring.ts; current
+ *   ratings for a load case and cable drops are in electrical.ts.
  */
 import type { Component, QuantityValue, SpecValue } from '../../electron/ipc/component-fields'
 import type { PartKind, PartShape } from '../../electron/ipc/contract'
@@ -37,6 +37,10 @@ export type RuleId =
   | 'prop-hand'
   | 'prop-clearance'
   | 'prop-frame'
+  | 'wire-port'
+  | 'wire-kind'
+  | 'port-conflict'
+  | 'unwired'
 
 /** Minimum tip-to-tip gap before a warning, in metres (10 mm). */
 export const PROP_CLEARANCE = 0.01
@@ -52,6 +56,10 @@ export const RULES: Record<RuleId, string> = {
   'prop-hand': 'A propeller\'s rotation must match its motor\'s spin, or it pushes air the wrong way.',
   'prop-clearance': `Swept propeller discs at the same height must not overlap; less than ${PROP_CLEARANCE * 1000} mm between tips is flagged.`,
   'prop-frame': 'A propeller disc must be above the top of the frame.',
+  'wire-port': 'Every wire must end on a port the part has (relinking a part can remove ports).',
+  'wire-kind': 'A wire may only join ports of the same kind (power to power, motor phases to an ESC output, UART to UART…).',
+  'port-conflict': 'A point-to-point port (UART, RC, ESC signal, motor phases, power sense) takes one cable; power, CAN and I²C are shared buses.',
+  'unwired': 'Once wiring has started: the battery and power module must be connected, every ESC powered, every motor on an ESC output, every used ESC output given a signal, every peripheral connected, and the flight controller powered.',
 }
 
 
@@ -71,6 +79,8 @@ export interface CheckPart {
 }
 
 export interface CheckInput {
+  /** From the wiring, when present: which ESC part drives each motor part. */
+  escOfMotor?: Readonly<Record<string, string>>
   rotors: number
   motorMounts: { id: string; number: number }[]
   /** World height of the top of the frame (arms and plate). */
@@ -204,7 +214,23 @@ function escCurrent(input: CheckInput): Finding[] {
   if (motors.length === 0 || escs.length === 0) return []
   const models = new Set(escs.map((e) => e.component?.id ?? `own:${e.id}`))
   if (models.size > 1) {
-    return [finding('esc-current', 'cannot-check', 'Cannot pair ESCs with motors: the ESCs differ, so which ESC drives which motor is set by the wiring (Electrical Designer).', escs)]
+    // Different ESCs: pair them through the wiring when every motor is wired.
+    const wiring = input.escOfMotor ?? {}
+    const byId = new Map(escs.map((e) => [e.id, e]))
+    if (!motors.every((m) => byId.has(wiring[m.id] ?? ''))) {
+      return [finding('esc-current', 'cannot-check', 'Cannot pair ESCs with motors: the ESCs differ and not every motor is wired to one yet (Electrical Designer).', escs)]
+    }
+    return motors.flatMap((m) => {
+      const esc = byId.get(wiring[m.id]!)!
+      const escA = si(esc.component, 'continuousCurrent')
+      const motorA = si(m.component, 'maxCurrent')
+      if (escA === null || motorA === null) {
+        return [finding('esc-current', 'cannot-check', `Cannot check ${label(esc)} driving ${label(m)}: no stated ${escA === null ? 'ESC continuous current' : 'motor maximum current'}.`, [esc, m])]
+      }
+      return escA < motorA
+        ? [finding('esc-current', 'error', `${label(esc)} is rated ${stated(esc.component!, 'continuousCurrent')}, below ${label(m)}'s maximum ${stated(m.component!, 'maxCurrent')}.`, [esc, m])]
+        : []
+    })
   }
   const esc = escs[0]!
   const escA = si(esc.component, 'continuousCurrent')
@@ -412,6 +438,6 @@ export function report(projectName: string, findings: readonly Finding[], when: 
   if (findings.length === 0) lines.push('No problems found by the checks below.', '')
   lines.push('## Checks run', '')
   for (const [id, text] of Object.entries(RULES)) lines.push(`- **${id}**: ${text}`)
-  lines.push('', 'Values come from the linked components and are compared as stated by their sources. Checks that need wiring are not part of this report yet.')
+  lines.push('', 'Values come from the linked components and are compared as stated by their sources. Wiring checks apply once the project is wired in the Electrical Designer.')
   return `${lines.join('\n')}\n`
 }

@@ -15,11 +15,15 @@ import { NO_CAPTURE } from './capture'
 import { mountPoints, snapMount } from './inspection'
 import { useComponentIndex } from './component-index'
 import { linkedComponent, type ComponentIndex } from './links'
+import { toSI, type Unit } from '@/domain/units'
 import {
   BatteryModel,
   EscModel,
   FlightControllerModel,
+  GpsModel,
   ModuleModel,
+  PowerModuleModel,
+  RadioModel,
   MotorModel,
   PropellerModel,
 } from '@/three/part-models'
@@ -167,6 +171,13 @@ interface Look {
   spin: 'cw' | 'ccw'
   blades: number
   ports: number
+  /** Stated propeller pitch in metres, if linked. */
+  pitch?: number
+  /** Carbon-fibre propeller (from the linked component's material). */
+  carbon: boolean
+  /** Linked component category and peripheral role, to pick GPS / radio / power-module models. */
+  category?: string
+  role?: string
 }
 
 /** Spin from the motor mount the part (or its root) sits on; blades and ports from a linked component. */
@@ -177,7 +188,17 @@ function lookOf(part: AssemblyPart, byId: ReadonlyMap<string, AssemblyPart>, geo
   const c = linkedComponent(part, components)
   const blades = typeof c?.specs.blades?.value === 'number' ? (c.specs.blades.value as number) : 2
   const ports = Array.isArray(c?.specs.ports?.value) ? (c.specs.ports.value as unknown[]).length : 6
-  return { spin, blades, ports }
+  const p = c?.specs.pitch as { value: number; unit: Unit } | undefined
+  const material = c?.specs.material?.value
+  return {
+    spin,
+    blades,
+    ports,
+    pitch: p && typeof p.value === 'number' ? toSI(p.value, p.unit) : undefined,
+    carbon: typeof material === 'string' && /CF|carbon/i.test(material),
+    category: c?.category,
+    role: typeof c?.specs.role?.value === 'string' ? (c.specs.role.value as string) : undefined,
+  }
 }
 
 /** A detailed model for the part's kind and envelope, or null to draw the plain shape. */
@@ -185,13 +206,17 @@ function detailedModel(part: AssemblyPart, look: Look): ReactNode {
   const s = part.shape
   if (s.type === 'cylinder') {
     if (part.kind === 'motor') return <MotorModel radius={s.radius} height={s.height} />
-    if (part.kind === 'propeller') return <PropellerModel radius={s.radius} height={s.height} blades={look.blades} spin={look.spin} />
+    if (part.kind === 'propeller')
+      return <PropellerModel radius={s.radius} height={s.height} blades={look.blades} spin={look.spin} pitch={look.pitch} carbon={look.carbon} />
     return null
   }
   if (s.type !== 'box') return null
   if (part.kind === 'battery') return <BatteryModel size={s.size} />
   if (part.kind === 'esc') return <EscModel size={s.size} />
   if (part.kind === 'flight-controller') return <FlightControllerModel size={s.size} ports={look.ports} />
+  if (look.category === 'power-module') return <PowerModuleModel size={s.size} />
+  if (look.role === 'gps') return <GpsModel size={s.size} />
+  if (look.role === 'telemetry-radio') return <RadioModel size={s.size} />
   if (part.kind === 'payload') return <ModuleModel size={s.size} />
   return null
 }

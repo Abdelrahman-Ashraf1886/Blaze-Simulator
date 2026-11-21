@@ -5,11 +5,12 @@ import m0003 from '../../../database/migrations/0003_motor_mounts.sql?raw'
 import m0004 from '../../../database/migrations/0004_assets.sql?raw'
 import m0005 from '../../../database/migrations/0005_component_library.sql?raw'
 import m0006 from '../../../database/migrations/0006_part_components.sql?raw'
+import m0007 from '../../../database/migrations/0007_wiring.sql?raw'
 
 export type Db = Database.Database
 
 /** Ordered list of migrations. Append only; never edit a shipped migration. */
-export const MIGRATIONS: readonly string[] = [m0001, m0002, m0003, m0004, m0005, m0006]
+export const MIGRATIONS: readonly string[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007]
 
 /**
  * Open (or create) the database and bring it to the latest schema version.

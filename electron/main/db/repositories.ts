@@ -70,6 +70,11 @@ const toPart = (r: PartRow): AssemblyPart => ({
   ...(r.component_id ? { componentId: r.component_id } : {}),
 })
 
+const wiringFields = (w: Pick<Assembly, 'wires' | 'schematic'>) => ({
+  ...(w.wires?.length ? { wires: w.wires } : {}),
+  ...(w.schematic && Object.keys(w.schematic).length ? { schematic: w.schematic } : {}),
+})
+
 /** A save was based on an older revision than the one stored. */
 export class ConflictError extends Error {}
 /** Input passed schema validation but contradicts stored data. */
@@ -299,13 +304,14 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
       load: db.transaction((projectId: string): Assembly => {
         const project = getProject(projectId)
         let row = db.prepare('SELECT * FROM assemblies WHERE project_id = ?').get(projectId) as
-          | { revision: number; frame_json: string; motors_json: string; updated_at: string }
+          | { revision: number; frame_json: string; motors_json: string; wiring_json: string; updated_at: string }
           | undefined
         if (!row) {
           row = {
             revision: 0,
             frame_json: JSON.stringify(STARTING_FRAME[project.frameType]),
             motors_json: '{}',
+            wiring_json: '{}',
             updated_at: now().toISOString(),
           }
           db.prepare('INSERT INTO assemblies (project_id, revision, frame_json, updated_at) VALUES (?, ?, ?, ?)').run(
@@ -325,6 +331,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           frame: JSON.parse(row.frame_json) as FrameParams,
           motors: JSON.parse(row.motors_json) as Record<string, MotorMount>,
           parts: parts.map(toPart),
+          // Omitted when empty, so documents without wiring round-trip unchanged.
+          ...wiringFields(JSON.parse(row.wiring_json) as Pick<Assembly, 'wires' | 'schematic'>),
         }
       }),
 
@@ -356,10 +364,17 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
         const revision = stored + 1
         const ts = now().toISOString()
         db.prepare(
-          `INSERT INTO assemblies (project_id, revision, frame_json, motors_json, updated_at) VALUES (?, ?, ?, ?, ?)
+          `INSERT INTO assemblies (project_id, revision, frame_json, motors_json, wiring_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT (project_id) DO UPDATE SET revision = excluded.revision, frame_json = excluded.frame_json,
-             motors_json = excluded.motors_json, updated_at = excluded.updated_at`,
-        ).run(input.projectId, revision, JSON.stringify(input.frame), JSON.stringify(input.motors), ts)
+             motors_json = excluded.motors_json, wiring_json = excluded.wiring_json, updated_at = excluded.updated_at`,
+        ).run(
+          input.projectId,
+          revision,
+          JSON.stringify(input.frame),
+          JSON.stringify(input.motors),
+          JSON.stringify(wiringFields(input)),
+          ts,
+        )
         db.prepare('DELETE FROM assembly_parts WHERE project_id = ?').run(input.projectId)
         const insert = db.prepare(
           `INSERT INTO assembly_parts (id, project_id, sort_index, parent_id, mount_id, kind, name, shape_json,

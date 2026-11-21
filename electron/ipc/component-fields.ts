@@ -180,7 +180,7 @@ export const COMPONENT_FIELDS: Record<ComponentCategory, readonly FieldDef[]> = 
     q('cRateBurst', 'Discharge rate, burst', 'crate', 'C', 'Put the duration in the condition'),
     q('cellVoltageNominal', 'Cell voltage, nominal', 'voltage', 'V'),
     q('cellVoltageMax', 'Cell voltage, full charge', 'voltage', 'V'),
-    q('internalResistance', 'Internal resistance', 'resistance', 'mΩ'),
+    q('internalResistance', 'Internal resistance', 'resistance', 'mΩ', 'Of the whole pack (used for the voltage under load)'),
     mass,
     q('length', 'Length', 'length', 'mm'),
     q('width', 'Width', 'length', 'mm'),

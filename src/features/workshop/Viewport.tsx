@@ -3,7 +3,8 @@ import { CameraControls, GizmoHelper, GizmoViewport, OrthographicCamera, Perspec
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import type CameraControlsImpl from 'camera-controls'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Sphere, Vector3 } from 'three'
+import { PMREMGenerator, Sphere, Vector3 } from 'three'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import {
   EMPTY_SCENE_BOUNDS,
   allOnScreen,
@@ -80,8 +81,10 @@ export function Viewport({
           <OrthographicCamera makeDefault near={-100} far={100} />
         )}
         <CameraRig bounds={bounds} focusBounds={focusBounds ?? null} />
-        <hemisphereLight args={['#dfe6ee', '#1a1d21', 0.9]} />
-        <directionalLight position={[2, -1.5, 3]} intensity={1.6} />
+        <SceneEnvironment />
+        <hemisphereLight args={['#dfe6ee', '#1a1d21', 0.45]} />
+        <directionalLight position={[2, -1.5, 3]} intensity={1.4} />
+        <directionalLight position={[-2, 2, 1.2]} intensity={0.35} />
         {showGrid && <GroundGrid />}
         <OriginAxes />
         {children}
@@ -222,6 +225,30 @@ function OriginAxes() {
       ))}
     </group>
   )
+}
+
+/**
+ * Image-based lighting from three's procedural RoomEnvironment (no files are
+ * downloaded): metal and clear-coated carbon get believable reflections.
+ */
+function SceneEnvironment() {
+  const get = useThree((s) => s.get)
+  useEffect(() => {
+    const { gl, scene, invalidate } = get()
+    const pmrem = new PMREMGenerator(gl)
+    const room = new RoomEnvironment()
+    const env = pmrem.fromScene(room, 0.04).texture
+    scene.environment = env
+    scene.environmentIntensity = 0.55
+    invalidate()
+    return () => {
+      scene.environment = null
+      env.dispose()
+      room.dispose()
+      pmrem.dispose()
+    }
+  }, [get])
+  return null
 }
 
 /**

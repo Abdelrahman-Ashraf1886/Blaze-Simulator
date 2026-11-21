@@ -29,6 +29,7 @@ import { PageHeader } from '@/components/page-header'
 import { EmptyState, Readout, Readouts, Section } from '@/components/section'
 import { Table, Td, Th } from '@/components/table'
 import { cn, formatTimestamp } from '@/lib/utils'
+import { registerTestHook } from '@/lib/test-hooks'
 import { useProjects } from '@/stores/projects'
 import { buildFrame, type FrameGeometry } from '@/three/frame-geometry'
 import { VIEW_LABELS, type ViewPreset } from '@/three/views'
@@ -203,6 +204,12 @@ function Workshop({ project }: { project: Project }) {
     () => (display && geo && selectedId ? partBounds(display, geo, selectedId, assets) : null),
     [display, geo, selectedId, assets],
   )
+
+  // Test hooks (test and development builds only): the workshop stores, for e2e tests.
+  useEffect(() => {
+    const off = [registerTestHook('workshopView', useWorkshopView), registerTestHook('assembly', useAssembly)]
+    return () => off.forEach((f) => f())
+  }, [])
 
   // Load this project's assembly; save pending edits when leaving the workshop,
   // and synchronously if the window is closed or reloaded.

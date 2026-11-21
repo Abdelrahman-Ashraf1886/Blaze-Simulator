@@ -10,7 +10,8 @@ export async function launchApp(
   const app = await electron.launch({
     args: [root],
     cwd: root,
-    env: { ...process.env, BLAZE_UAV_USER_DATA: userData, ELECTRON_RENDERER_URL: '', ...extraEnv },
+    // BLAZE_UAV_TEST_HOOKS exposes window.__blazeTest (src/lib/test-hooks.ts); pass '0' to launch without.
+    env: { ...process.env, BLAZE_UAV_USER_DATA: userData, ELECTRON_RENDERER_URL: '', BLAZE_UAV_TEST_HOOKS: '1', ...extraEnv },
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')

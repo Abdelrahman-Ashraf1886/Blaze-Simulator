@@ -48,6 +48,7 @@ export function CollisionStatus({ doc, geo }: { doc: AssemblyDocument; geo: Fram
       className="sr-only"
       data-testid="collision-view"
       data-shapes={show ? bodies.length : 0}
+      data-hulls={bodies.filter((b) => b.shape.type === 'hull').length}
       data-highlighted={[...highlighted].sort().join(',')}
     >
       {highlighted.size > 0 ? `${highlighted.size} overlapping collision shapes highlighted` : ''}

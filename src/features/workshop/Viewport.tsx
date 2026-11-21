@@ -16,6 +16,7 @@ import {
   type ViewPreset,
 } from '@/three/views'
 import { cn } from '@/lib/utils'
+import { registerTestHook, testHooksEnabled } from '@/lib/test-hooks'
 import { NO_CAPTURE, setViewportCapture } from './capture'
 import { LabelContext, LabelProjector, LabelRegistry } from './screen-labels'
 import { useWorkshopView } from './view-store'
@@ -100,6 +101,7 @@ export function Viewport({
         <CaptureBinder />
         <RenderCounter />
         <LabelProjector />
+        {testHooksEnabled() && <TestProjector />}
       </Canvas>
       {/* While measuring, labels must not take the clicks meant for the model under them. */}
       <div
@@ -261,6 +263,28 @@ function RenderCounter() {
     const w = window as unknown as { __blazeRenders?: number }
     w.__blazeRenders = (w.__blazeRenders ?? 0) + 1
   })
+  return null
+}
+
+/**
+ * Test hook (test and development builds only): `__blazeTest.projectObject(name)` gives the
+ * screen position (client pixels) of the named scene object's origin, e.g. a part, so an
+ * end-to-end test can press on its gizmo with the real pointer.
+ */
+function TestProjector() {
+  const get = useThree((s) => s.get)
+  useEffect(
+    () =>
+      registerTestHook('projectObject', (name: string) => {
+        const { scene, camera, gl } = get()
+        const obj = scene.getObjectByName(name)
+        if (!obj) return null
+        const v = obj.getWorldPosition(new Vector3()).project(camera)
+        const r = gl.domElement.getBoundingClientRect()
+        return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height }
+      }),
+    [get],
+  )
   return null
 }
 

@@ -3,7 +3,9 @@ import { z } from 'zod'
 import { inertiaProblem } from './inertia'
 import {
   FRAME_PARAM_LIMITS,
+  FRAME_PART_ID,
   FRAME_TYPES,
+  MAX_INTERFERENCE_TOLERANCE_M,
   MAX_MOTOR_TILT,
   MODEL_UNITS,
   PART_KINDS,
@@ -135,6 +137,19 @@ export const saveAssemblySchema = z
     schematic: z
       .record(z.uuid(), z.object({ x: z.number().min(-1e5).max(1e5), y: z.number().min(-1e5).max(1e5) }).strict())
       .optional(),
+    interference: z
+      .object({
+        toleranceM: z
+          .number()
+          .min(0, 'The interference tolerance cannot be negative')
+          .max(MAX_INTERFERENCE_TOLERANCE_M, `The interference tolerance must be at most ${MAX_INTERFERENCE_TOLERANCE_M * 1000} mm`),
+        allowedPairs: z
+          .array(z.tuple([z.string().min(1).max(64), z.string().min(1).max(64)]))
+          .max(MAX_PARTS * 4, 'Too many allowed pairs'),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .superRefine((doc, ctx) => {
     const byId = new Map(doc.parts.map((p) => [p.id, p]))
@@ -153,6 +168,15 @@ export const saveAssemblySchema = z
       if (!byId.has(id)) ctx.addIssue({ code: 'custom', message: 'The schematic places a part that does not exist' })
     }
     if (byId.size !== doc.parts.length) ctx.addIssue({ code: 'custom', message: 'Part ids must be unique' })
+    const pairs = new Set<string>()
+    for (const [a, b] of doc.interference?.allowedPairs ?? []) {
+      for (const id of [a, b]) {
+        if (id !== FRAME_PART_ID && !byId.has(id)) ctx.addIssue({ code: 'custom', message: 'An allowed overlap names a part that does not exist' })
+      }
+      if (a >= b) ctx.addIssue({ code: 'custom', message: 'An allowed overlap must name two different parts, sorted' })
+      if (pairs.has(`${a},${b}`)) ctx.addIssue({ code: 'custom', message: 'An allowed overlap is listed twice' })
+      pairs.add(`${a},${b}`)
+    }
     for (const p of doc.parts) {
       if (p.parentId === null) continue
       if (!byId.has(p.parentId)) {

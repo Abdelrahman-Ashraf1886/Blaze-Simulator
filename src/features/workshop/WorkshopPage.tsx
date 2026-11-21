@@ -56,6 +56,8 @@ import {
 import { effectiveMass, resolveLinks } from './links'
 import { useComponents } from '@/stores/components'
 import { ComDropLine, ComMarker, MassPanel } from './MassPanel'
+import { CollisionShapes, CollisionStatus } from './CollisionView'
+import { InterferencePanel } from './InterferencePanel'
 import { ChecksPanel, ChecksStatus } from './ChecksPanel'
 import { PartsModel } from './PartsModel'
 import { duplicatePart, subtreeIds, updatePart } from './assembly-ops'
@@ -253,6 +255,7 @@ function Workshop({ project }: { project: Project }) {
       else if (e.key === 'x' || e.key === 'X') s.setExploded(!s.exploded)
       else if (e.key === 'm' || e.key === 'M') s.setMeasuring(!s.measuring)
       else if (e.key === 'c' || e.key === 'C') s.setShowCom(!s.showCom)
+      else if (e.key === 'b' || e.key === 'B') s.setShowCollision(!s.showCollision)
       // Esc in measure mode: clear the measurement, then leave the tool.
       else if (e.key === 'Escape' && s.measuring && s.measure.length > 0) s.clearMeasure()
       else if (e.key === 'Escape' && s.measuring) s.setMeasuring(false)
@@ -464,6 +467,7 @@ function Workshop({ project }: { project: Project }) {
                   <DimensionLabels doc={display} geo={geo} />
                   <MeasureLabel />
                   <ComMarker doc={doc} geo={geo} />
+                  <CollisionStatus doc={doc} geo={geo} />
                 </>
               ) : null
             }
@@ -474,6 +478,7 @@ function Workshop({ project }: { project: Project }) {
             </MeasureCapture>
             <MeasureLine />
             {geo && doc && <ComDropLine doc={doc} geo={geo} />}
+            {geo && doc && <CollisionShapes doc={doc} geo={geo} />}
           </Viewport>
           </div>
         </Panel>
@@ -614,6 +619,9 @@ function ProjectPanel({
           <Section title="Checks">
             <ChecksPanel doc={doc} geo={geo} projectName={project.name} />
           </Section>
+          <Section title="Interference">
+            <InterferencePanel doc={doc} geo={geo} />
+          </Section>
           <Section title="Mass">
             <MassPanel doc={doc} geo={geo} />
           </Section>
@@ -641,6 +649,7 @@ function ViewPanel() {
   const projection = useWorkshopView((s) => s.projection)
   const detail = useWorkshopView((s) => s.detail)
   const showCom = useWorkshopView((s) => s.showCom)
+  const showCollision = useWorkshopView((s) => s.showCollision)
   return (
     <>
       <Section title="View">
@@ -670,6 +679,23 @@ function ViewPanel() {
                 pressed={showCom === on}
                 onClick={() => useWorkshopView.getState().setShowCom(on)}
                 title={on ? 'Show the centre-of-mass marker (C)' : 'Hide the centre-of-mass marker (C)'}
+              >
+                {on ? 'Show' : 'Hide'}
+              </SegmentButton>
+            ))}
+          </Segmented>
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-line py-1.5">
+          <span className="text-[12.5px] text-fg-muted" title="The shapes the interference check and the simulation use">
+            Collision shapes
+          </span>
+          <Segmented label="Collision shapes">
+            {([true, false] as const).map((on) => (
+              <SegmentButton
+                key={String(on)}
+                pressed={showCollision === on}
+                onClick={() => useWorkshopView.getState().setShowCollision(on)}
+                title={on ? 'Draw every collision shape (B)' : 'Hide the collision shapes (B); overlaps stay highlighted'}
               >
                 {on ? 'Show' : 'Hide'}
               </SegmentButton>
@@ -707,6 +733,7 @@ function ViewPanel() {
             ['Exploded view', 'X'],
             ['Measure', 'M'],
             ['Centre of mass', 'C'],
+            ['Collision shapes', 'B'],
           ].map(([action, key]) => (
             <div key={action} className="flex justify-between border-b border-line/60 py-1.5">
               <dt className="text-fg-muted">{action}</dt>

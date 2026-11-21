@@ -15,6 +15,7 @@ import type {
   CreateProjectInput,
   FrameParams,
   FrameType,
+  InterferenceSettingsDoc,
   MotorMount,
   PartKind,
   Project,
@@ -314,6 +315,7 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
               wiring_json: string
               frame_mass_kg: number | null
               frame_mass_source: 'user' | null
+              interference_json: string | null
               updated_at: string
             }
           | undefined
@@ -325,6 +327,7 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
             wiring_json: '{}',
             frame_mass_kg: null,
             frame_mass_source: null,
+            interference_json: null,
             updated_at: now().toISOString(),
           }
           db.prepare('INSERT INTO assemblies (project_id, revision, frame_json, updated_at) VALUES (?, ?, ?, ?)').run(
@@ -348,6 +351,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           ...(row.frame_mass_kg !== null && row.frame_mass_source !== null
             ? { frameMass: { valueKg: row.frame_mass_kg, source: row.frame_mass_source } }
             : {}),
+          // Omitted when not set, so documents saved before schema v10 round-trip unchanged.
+          ...(row.interference_json !== null ? { interference: JSON.parse(row.interference_json) as InterferenceSettingsDoc } : {}),
           // Omitted when empty, so documents without wiring round-trip unchanged.
           ...wiringFields(JSON.parse(row.wiring_json) as Pick<Assembly, 'wires' | 'schematic'>),
         }
@@ -381,12 +386,13 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
         const revision = stored + 1
         const ts = now().toISOString()
         db.prepare(
-          `INSERT INTO assemblies (project_id, revision, frame_json, motors_json, wiring_json, frame_mass_kg, frame_mass_source, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO assemblies (project_id, revision, frame_json, motors_json, wiring_json, frame_mass_kg, frame_mass_source,
+             interference_json, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (project_id) DO UPDATE SET revision = excluded.revision, frame_json = excluded.frame_json,
              motors_json = excluded.motors_json, wiring_json = excluded.wiring_json,
              frame_mass_kg = excluded.frame_mass_kg, frame_mass_source = excluded.frame_mass_source,
-             updated_at = excluded.updated_at`,
+             interference_json = excluded.interference_json, updated_at = excluded.updated_at`,
         ).run(
           input.projectId,
           revision,
@@ -395,6 +401,7 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           JSON.stringify(wiringFields(input)),
           input.frameMass?.valueKg ?? null,
           input.frameMass?.source ?? null,
+          input.interference ? JSON.stringify(input.interference) : null,
           ts,
         )
         db.prepare('DELETE FROM assembly_parts WHERE project_id = ?').run(input.projectId)

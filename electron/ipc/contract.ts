@@ -231,7 +231,30 @@ export interface AssemblyDocument {
   wires?: Wire[]
   /** Schematic position of each part's box in the Electrical Designer, by part id. */
   schematic?: Record<string, { x: number; y: number }>
+  /**
+   * The workshop interference check's settings (src/domain/collisions.ts). Absent or
+   * null = the starting tolerance and no allowed pairs.
+   */
+  interference?: InterferenceSettingsDoc | null
 }
+
+/** Id an allowed pair uses for the parametric frame (its plate and arms are one part). */
+export const FRAME_PART_ID = 'frame'
+
+/**
+ * The user's interference settings. The tolerance is a check margin the user sets,
+ * like the hover-balance margin; DEFAULT_INTERFERENCE_TOLERANCE_M is only its
+ * starting value. Pairs are part ids (or FRAME_PART_ID), each pair sorted.
+ */
+export interface InterferenceSettingsDoc {
+  toleranceM: number
+  allowedPairs: [string, string][]
+}
+
+/** Starting interference tolerance: 0.5 mm (a check margin, not a physical value). */
+export const DEFAULT_INTERFERENCE_TOLERANCE_M = 0.0005
+/** Largest tolerance the field accepts: 50 mm. */
+export const MAX_INTERFERENCE_TOLERANCE_M = 0.05
 
 export interface Assembly extends AssemblyDocument {
   projectId: string

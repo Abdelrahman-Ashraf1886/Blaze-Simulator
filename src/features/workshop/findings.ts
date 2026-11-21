@@ -3,7 +3,9 @@ import { runChecks, type Finding } from '../../domain/checks'
 import { massFindings } from '../../domain/mass'
 import { escOfMotor, wiringFindings } from '../../domain/wiring'
 import type { FrameGeometry } from '../../three/frame-geometry'
+import type { AssetBounds } from './assembly-ops'
 import { checkInput } from './check-input'
+import { assemblyInterferenceFindings } from './interference-input'
 import type { ComponentIndex } from './links'
 import { massState } from './mass-input'
 import { wiringParts } from './wiring-input'
@@ -17,28 +19,39 @@ const ORDER = { error: 0, warning: 1, 'cannot-check': 2 } as const
  */
 const lastFindings = new WeakMap<
   AssemblyDocument,
-  { geo: FrameGeometry; components: ComponentIndex; balanceTolerance: number; findings: Finding[] }
+  { geo: FrameGeometry; components: ComponentIndex; balanceTolerance: number; assets: AssetBounds; findings: Finding[] }
 >()
 
 /**
  * Findings for an assembly, most severe first: the assembly checks, the wiring rules
- * and the hover balance. `balanceTolerance` is the user's hover-share margin in
- * percent (view settings).
+ * the hover balance and the interference check. `balanceTolerance` is the user's
+ * hover-share margin in percent (view settings); `assets` gives imported models their
+ * size for the interference check (without it, those parts are "cannot check").
  */
 export function allFindings(
   doc: AssemblyDocument,
   geo: FrameGeometry,
   components: ComponentIndex,
   balanceTolerance: number,
+  assets: AssetBounds = NO_ASSETS,
 ): Finding[] {
   const hit = lastFindings.get(doc)
-  if (hit && hit.geo === geo && hit.components === components && hit.balanceTolerance === balanceTolerance) return hit.findings
-  const findings = computeFindings(doc, geo, components, balanceTolerance)
-  lastFindings.set(doc, { geo, components, balanceTolerance, findings })
+  if (hit && hit.geo === geo && hit.components === components && hit.balanceTolerance === balanceTolerance && hit.assets === assets)
+    return hit.findings
+  const findings = computeFindings(doc, geo, components, balanceTolerance, assets)
+  lastFindings.set(doc, { geo, components, balanceTolerance, assets, findings })
   return findings
 }
 
-function computeFindings(doc: AssemblyDocument, geo: FrameGeometry, components: ComponentIndex, balanceTolerance: number): Finding[] {
+const NO_ASSETS: AssetBounds = {}
+
+function computeFindings(
+  doc: AssemblyDocument,
+  geo: FrameGeometry,
+  components: ComponentIndex,
+  balanceTolerance: number,
+  assets: AssetBounds,
+): Finding[] {
   const parts = wiringParts(doc, geo, components)
   const wires = doc.wires ?? []
   const assembly = runChecks({ ...checkInput(doc, geo, components), escOfMotor: escOfMotor(parts, wires) })
@@ -46,5 +59,6 @@ function computeFindings(doc: AssemblyDocument, geo: FrameGeometry, components: 
   // A bare frame has nothing to balance yet, so the hover check starts with the first part.
   const { mp, motors, hover } = massState(doc, geo, components)
   const mass = doc.parts.length > 0 ? massFindings(mp, motors, hover, balanceTolerance) : []
-  return [...assembly, ...wiringFindings(parts, wires), ...mass].sort((a, b) => ORDER[a.severity] - ORDER[b.severity])
+  const interference = assemblyInterferenceFindings(doc, geo, components, assets)
+  return [...assembly, ...wiringFindings(parts, wires), ...mass, ...interference].sort((a, b) => ORDER[a.severity] - ORDER[b.severity])
 }

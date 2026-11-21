@@ -56,7 +56,10 @@ test('propulsion: fit and validation per pair, Ready-to-fly checklist with links
   await expect(page.getByTestId('pair-kt')).toHaveText('2.294 × 10⁻⁵')
   await expect(page.getByTestId('pair-kt-error')).toContainText('fit error max 3.6 %')
   await expect(page.getByTestId('validation-row')).toHaveCount(5)
-  await expect(page.getByTestId('validation-row').first()).toContainText('+0.6%')
+  await expect(page.getByTestId('validation-kind')).toContainText('held out')
+  await expect(page.getByTestId('validation-row').first().getByTestId('validation-before').first()).toHaveText('+0.6%')
+  await expect(page.getByTestId('pair-other-tables')).toContainText('MN3110 KV700')
+  await expect(page.getByTestId('pair-map')).toContainText('100 % → 83.9 %')
   await expect(page.getByTestId('rotor-missing')).toBeVisible()
 
   // Exactly the values no source states for these parts.

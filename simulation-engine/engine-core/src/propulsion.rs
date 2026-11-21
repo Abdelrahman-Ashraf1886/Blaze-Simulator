@@ -8,8 +8,12 @@
 //!
 //! Model (SI: ω rad/s, I A, V V, R Ω, J kg·m²)
 //! - Motor (ideal brushless DC): K_t = 1/K_v; winding V_m = ω/K_v + R·I_m.
-//! - ESC (ideal averaging, lossless): V_m = d·V, supply current I_s = d·I_m,
-//!   d ∈ [0, 1] the throttle.
+//! - ESC (ideal averaging, lossless; a labelled assumption): V_m = e·V, supply
+//!   current I_s = e·I_m, where e = map(d) is the effective duty for the
+//!   throttle command d ∈ [0, 1]. The optional per-motor `throttleMap` is the
+//!   empirical effective control ratio derived from the manufacturer's bench
+//!   rows (not an ESC efficiency); without it e = d. Interpolation is identical
+//!   to `effectiveDuty` in TypeScript (shared fixture test).
 //! - Rotor: J dω/dt = K_t (I_m − I₀) − k_Q ω²; thrust T = k_T ω²,
 //!   drag torque Q = k_Q ω².
 //!   I₀ is a loss (friction, iron), so it can only stop the rotor, never drive
@@ -45,6 +49,11 @@ pub struct MotorPropulsion {
     pub torque_coef_nms2: f64,
     /// J_rotor + J_prop, kg·m².
     pub inertia_kg_m2: f64,
+    /// Throttle → effective duty pairs `[d, e]` (an empirical bench ratio, see
+    /// `src/domain/propulsion.ts`): sorted by d, e non-decreasing in (0, 1].
+    /// Absent = ideal ESC, e = d.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub throttle_map: Option<Vec<[f64; 2]>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -65,7 +74,7 @@ pub struct PropulsionDefinition {
 }
 
 /// The motor model in SI, ready to evaluate.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MotorModel {
     pub kv: f64,
     pub kt: f64,
@@ -74,6 +83,8 @@ pub struct MotorModel {
     pub k_thrust: f64,
     pub k_torque: f64,
     pub j: f64,
+    /// `[d, e]` points; empty = ideal (e = d).
+    pub map: Vec<[f64; 2]>,
 }
 
 impl MotorModel {
@@ -86,7 +97,34 @@ impl MotorModel {
             k_thrust: m.thrust_coef_ns2,
             k_torque: m.torque_coef_nms2,
             j: m.inertia_kg_m2,
+            map: m.throttle_map.clone().unwrap_or_default(),
         }
+    }
+
+    /// Effective duty for throttle d, exactly as `effectiveDuty` in
+    /// `src/domain/propulsion.ts`: linear between points, the nearest point's
+    /// ratio held outside them, bounded to [0, 1].
+    pub fn effective_duty(&self, d: f64) -> f64 {
+        let t = d.clamp(0.0, 1.0);
+        let p = &self.map;
+        if t == 0.0 || p.is_empty() {
+            return t;
+        }
+        let (first, last) = (p[0], p[p.len() - 1]);
+        if t <= first[0] {
+            return (first[1] / first[0] * t).min(1.0);
+        }
+        if t >= last[0] {
+            return (last[1] / last[0] * t).min(1.0);
+        }
+        for w in p.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            if t <= b[0] {
+                let f = (t - a[0]) / (b[0] - a[0]);
+                return a[1] + f * (b[1] - a[1]);
+            }
+        }
+        last[1]
     }
 
     /// Winding current at speed ω with V_m across the motor.
@@ -184,6 +222,17 @@ impl Propulsion {
             positive(&mut errors, p("thrustCoefNs2"), m.thrust_coef_ns2);
             positive(&mut errors, p("torqueCoefNms2"), m.torque_coef_nms2);
             positive(&mut errors, p("inertiaKgM2"), m.inertia_kg_m2);
+            if let Some(map) = &m.throttle_map {
+                let ok = !map.is_empty()
+                    && map.iter().all(|[d, e]| d.is_finite() && e.is_finite() && *d > 0.0 && *d <= 1.0 && *e > 0.0 && *e <= 1.0)
+                    && map.windows(2).all(|w| w[1][0] > w[0][0] && w[1][1] >= w[0][1]);
+                if !ok {
+                    errors.push(error(
+                        p("throttleMap"),
+                        "must be non-empty [throttle, effectiveDuty] pairs in (0, 1], throttle increasing, effective duty non-decreasing",
+                    ));
+                }
+            }
             if !(m.no_load_current_a.is_finite() && m.no_load_current_a >= 0.0) {
                 errors.push(error(p("noLoadCurrentA"), format!("must be a number ≥ 0 (got {})", m.no_load_current_a)));
             }
@@ -208,8 +257,25 @@ impl Propulsion {
         PropulsionState { omega: vec![0.0; self.motors.len()], charge_used_c: 0.0 }
     }
 
-    /// Pack terminal voltage for the rotor speeds and throttles (header formula).
+    /// Effective duty of each motor for the throttle commands (clamped to [0, 1]).
+    pub fn duties(&self, throttle: &[f64]) -> Vec<f64> {
+        self.motors.iter().enumerate().map(|(i, m)| m.effective_duty(throttle.get(i).copied().unwrap_or(0.0))).collect()
+    }
+
+    /// Pack terminal voltage for the rotor speeds and throttle commands.
     pub fn pack_voltage(&self, omega: &[f64], throttle: &[f64]) -> f64 {
+        self.pack_voltage_at(omega, &self.duties(throttle))
+    }
+
+    /// Supply current drawn from the pack, Σ e_i I_m,i, for throttle commands.
+    pub fn pack_current(&self, omega: &[f64], throttle: &[f64]) -> f64 {
+        let e = self.duties(throttle);
+        let v = self.pack_voltage_at(omega, &e);
+        self.motors.iter().zip(omega).zip(&e).map(|((m, &w), &d)| d * m.motor_current(w, d * v)).sum()
+    }
+
+    /// Pack voltage for effective duties (header formula with d → e).
+    fn pack_voltage_at(&self, omega: &[f64], throttle: &[f64]) -> f64 {
         let r_int = self.battery.internal_resistance_ohm;
         let (mut num, mut den) = (self.battery.open_circuit_voltage_v, 1.0);
         for ((m, &w), &d) in self.motors.iter().zip(omega).zip(throttle) {
@@ -219,14 +285,9 @@ impl Propulsion {
         num / den
     }
 
-    /// Supply current drawn from the pack, Σ d_i I_m,i.
-    pub fn pack_current(&self, omega: &[f64], throttle: &[f64]) -> f64 {
-        let v = self.pack_voltage(omega, throttle);
-        self.motors.iter().zip(omega).zip(throttle).map(|((m, &w), &d)| d * m.motor_current(w, d * v)).sum()
-    }
-
+    /// `throttle` here holds effective duties.
     fn derivative(&self, omega: &[f64], throttle: &[f64]) -> (Vec<f64>, f64) {
-        let v = self.pack_voltage(omega, throttle);
+        let v = self.pack_voltage_at(omega, throttle);
         let mut current = 0.0;
         let dw = self
             .motors
@@ -244,7 +305,7 @@ impl Propulsion {
     /// Advances the rotors and the drawn charge by `dt` (RK4), throttles held
     /// constant over the step. Throttles are clamped to [0, 1].
     pub fn step(&self, state: &mut PropulsionState, throttle: &[f64], dt: f64) {
-        let d: Vec<f64> = (0..self.motors.len()).map(|i| throttle.get(i).copied().unwrap_or(0.0).clamp(0.0, 1.0)).collect();
+        let d = self.duties(throttle);
         let w0 = state.omega.clone();
         let add = |w: &[f64], k: &[f64], h: f64| -> Vec<f64> { w.iter().zip(k).map(|(a, b)| (a + h * b).max(0.0)).collect() };
         let (k1, i1) = self.derivative(&w0, &d);
@@ -274,6 +335,7 @@ mod tests {
             thrust_coef_ns2: 2e-5,
             torque_coef_nms2: 1e-7,
             inertia_kg_m2: 2e-5,
+            throttle_map: None,
         }
     }
 
@@ -324,7 +386,7 @@ mod tests {
         // ω(t) = (ω₁ − ω₂ K e^{−λt}) / (1 − K e^{−λt}), K = (ω₀−ω₁)/(ω₀−ω₂) = ω₁/ω₂,
         // λ = C(ω₁ − ω₂)/J.
         let p = propulsion(1, 0.0);
-        let m = p.motors[0];
+        let m = p.motors[0].clone();
         let (a, b, c) = (m.kt * (10.0 / m.r - m.i0), m.kt * m.kt / m.r, m.k_torque);
         let disc = (b * b + 4.0 * a * c).sqrt();
         let (w1, w2) = ((-b + disc) / (2.0 * c), (-b - disc) / (2.0 * c));
@@ -347,7 +409,7 @@ mod tests {
         // k_Q = 0: ω(t) = ω_ss (1 − e^{−t/τ}), τ = J·R/K_t², ω_ss = K_v (V − R·I₀).
         let mut p = propulsion(1, 0.0);
         p.motors[0].k_torque = 0.0;
-        let m = p.motors[0];
+        let m = p.motors[0].clone();
         let tau = m.j * m.r / (m.kt * m.kt);
         let w_ss = m.kv * (10.0 - m.r * m.i0);
         let mut s = p.rest();
@@ -365,7 +427,7 @@ mod tests {
             let d = 0.7;
             let mut s = p.rest();
             run(&p, &mut s, &vec![d; n], 2.0, 1e-4);
-            let m = p.motors[0];
+            let m = p.motors[0].clone();
             let expected = m.steady_omega(d * 10.0, n as f64 * d * d * 0.02);
             for w in &s.omega {
                 assert!((w - expected).abs() < 1e-6 * expected, "n = {n}: {w} vs {expected}");
@@ -427,5 +489,72 @@ mod tests {
         assert!(Propulsion::from_json(unknown, &v).unwrap_err()[0].message.contains("unknown field"));
         let version = json!({"version": 2, "motors": [], "battery": {"openCircuitVoltageV": 1, "internalResistanceOhm": 1, "capacityC": 1}});
         assert_eq!(Propulsion::from_json(version, &v).unwrap_err()[0].path, "propulsion.version");
+    }
+
+    #[test]
+    fn effective_duty_interpolates_and_holds_the_ratio_outside() {
+        let mut m = MotorModel::new(&motor("m1"));
+        assert_eq!(m.effective_duty(0.42), 0.42); // ideal
+        m.map = vec![[0.5, 0.45], [1.0, 0.85]];
+        assert!((m.effective_duty(0.75) - 0.65).abs() < 1e-15);
+        assert!((m.effective_duty(0.25) - 0.225).abs() < 1e-15);
+        assert_eq!(m.effective_duty(0.0), 0.0);
+        assert_eq!(m.effective_duty(1.5), 0.85);
+        m.map = vec![[0.5, 0.6]];
+        assert_eq!(m.effective_duty(1.0), 1.0);
+    }
+
+    #[test]
+    fn steady_sag_with_a_map_matches_the_closed_form_at_the_effective_duty() {
+        let mut p = propulsion(2, 0.02);
+        for m in &mut p.motors {
+            m.map = vec![[0.5, 0.45], [1.0, 0.85]];
+        }
+        let mut s = p.rest();
+        run(&p, &mut s, &[0.75, 0.75], 2.0, 1e-4);
+        let e = 0.65;
+        let expected = p.motors[0].steady_omega(e * 10.0, 2.0 * e * e * 0.02);
+        for w in &s.omega {
+            assert!((w - expected).abs() < 1e-6 * expected, "{w} vs {expected}");
+        }
+    }
+
+    #[test]
+    fn throttle_map_validation() {
+        let v = vehicle(&["m1"]);
+        let base = |map: Value| {
+            json!({"version": 1, "motors": [{"partId": "m1", "kvRadPerSV": 50, "resistanceOhm": 0.1, "noLoadCurrentA": 0.3,
+                "thrustCoefNs2": 1e-5, "torqueCoefNms2": 1e-7, "inertiaKgM2": 1e-5, "throttleMap": map}],
+                "battery": {"openCircuitVoltageV": 14.8, "internalResistanceOhm": 0.01, "capacityC": 18720}})
+        };
+        assert!(Propulsion::from_json(base(json!([[0.5, 0.48], [1.0, 0.84]])), &v).is_ok());
+        for bad in [json!([]), json!([[0.5, 0.6], [1.0, 0.5]]), json!([[1.0, 0.8], [0.5, 0.4]]), json!([[0.5, 1.2]]), json!([[0.0, 0.1]])] {
+            let errors = Propulsion::from_json(base(bad.clone()), &v).unwrap_err();
+            assert_eq!(errors[0].path, "propulsion.motors[0].throttleMap", "{bad}");
+        }
+    }
+
+    /// TypeScript and Rust must give the same numbers: the cases were generated by
+    /// `steadyState`/`effectiveDuty` in src/domain/propulsion.ts.
+    #[test]
+    fn matches_the_typescript_model_on_the_shared_fixture() {
+        let fixture: Value = serde_json::from_str(include_str!("../../../tests/fixtures/propulsion-cases.json")).unwrap();
+        let cases = fixture["cases"].as_array().unwrap();
+        assert!(cases.len() >= 40);
+        let close = |a: f64, b: f64| (a - b).abs() <= 1e-12 * b.abs().max(1.0);
+        for c in cases {
+            let f = |k: &str| c[k].as_f64().unwrap();
+            let map: Vec<[f64; 2]> = serde_json::from_value(c["throttleMap"].clone()).unwrap();
+            let kv = f("kvRadPerSV");
+            let m = MotorModel { kv, kt: 1.0 / kv, r: f("resistanceOhm"), i0: f("noLoadCurrentA"), k_thrust: 0.0, k_torque: f("torqueCoefNms2"), j: 1.0, map };
+            let (v, rs, d) = (f("supplyV"), f("sourceResistanceOhm"), f("throttle"));
+            let e = m.effective_duty(d);
+            let omega = m.steady_omega(e * v, e * e * rs);
+            let i_m = if omega == 0.0 { e * v / (m.r + e * e * rs) } else { m.i0 + m.k_torque * omega * omega / m.kt };
+            let x = &c["expected"];
+            assert!(close(e, x["effectiveDuty"].as_f64().unwrap()), "{c}");
+            assert!(close(omega, x["omega"].as_f64().unwrap()), "{c}: {omega}");
+            assert!(close(e * i_m, x["supplyCurrent"].as_f64().unwrap()), "{c}");
+        }
     }
 }

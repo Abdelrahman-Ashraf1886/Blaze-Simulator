@@ -34,12 +34,30 @@
  * - Shaft torque K_t (I_m − I₀), with I₀ the stated no-load current (its stated test
  *   voltage is shown with it; I₀ is taken as constant).
  * - Winding: V_m = ω/K_v + R·I_m, with R the stated internal resistance.
- * - ESC, averaged and lossless (labelled assumption): the motor sees V_m = d·V for a
- *   throttle d ∈ [0, 1] of the supply voltage V; the power balance V·I_s = V_m·I_m
- *   gives the supply current I_s = d·I_m. Test tables state the supply current I_s
- *   (their power column is V × I_s), so a row's motor current is I_m = I_s / d.
+ * - ESC (labelled assumption: ideal, lossless averaging converter): the motor sees
+ *   V_m = d_eff·V, where d_eff is the effective duty, and the power balance
+ *   V·I_s = V_m·I_m gives the supply current I_s = d_eff·I_m. Test tables state the
+ *   supply current I_s (their power column is V × I_s; checked per row).
+ * - Effective duty: the throttle command d does not give d_eff = d on the
+ *   manufacturer's bench. From a row's own speed and current, V·d_eff = E + R·I_s/d_eff
+ *   with E = ω/K_v, so
+ *     d_eff = [E + √(E² + 4·V·R·I_s)] / (2V)                       (`rowDuty`)
+ *   The throttle map (`benchThrottleMap`) is the median of d_eff/d over a table's
+ *   rows at each throttle step. It is an EMPIRICAL EFFECTIVE CONTROL RATIO of that
+ *   bench (its ESC's command curve, supply and wiring together); it is not an ESC
+ *   efficiency, and the voltage deficit it shows is not claimed to be dissipated in
+ *   the ESC. Rules:
+ *   - effective duty e = η·d is made non-decreasing in d (pool-adjacent-violators
+ *     on the medians; `adjusted` says when that changed anything) and bounded to
+ *     (0, 1];
+ *   - between steps e is interpolated linearly; below the lowest step and above the
+ *     highest, the ratio of the nearest step is held (`extrapolated`, labelled);
+ *   - without a table the map is ideal, e = d (labelled).
  * - k_Q from a test-table row: in steady state the shaft torque equals the prop's
- *   drag torque, Q = K_t (I_s/d − I₀).
+ *   drag torque, Q = K_t (I_s/d_eff − I₀), with the row's own d_eff.
+ * - I₀ is a single stated point (e.g. "at 10 V"). It is held constant; rows whose
+ *   motor voltage is away from that point use it outside its stated domain, and
+ *   are flagged so (no I₀(ω) is assumed).
  *
  * Steady state (`steadyState`)
  * - V_m = ω/K_v + R·I_m and K_t (I_m − I₀) = k_Q ω². Eliminating I_m with K_t = 1/K_v:
@@ -48,10 +66,25 @@
  *   of (−b + √(b² + 4ac)) / 2a, valid for a = 0 too). For c ≤ 0 the motor does not
  *   turn (ω = 0).
  * - A source resistance R_s (battery internal resistance) in series with the ESC
- *   input: V = V_oc − R_s·I_s and I_s = d·I_m give V_m = d·V_oc − d²·R_s·I_m, i.e. the
- *   same equation with V_m = d·V_oc and R replaced by R + d²·R_s.
- * - Validation: the solved speed, thrust and supply current at each test-table row's
- *   voltage and throttle are compared with the row; the relative errors are reported.
+ *   input: V = V_oc − R_s·I_s and I_s = e·I_m give V_m = e·V_oc − e²·R_s·I_m, i.e. the
+ *   same equation with V_m = e·V_oc and R replaced by R + e²·R_s.
+ * - Energy check: V_m·I_m = Q·ω + K_t·I₀·ω + R·I_m² (electrical in = shaft + no-load
+ *   + copper) holds exactly in this model and is tested.
+ *
+ * Validation (`fitPair`)
+ * - In-sample: k_T and k_Q are fitted on the pair's own rows; their fit errors are
+ *   reported as fit errors, never as validation.
+ * - Leave-one-prop-out: the speed, thrust, current and power at each row's voltage
+ *   and throttle are predicted with a throttle map built from the OTHER propellers'
+ *   rows of the same table, so the map is independent of the rows it predicts.
+ *   When a table has no other propeller the map is in-sample and says so.
+ * - The ideal-ESC prediction (e = d) is kept alongside, as the "before" reference.
+ *
+ * Domain
+ * - A fit is supported over the speed range of the rows it used. For a propeller
+ *   table, rows above the motor's no-load speed at the build's supply voltage
+ *   (KV·V, plus the first row above it) are left out when that voltage is known.
+ *   A steady state outside the domain is marked `outsideDomain` (an estimate).
  *
  * Response (simulated in engine-core/src/propulsion.rs, 4.6 wires it in)
  * - J dω/dt = K_t (I_m − I₀) − k_Q ω², J = J_rotor + J_prop.
@@ -181,28 +214,149 @@ export interface SteadyState {
   omega: number
   motorCurrent: number
   supplyCurrent: number
-  /** Voltage applied to the motor, d·V (after the source drop). */
+  /** Voltage applied to the motor, e·V (after the source drop). */
   motorVoltage: number
+  /** e = η(d)·d, the duty the motor sees. */
+  effectiveDuty: number
+  /** The throttle is outside the map's measured steps (its ratio is held). */
+  extrapolated: boolean
+}
+
+// ---- Throttle map (effective control ratio) ------------------------------------------------
+
+/** Throttle command → effective duty e (header: an empirical bench ratio, not an efficiency). */
+export interface ThrottleMap {
+  /** Sorted by throttle; effective duty non-decreasing, in (0, 1]. */
+  points: { throttle: number; effectiveDuty: number }[]
+  origin: 'bench' | 'ideal'
+  /** Component whose test rows define it (bench only). */
+  componentId: string | null
+  /** Propeller labels left out (leave-one-prop-out). */
+  excluded: string[]
+  /** Rows the medians were taken over. */
+  rows: number
+  /** The monotone fit changed at least one median. */
+  adjusted: boolean
+}
+
+export const IDEAL_MAP: ThrottleMap = { points: [], origin: 'ideal', componentId: null, excluded: [], rows: 0, adjusted: false }
+
+/** Effective duty for throttle d (header rules). The ideal map gives e = d. */
+export function effectiveDuty(map: ThrottleMap, d: number): { duty: number; extrapolated: boolean } {
+  const t = Math.min(Math.max(d, 0), 1)
+  const p = map.points
+  if (t === 0 || p.length === 0) return { duty: t, extrapolated: false }
+  const first = p[0]!
+  const last = p[p.length - 1]!
+  if (t <= first.throttle) return { duty: Math.min(1, (first.effectiveDuty / first.throttle) * t), extrapolated: t < first.throttle }
+  if (t >= last.throttle) return { duty: Math.min(1, (last.effectiveDuty / last.throttle) * t), extrapolated: t > last.throttle }
+  for (let i = 1; i < p.length; i++) {
+    const a = p[i - 1]!
+    const b = p[i]!
+    if (t <= b.throttle) {
+      const f = (t - a.throttle) / (b.throttle - a.throttle)
+      return { duty: a.effectiveDuty + f * (b.effectiveDuty - a.effectiveDuty), extrapolated: false }
+    }
+  }
+  return { duty: last.effectiveDuty, extrapolated: false }
+}
+
+/** d_eff = [E + √(E² + 4·V·R·I_s)] / (2V), E = ω/K_v (header). */
+export function rowDuty(m: MotorElectrical, voltage: number, omega: number, supplyCurrent: number): number {
+  const e = omega / m.kv
+  return (e + Math.sqrt(e * e + 4 * voltage * m.resistance * supplyCurrent)) / (2 * voltage)
+}
+
+const median = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b)
+  const n = s.length
+  return n % 2 ? s[(n - 1) / 2]! : (s[n / 2 - 1]! + s[n / 2]!) / 2
+}
+
+/** Pool-adjacent-violators: the closest non-decreasing sequence (equal weights). */
+export function monotone(values: readonly number[]): number[] {
+  const blocks: { sum: number; n: number }[] = []
+  for (const v of values) {
+    blocks.push({ sum: v, n: 1 })
+    while (blocks.length > 1 && blocks[blocks.length - 2]!.sum / blocks[blocks.length - 2]!.n > blocks[blocks.length - 1]!.sum / blocks[blocks.length - 1]!.n) {
+      const b = blocks.pop()!
+      blocks[blocks.length - 1]!.sum += b.sum
+      blocks[blocks.length - 1]!.n += b.n
+    }
+  }
+  return blocks.flatMap((b) => Array<number>(b.n).fill(b.sum / b.n))
+}
+
+/**
+ * The bench throttle map of a motor's test table: at each throttle step, the median of
+ * d_eff/d over the rows (all props and voltages, minus `exclude`d labels' sizes), then
+ * the monotone, bounded effective duty. Null without usable rows.
+ */
+export function benchThrottleMap(motor: Component, exclude: (label: string) => boolean = () => false): ThrottleMap | null {
+  const e = motorElectrical(motor)
+  const t = table(motor, 'thrustTable')
+  if (!e.ok || !t) return null
+  const steps = new Map<number, number[]>()
+  const excluded = new Set<string>()
+  let rows = 0
+  for (const row of t.value.rows) {
+    const label = typeof row.prop === 'string' ? row.prop : ''
+    if (exclude(label)) {
+      excluded.add(label)
+      continue
+    }
+    const v = cell(t, row, 'voltage')
+    const d = cell(t, row, 'throttle')
+    const w = cell(t, row, 'rpm')
+    const i = cell(t, row, 'current')
+    if (v === null || d === null || w === null || i === null || v <= 0 || d <= 0 || w <= 0) continue
+    const key = Math.round(d * 1e9) / 1e9
+    steps.set(key, [...(steps.get(key) ?? []), rowDuty(e.value, v, w, i) / d])
+    rows++
+  }
+  if (steps.size === 0) return null
+  const throttles = [...steps.keys()].sort((a, b) => a - b)
+  const raw = throttles.map((d) => median(steps.get(d)!) * d)
+  const fitted = monotone(raw).map((x) => Math.min(1, Math.max(x, Number.MIN_VALUE)))
+  return {
+    points: throttles.map((throttle, i) => ({ throttle, effectiveDuty: fitted[i]! })),
+    origin: 'bench',
+    componentId: motor.id,
+    excluded: [...excluded],
+    rows,
+    adjusted: fitted.some((x, i) => Math.abs(x - raw[i]!) > 1e-12),
+  }
 }
 
 /**
  * Steady speed and currents at supply voltage `supplyV` (V_oc when `sourceResistance`
- * is the battery's R_int) and throttle d ∈ [0, 1]. See the header for the derivation.
+ * is the battery's R_int) and throttle d ∈ [0, 1], through `map` (ideal by default).
  */
-export function steadyState(m: MotorElectrical, kQ: number, supplyV: number, throttle: number, sourceResistance = 0): SteadyState {
-  const d = throttle
-  const r = m.resistance + d * d * sourceResistance
-  const vm0 = d * supplyV
+export function steadyState(
+  m: MotorElectrical,
+  kQ: number,
+  supplyV: number,
+  throttle: number,
+  sourceResistance = 0,
+  map: ThrottleMap = IDEAL_MAP,
+): SteadyState {
+  const { duty: e, extrapolated } = effectiveDuty(map, throttle)
+  const r = m.resistance + e * e * sourceResistance
+  const vm0 = e * supplyV
   const a = r * kQ * m.kv
   const b = 1 / m.kv
   const c = vm0 - r * m.noLoadCurrent
-  if (c <= 0) {
-    const motorCurrent = r > 0 ? vm0 / r : 0
-    return { omega: 0, motorCurrent, supplyCurrent: d * motorCurrent, motorVoltage: vm0 - d * d * sourceResistance * motorCurrent }
-  }
+  const out = (omega: number, motorCurrent: number): SteadyState => ({
+    omega,
+    motorCurrent,
+    supplyCurrent: e * motorCurrent,
+    motorVoltage: vm0 - e * e * sourceResistance * motorCurrent,
+    effectiveDuty: e,
+    extrapolated,
+  })
+  if (c <= 0) return out(0, r > 0 ? vm0 / r : 0)
   const omega = (2 * c) / (b + Math.sqrt(b * b + 4 * a * c))
-  const motorCurrent = m.noLoadCurrent + (kQ * omega * omega) / m.kt
-  return { omega, motorCurrent, supplyCurrent: d * motorCurrent, motorVoltage: vm0 - d * d * sourceResistance * motorCurrent }
+  return out(omega, m.noLoadCurrent + (kQ * omega * omega) / m.kt)
 }
 
 // ---- Propeller data and fits -------------------------------------------------------------------
@@ -230,32 +384,69 @@ export function labelMatchesProp(label: string, prop: Component, motor: Componen
 export interface ValidationRow {
   /** Supply voltage, V. */
   voltage: number
-  /** 0…1 */
+  /** Throttle command, 0…1. */
   throttle: number
+  /** Effective duty the model used. */
+  effectiveDuty: number
+  /** The throttle is outside the map's measured steps. */
+  extrapolated: boolean
   rpm: { table: number; model: number; error: number }
   thrust: { table: number; model: number; error: number }
   current: { table: number; model: number; error: number }
+  /** Electrical input power: the table's power column, and V·I_s of the model. */
+  power: { table: number | null; model: number; error: number | null }
+  /** (table power − V × table current) / (V × table current): the row's own consistency. */
+  tablePowerConsistency: number | null
+  /** I₀ / I_m at the model point. */
+  noLoadShare: number
+  /** The motor voltage is away from I₀'s stated test voltage (I₀ used outside its stated point). */
+  noLoadOutsideStated: boolean
 }
 
 export interface DataOrigin {
   kind: 'motor-table' | 'prop-table'
   /** Component the table belongs to. */
   componentId: string
-  /** The table's stated condition, shown verbatim (APC: computed, not measured). */
+  /** The table's stated condition, shown verbatim (APC: computed at sea-level ISA). */
   condition: string | null
   reference: SpecReference | null
   /** Propeller names as printed in the motor table (motor-table only). */
   labels: string[]
 }
 
+/** Speed range a fit is supported over (rad/s), and how it was set. */
+export interface FitDomain {
+  minOmega: number
+  maxOmega: number
+  rowsUsed: number
+  rowsTotal: number
+  /** 'motor-speed': rows above the motor's no-load speed at the build's voltage were left out. */
+  cappedBy: 'table' | 'motor-speed'
+}
+
+export interface Validation {
+  rows: ValidationRow[]
+  map: ThrottleMap
+  /** The map came from other propellers' rows (independent of these rows). */
+  mapIndependent: boolean
+}
+
 export interface PairFit {
   origin: DataOrigin
+  /** In-sample fit. */
   kT: SquareLawFit
-  /** null when the data has no torque or current. */
+  /** In-sample fit; null when the data has no torque or current. */
   kQ: SquareLawFit | null
   kQMethod: 'motor-current' | 'prop-torque'
-  /** Steady-state solver against each test-table row (motor-table only; needs k_Q and the motor model). */
-  validation: ValidationRow[] | null
+  /** k_Q with the ideal duty e = d (the 4.5 "before" reference; motor-table only). */
+  kQIdealDuty: SquareLawFit | null
+  domain: FitDomain
+  /** Throttle map the simulation should use with this pair (bench of the motor if it has a table). */
+  map: ThrottleMap
+  /** Leave-one-prop-out prediction of the test rows (motor-table only). */
+  validation: Validation | null
+  /** The same rows with the ideal ESC, e = d ("before"). */
+  validationIdeal: ValidationRow[] | null
 }
 
 const rel = (model: number, table: number) => (model - table) / table
@@ -271,62 +462,107 @@ function motorTableRows(motor: Component, prop: Component) {
     const omega = cell(t, row, 'rpm')
     const thrust = cell(t, row, 'thrust')
     if (omega === null || thrust === null) return []
-    return [{ label, omega, thrust, voltage: cell(t, row, 'voltage'), throttle: cell(t, row, 'throttle'), current: cell(t, row, 'current') }]
+    return [
+      {
+        label,
+        omega,
+        thrust,
+        voltage: cell(t, row, 'voltage'),
+        throttle: cell(t, row, 'throttle'),
+        current: cell(t, row, 'current'),
+        power: cell(t, row, 'power'),
+      },
+    ]
   })
   return rows.length > 0 ? { t, rows } : null
 }
 
-/** Static rows (no airspeed, or zero) of the propeller's performance table, in SI. */
+/** Static rows (no airspeed, or zero) of the propeller's performance table, in SI, by speed. */
 function propTableRows(prop: Component) {
   const t = table(prop, 'performanceTable')
   if (!t) return null
-  const rows = t.value.rows.flatMap((row) => {
-    const airspeed = cell(t, row, 'airspeed')
-    const omega = cell(t, row, 'rpm')
-    const thrust = cell(t, row, 'thrust') ?? cell(t, row, 'thrustImperial')
-    if ((airspeed !== null && airspeed !== 0) || omega === null || thrust === null) return []
-    return [{ omega, thrust, torque: cell(t, row, 'torque') ?? cell(t, row, 'torqueImperial') }]
-  })
+  const rows = t.value.rows
+    .flatMap((row) => {
+      const airspeed = cell(t, row, 'airspeed')
+      const omega = cell(t, row, 'rpm')
+      const thrust = cell(t, row, 'thrust') ?? cell(t, row, 'thrustImperial')
+      if ((airspeed !== null && airspeed !== 0) || omega === null || thrust === null) return []
+      return [{ omega, thrust, torque: cell(t, row, 'torque') ?? cell(t, row, 'torqueImperial') }]
+    })
+    .sort((a, b) => a.omega - b.omega)
   return rows.length > 0 ? { t, rows } : null
+}
+
+/** The voltage a no-load current's condition states ("Idle current at 10 V" → 10), or null. */
+export function statedTestVoltage(condition: string | null): number | null {
+  const m = condition ? /(\d+(?:\.\d+)?)\s*V\b/.exec(condition) : null
+  return m ? Number(m[1]) : null
+}
+
+type TableRow = NonNullable<ReturnType<typeof motorTableRows>>['rows'][number]
+
+function validate(
+  rows: TableRow[],
+  m: MotorElectrical,
+  kT: number,
+  kQ: number,
+  map: ThrottleMap,
+): ValidationRow[] {
+  const vTest = statedTestVoltage(m.noLoadCondition)
+  return rows.flatMap((r) => {
+    if (r.voltage === null || r.throttle === null || r.current === null) return []
+    const s = steadyState(m, kQ, r.voltage, r.throttle, 0, map)
+    const thrust = kT * s.omega ** 2
+    const vi = r.voltage * r.current
+    const modelPower = r.voltage * s.supplyCurrent
+    return [
+      {
+        voltage: r.voltage,
+        throttle: r.throttle,
+        effectiveDuty: s.effectiveDuty,
+        extrapolated: s.extrapolated,
+        rpm: { table: r.omega / RPM, model: s.omega / RPM, error: rel(s.omega, r.omega) },
+        thrust: { table: r.thrust, model: thrust, error: rel(thrust, r.thrust) },
+        current: { table: r.current, model: s.supplyCurrent, error: rel(s.supplyCurrent, r.current) },
+        power: { table: r.power, model: modelPower, error: r.power === null ? null : rel(modelPower, r.power) },
+        tablePowerConsistency: r.power === null || vi === 0 ? null : (r.power - vi) / vi,
+        noLoadShare: s.motorCurrent > 0 ? m.noLoadCurrent / s.motorCurrent : 1,
+        noLoadOutsideStated: vTest === null || Math.abs(s.motorVoltage - vTest) > 0.05 * vTest,
+      },
+    ]
+  })
 }
 
 /**
  * k_T and k_Q for a motor and propeller, from the best data available (header), with
- * the solver's validation against the motor's test rows. Null when neither component
- * has data for the pair: k_T is then a user input.
+ * the leave-one-prop-out validation against the motor's test rows. `supplyVoltage`
+ * (the build's battery) bounds a propeller table's fit to reachable speeds. Null when
+ * neither component has data for the pair: k_T is then a user input.
  */
-export function fitPair(motor: Component, prop: Component): PairFit | null {
+export function fitPair(motor: Component, prop: Component, supplyVoltage: number | null = null): PairFit | null {
   const elec = motorElectrical(motor)
   const mt = motorTableRows(motor, prop)
+  const motorMap = benchThrottleMap(motor) ?? IDEAL_MAP
   if (mt) {
     const kT = fitSquareLaw(mt.rows.map((r) => ({ omega: r.omega, y: r.thrust })))
     if (kT) {
-      // Q = K_t (I_s/d − I₀) needs the motor model and the row's throttle and current.
-      const kQ = elec.ok
-        ? fitSquareLaw(
-            mt.rows.map((r) => ({
-              omega: r.omega,
-              y: r.current !== null && r.throttle ? elec.value.kt * (r.current / r.throttle - elec.value.noLoadCurrent) : 0,
-            })),
-          )
-        : null
-      const validation =
-        elec.ok && kQ
-          ? mt.rows.flatMap((r) => {
-              if (r.voltage === null || r.throttle === null || r.current === null) return []
-              const s = steadyState(elec.value, kQ.k, r.voltage, r.throttle)
-              const thrust = kT.k * s.omega ** 2
-              return [
-                {
-                  voltage: r.voltage,
-                  throttle: r.throttle,
-                  rpm: { table: r.omega / RPM, model: s.omega / RPM, error: rel(s.omega, r.omega) },
-                  thrust: { table: r.thrust, model: thrust, error: rel(thrust, r.thrust) },
-                  current: { table: r.current, model: s.supplyCurrent, error: rel(s.supplyCurrent, r.current) },
-                },
-              ]
-            })
+      const torque = (duty: (r: TableRow) => number | null) =>
+        elec.ok
+          ? fitSquareLaw(
+              mt.rows.map((r) => {
+                const d = duty(r)
+                return { omega: r.omega, y: r.current !== null && d ? elec.value.kt * (r.current / d - elec.value.noLoadCurrent) : 0 }
+              }),
+            )
           : null
+      // Q = K_t (I_s/d_eff − I₀) with each row's own effective duty.
+      const kQ = torque((r) => (elec.ok && r.voltage && r.current !== null ? rowDuty(elec.value, r.voltage, r.omega, r.current) : null))
+      const kQIdealDuty = torque((r) => r.throttle)
+      const sameSize = (label: string) => mt.rows.some((r) => r.label === label) || labelMatchesProp(label, prop, motor)
+      const lopo = benchThrottleMap(motor, sameSize)
+      const independent = !!lopo && lopo.rows > 0
+      const map = independent ? lopo : motorMap
+      const omegas = mt.rows.map((r) => r.omega)
       return {
         origin: {
           kind: 'motor-table',
@@ -338,25 +574,60 @@ export function fitPair(motor: Component, prop: Component): PairFit | null {
         kT,
         kQ,
         kQMethod: 'motor-current',
-        validation,
+        kQIdealDuty,
+        domain: { minOmega: Math.min(...omegas), maxOmega: Math.max(...omegas), rowsUsed: mt.rows.length, rowsTotal: mt.rows.length, cappedBy: 'table' },
+        map: motorMap,
+        validation: elec.ok && kQ ? { rows: validate(mt.rows, elec.value, kT.k, kQ.k, map), map, mapIndependent: independent } : null,
+        validationIdeal: elec.ok && kQIdealDuty ? validate(mt.rows, elec.value, kT.k, kQIdealDuty.k, IDEAL_MAP) : null,
       }
     }
   }
   const pt = propTableRows(prop)
   if (pt) {
-    const kT = fitSquareLaw(pt.rows.map((r) => ({ omega: r.omega, y: r.thrust })))
+    // Reachable speeds: up to the motor's no-load speed K_v·V, plus the first row above it.
+    const limit = elec.ok && supplyVoltage !== null && supplyVoltage > 0 ? elec.value.kv * supplyVoltage : null
+    const firstAbove = limit === null ? -1 : pt.rows.findIndex((r) => r.omega > limit)
+    const used = limit === null || firstAbove === -1 ? pt.rows : pt.rows.slice(0, firstAbove + 1)
+    const kT = fitSquareLaw(used.map((r) => ({ omega: r.omega, y: r.thrust })))
     if (kT) {
-      const kQ = fitSquareLaw(pt.rows.map((r) => ({ omega: r.omega, y: r.torque ?? 0 })))
+      const kQ = fitSquareLaw(used.map((r) => ({ omega: r.omega, y: r.torque ?? 0 })))
+      const omegas = used.map((r) => r.omega)
       return {
         origin: { kind: 'prop-table', componentId: prop.id, condition: pt.t.condition ?? null, reference: pt.t.reference ?? null, labels: [] },
         kT,
         kQ,
         kQMethod: 'prop-torque',
+        kQIdealDuty: null,
+        domain: {
+          minOmega: Math.min(...omegas),
+          maxOmega: Math.max(...omegas),
+          rowsUsed: used.length,
+          rowsTotal: pt.rows.length,
+          cappedBy: used.length < pt.rows.length ? 'motor-speed' : 'table',
+        },
+        map: motorMap,
         validation: null,
+        validationIdeal: null,
       }
     }
   }
   return null
+}
+
+/** Whether a speed lies outside the fit's supported domain (the result is then an estimate). */
+export const outsideDomain = (fit: PairFit, omega: number) => omega < fit.domain.minOmega * (1 - 1e-9) || omega > fit.domain.maxOmega * (1 + 1e-9)
+
+/**
+ * k_T for the same propeller in every OTHER motor table of the library (same-maker size
+ * match), for showing how far the tables agree. Display only: nothing is pooled.
+ */
+export function otherTablesKT(prop: Component, motor: Component, library: readonly Component[]): { motor: Component; kT: number; rows: number }[] {
+  return library.flatMap((m) => {
+    if (m.category !== 'motor' || m.id === motor.id) return []
+    const rows = motorTableRows(m, prop)
+    const f = rows ? fitSquareLaw(rows.rows.map((r) => ({ omega: r.omega, y: r.thrust }))) : null
+    return f ? [{ motor: m, kT: f.k, rows: rows!.rows.length }] : []
+  })
 }
 
 // ---- Inertia -----------------------------------------------------------------------------------------
@@ -430,7 +701,8 @@ export interface MotorPropulsion {
   rotor: RotorInertia | null
 }
 
-export function analyseMotor(slot: MotorSlot): MotorPropulsion {
+/** `supplyVoltage`: the build battery's V_oc when known (bounds a propeller-table fit). */
+export function analyseMotor(slot: MotorSlot, supplyVoltage: number | null = null): MotorPropulsion {
   const m = slot.motor?.component ?? null
   const p = slot.prop?.component ?? null
   const e = m ? motorElectrical(m) : null
@@ -439,7 +711,7 @@ export function analyseMotor(slot: MotorSlot): MotorPropulsion {
   return {
     slot,
     electrical: e?.ok ? e.value : null,
-    fit: m && p ? fitPair(m, p) : null,
+    fit: m && p ? fitPair(m, p, supplyVoltage) : null,
     propInertia: mass !== null && dia !== null && mass > 0 && dia > 0 ? propInertia(mass, dia) : null,
     rotor: m ? rotorInertia(m) : null,
   }
@@ -657,6 +929,11 @@ export interface PropulsionDefinition {
     torqueCoefNms2: number
     /** J_rotor + J_prop, kg·m². */
     inertiaKgM2: number
+    /**
+     * Throttle → effective duty pairs [d, e] (sorted, e non-decreasing, in (0, 1]); the
+     * engine interpolates like `effectiveDuty`. Absent = ideal ESC (e = d).
+     */
+    throttleMap?: [number, number][]
   }[]
   battery: {
     openCircuitVoltageV: number
@@ -680,6 +957,7 @@ export function propulsionDefinition(motors: readonly MotorPropulsion[], battery
       thrustCoefNs2: m.fit.kT.k,
       torqueCoefNms2: m.fit.kQ.k,
       inertiaKgM2: m.rotor.value + m.propInertia,
+      ...(m.fit.map.points.length > 0 ? { throttleMap: m.fit.map.points.map((x): [number, number] => [x.throttle, x.effectiveDuty]) } : {}),
     })
   }
   return {

@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router'
 import type { AssemblyDocument } from '../../../electron/ipc/contract'
 import { Readout, Readouts } from '@/components/section'
 import { cn } from '@/lib/utils'
-import type { MotorPropulsion, PairFit, ReadyItem, ReadyLink, SquareLawFit } from '@/domain/propulsion'
+import { otherTablesKT, type MotorPropulsion, type PairFit, type ReadyItem, type ReadyLink, type SquareLawFit, type ThrottleMap } from '@/domain/propulsion'
 import type { FrameGeometry } from '@/three/frame-geometry'
 import { useComponentIndex } from './component-index'
 import { propulsionState, type PropulsionState } from './propulsion-input'
@@ -110,6 +110,7 @@ export function PropulsionPanel({ doc, geo }: { doc: AssemblyDocument; geo: Fram
       </p>
     )
   }
+  const library = Object.values(components)
   return (
     <div className="space-y-4" data-testid="propulsion-panel">
       {[...pairs.values()].map(({ m, mounts }) => {
@@ -124,7 +125,12 @@ export function PropulsionPanel({ doc, geo }: { doc: AssemblyDocument; geo: Fram
               </span>
             </h3>
             {m.fit ? (
-              <PairDetails m={m} fit={m.fit} sourceName={components[m.fit.origin.componentId]?.name ?? ''} />
+              <PairDetails
+                m={m}
+                fit={m.fit}
+                sourceName={components[m.fit.origin.componentId]?.name ?? ''}
+                others={m.fit.origin.kind === 'motor-table' ? otherTablesKT(pc, mc, library) : []}
+              />
             ) : (
               <p className="border-t border-line py-2 text-[12px] leading-relaxed text-warn" data-testid="pair-no-data">
                 No data for this pair: neither the motor’s test table nor the propeller states it. k_T and k_Q are user inputs
@@ -135,24 +141,53 @@ export function PropulsionPanel({ doc, geo }: { doc: AssemblyDocument; geo: Fram
         )
       })}
       <p className="text-[11.5px] leading-relaxed text-fg-subtle">
-        T = k_T ω², Q = k_Q ω², least squares through the origin. Model: ideal BLDC motor (K_t = 60/(2π·KV), stated R and
-        I₀) behind an ideal averaging ESC (V_m = throttle × V, I_supply = throttle × I_motor). Propeller inertia: blades as
-        thin rods, J = m R²/3. Method: src/domain/propulsion.ts.
+        T = k_T ω², Q = k_Q ω², least squares through the origin (in-sample fits). Model: ideal BLDC motor (K_t = 60/(2π·KV),
+        stated R and I₀) behind an ideal, lossless averaging ESC (V_m = e·V, I_supply = e·I_motor), where e is the effective
+        duty from the bench throttle map: an empirical ratio of the manufacturer’s test bench, not an ESC efficiency.
+        Propeller inertia: blades as thin rods, J = m R²/3. Method: src/domain/propulsion.ts.
       </p>
     </div>
   )
 }
 
 function fitText(f: SquareLawFit) {
-  return `fit error max ${(f.maxAbsError * 100).toFixed(1)} %, rms ${(f.rmsError * 100).toFixed(1)} %`
+  return `in-sample fit error max ${(f.maxAbsError * 100).toFixed(1)} %, rms ${(f.rmsError * 100).toFixed(1)} %`
 }
 
-function PairDetails({ m, fit, sourceName }: { m: MotorPropulsion; fit: PairFit; sourceName: string }) {
+const rpmOf = (omega: number) => ((omega * 30) / Math.PI).toFixed(0)
+
+function MapLine({ map }: { map: ThrottleMap }) {
+  if (map.origin === 'ideal') return <span>ideal ESC (no bench data): effective duty = throttle</span>
+  return (
+    <span>
+      {map.points.map((p) => `${Math.round(p.throttle * 100)} % → ${(p.effectiveDuty * 100).toFixed(1)} %`).join(', ')}
+      <span className="block text-fg-subtle">
+        Median over {map.rows} bench rows{map.excluded.length ? ` (without ${map.excluded.join(', ')})` : ''}
+        {map.adjusted ? '; made monotone' : ''}. Outside these steps the nearest ratio is held (extrapolated).
+      </span>
+    </span>
+  )
+}
+
+function PairDetails({
+  m,
+  fit,
+  sourceName,
+  others,
+}: {
+  m: MotorPropulsion
+  fit: PairFit
+  sourceName: string
+  others: ReturnType<typeof otherTablesKT>
+}) {
   const o = fit.origin
   const source =
     o.kind === 'motor-table'
       ? `${sourceName} test table, ${o.labels.map((l) => `“${l}”`).join(', ')} (${fit.kT.rows.length} rows)`
-      : `${sourceName} performance table (${fit.kT.rows.length} static rows)`
+      : `${sourceName} performance table (${fit.domain.rowsUsed} of ${fit.domain.rowsTotal} static rows)`
+  const d = fit.domain
+  const v = fit.validation
+  const i0Outside = v ? v.rows.filter((r) => r.noLoadOutsideStated).length : 0
   return (
     <>
       <p className="border-t border-line py-1.5 text-[12px] leading-relaxed text-fg-muted" data-testid="pair-source" data-kind={o.kind}>
@@ -160,40 +195,74 @@ function PairDetails({ m, fit, sourceName }: { m: MotorPropulsion; fit: PairFit;
         {o.condition && <span className={cn('block', o.kind === 'prop-table' ? 'text-warn' : 'text-fg-subtle')}>{o.condition}</span>}
       </p>
       <Readouts>
-        <Readout
-          label="k_T (thrust)"
-          value={<span data-testid="pair-kt">{sci(fit.kT.k)}</span>}
-          unit="N·s²"
-          title={fitText(fit.kT)}
-        />
+        <Readout label="k_T (thrust)" value={<span data-testid="pair-kt">{sci(fit.kT.k)}</span>} unit="N·s²" title={fitText(fit.kT)} />
         <div className="-mt-1 border-b border-line/60 pb-1 text-right text-[11.5px] text-fg-subtle" data-testid="pair-kt-error">
           {fitText(fit.kT)}
         </div>
         {fit.kQ ? (
           <>
             <Readout label="k_Q (torque)" value={<span data-testid="pair-kq">{sci(fit.kQ.k)}</span>} unit="N·m·s²" />
-            <div className="-mt-1 border-b border-line/60 pb-1 text-right text-[11.5px] text-fg-subtle">
-              {fit.kQMethod === 'motor-current' ? 'from Q = K_t (I/throttle − I₀); ' : 'from the torque column; '}
+            <div className="-mt-1 border-b border-line/60 pb-1 text-right text-[11.5px] text-fg-subtle" data-testid="pair-kq-error">
+              {fit.kQMethod === 'motor-current' ? 'from Q = K_t (I/e − I₀) with each row’s effective duty; ' : 'from the torque column; '}
               {fitText(fit.kQ)}
+              {fit.kQIdealDuty && <span className="block">with e = throttle (4.5): max {(fit.kQIdealDuty.maxAbsError * 100).toFixed(1)} %</span>}
             </div>
           </>
         ) : (
           <Readout label="k_Q (torque)" value="no data" mono={false} />
         )}
+        <div className="border-b border-line/60 py-1.5 text-[12px] leading-relaxed" data-testid="pair-domain">
+          <span className="text-fg-muted">Supported speeds </span>
+          <span className="num text-fg">
+            {rpmOf(d.minOmega)}–{rpmOf(d.maxOmega)} rpm
+          </span>
+          <span className="block text-[11.5px] text-fg-subtle">
+            {d.cappedBy === 'motor-speed'
+              ? `${d.rowsUsed} of ${d.rowsTotal} rows: up to the motor’s no-load speed at the pack voltage. Outside this range thrust is an estimate.`
+              : 'The rows used. Outside this range thrust is an estimate.'}
+          </span>
+        </div>
+        {others.length > 0 && (
+          <div className="border-b border-line/60 py-1.5 text-[12px]" data-testid="pair-other-tables">
+            <span className="text-fg-muted">Same propeller in other tables</span>
+            {others.map((x) => (
+              <span key={x.motor.id} className="num block text-right text-fg">
+                {x.motor.name}: {sci(x.kT)} ({pct(x.kT / fit.kT.k - 1)})
+              </span>
+            ))}
+            <span className="block text-right text-[11.5px] text-fg-subtle">Shown for comparison; not pooled.</span>
+          </div>
+        )}
+        <div className="border-b border-line/60 py-1.5 text-[12px] leading-relaxed" data-testid="pair-map">
+          <span className="block text-fg-muted">Effective duty (bench throttle map)</span>
+          <span className="num block text-[11.5px] text-fg">
+            <MapLine map={fit.map} />
+          </span>
+        </div>
         {m.electrical && (
           <Readout
             label="K_t"
             value={m.electrical.kt.toFixed(5)}
             unit="N·m/A"
-            title={`60/(2π·KV); I₀ = ${m.electrical.noLoadCurrent} A${m.electrical.noLoadCondition ? ` (${m.electrical.noLoadCondition})` : ''}`}
+            title="60/(2π·KV)"
           />
+        )}
+        {m.electrical && (
+          <div className="border-b border-line/60 py-1.5 text-[12px] leading-relaxed" data-testid="pair-i0">
+            <span className="text-fg-muted">No-load current I₀ </span>
+            <span className="num text-fg">{m.electrical.noLoadCurrent} A</span>
+            <span className="block text-[11.5px] text-fg-subtle">
+              Stated once{m.electrical.noLoadCondition ? ` (${m.electrical.noLoadCondition})` : ''} and held constant.
+              {v ? ` ${i0Outside} of ${v.rows.length} rows use it away from that voltage (unvalidated there).` : ''}
+            </span>
+          </div>
         )}
         <Readout
           label="J propeller"
           value={m.propInertia === null ? 'no mass or diameter' : sci(m.propInertia, 3)}
           unit={m.propInertia === null ? undefined : 'kg·m²'}
           mono={m.propInertia !== null}
-          title="Blades as thin rods: J = m R²/3 (assumption)"
+          title="Blades as thin rods: J = m R²/3 (assumption), with the stated mass taken as the whole propeller (see the mass condition)"
         />
         <Readout
           label="J rotor"
@@ -211,9 +280,14 @@ function PairDetails({ m, fit, sourceName }: { m: MotorPropulsion; fit: PairFit;
           title={m.rotor?.ok ? (m.rotor.from === 'stated' ? 'Entered' : 'J = τm·Kt²/R from the mechanical time constant') : undefined}
         />
       </Readouts>
-      {fit.validation && fit.validation.length > 0 && (
+      {v && v.rows.length > 0 && (
         <>
-          <h4 className="mb-1 mt-3 text-[12px] font-medium text-fg-muted">Solver vs. the cited rows (model error)</h4>
+          <h4 className="mb-1 mt-3 text-[12px] font-medium text-fg-muted">Prediction of the cited rows (model error)</h4>
+          <p className="mb-1 text-[11px] leading-relaxed text-fg-subtle" data-testid="validation-kind">
+            {v.mapIndependent
+              ? 'Throttle map from the other propellers’ rows (held out); k_T and k_Q are fitted on these rows. Grey: ideal ESC (before).'
+              : 'Throttle map in-sample (no other propeller in the table). Grey: ideal ESC (before).'}
+          </p>
           <table className="w-full border-collapse text-[11.5px]" data-testid="validation-table">
             <thead>
               <tr className="text-fg-subtle">
@@ -224,21 +298,25 @@ function PairDetails({ m, fit, sourceName }: { m: MotorPropulsion; fit: PairFit;
               </tr>
             </thead>
             <tbody>
-              {fit.validation.map((v, i) => (
-                <tr key={i} data-testid="validation-row">
-                  <td className="num whitespace-nowrap border-b border-line/60 py-1 pr-1 leading-tight text-fg-muted">
-                    {v.voltage} V<br />
-                    {Math.round(v.throttle * 100)} %
-                  </td>
-                  <Cell table={v.rpm.table.toFixed(0)} model={v.rpm.model.toFixed(0)} unit="rpm" error={v.rpm.error} />
-                  <Cell table={(v.thrust.table / GF).toFixed(0)} model={(v.thrust.model / GF).toFixed(0)} unit="g" error={v.thrust.error} />
-                  <Cell table={v.current.table.toFixed(1)} model={v.current.model.toFixed(1)} unit="A" error={v.current.error} />
-                </tr>
-              ))}
+              {v.rows.map((r, i) => {
+                const b = fit.validationIdeal?.[i]
+                return (
+                  <tr key={i} data-testid="validation-row">
+                    <td className="num whitespace-nowrap border-b border-line/60 py-1 pr-1 leading-tight text-fg-muted">
+                      {r.voltage} V<br />
+                      {Math.round(r.throttle * 100)} %{r.extrapolated ? '*' : ''}
+                    </td>
+                    <Cell table={r.rpm.table.toFixed(0)} model={r.rpm.model.toFixed(0)} unit="rpm" error={r.rpm.error} before={b?.rpm.error} />
+                    <Cell table={(r.thrust.table / GF).toFixed(0)} model={(r.thrust.model / GF).toFixed(0)} unit="g" error={r.thrust.error} before={b?.thrust.error} />
+                    <Cell table={r.current.table.toFixed(1)} model={r.current.model.toFixed(1)} unit="A" error={r.current.error} before={b?.current.error} />
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
           <p className="mt-1 text-[11px] leading-relaxed text-fg-subtle">
-            (model − cited) / cited at each row&apos;s voltage and throttle; hover a cell for both values.
+            (model − cited) / cited at each row’s voltage and throttle; hover a cell for both values.
+            {v.rows.some((r) => r.extrapolated) ? ' * outside the map’s steps.' : ''}
           </p>
         </>
       )}
@@ -246,14 +324,19 @@ function PairDetails({ m, fit, sourceName }: { m: MotorPropulsion; fit: PairFit;
   )
 }
 
-function Cell({ table, model, unit, error }: { table: string; model: string; unit: string; error: number }) {
+function Cell({ table, model, unit, error, before }: { table: string; model: string; unit: string; error: number; before?: number }) {
   return (
     <td
-      className="num whitespace-nowrap border-b border-line/60 px-1 py-1 text-right last:pr-0"
+      className="num whitespace-nowrap border-b border-line/60 px-1 py-1 text-right leading-tight last:pr-0"
       title={`Cited ${table} ${unit}, model ${model} ${unit}`}
       data-testid="validation-error"
     >
       <span className={cn(Math.abs(error) > 0.1 ? 'text-warn' : 'text-fg')}>{pct(error).replace(' ', '')}</span>
+      {before !== undefined && (
+        <span className="block text-[10.5px] text-fg-subtle" data-testid="validation-before">
+          {pct(before).replace(' ', '')}
+        </span>
+      )}
     </td>
   )
 }

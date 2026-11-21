@@ -4,7 +4,7 @@
  * the battery, and the inputs the Ready-to-fly checklist needs. Pure.
  */
 import type { AssemblyDocument } from '../../../electron/ipc/contract'
-import { analyseMotor, readyToFly, type MotorPropulsion, type MotorSlot, type ReadyInput, type ReadyItem } from '../../domain/propulsion'
+import { analyseMotor, batteryModel, readyToFly, type MotorPropulsion, type MotorSlot, type ReadyInput, type ReadyItem } from '../../domain/propulsion'
 import type { FrameGeometry } from '../../three/frame-geometry'
 import { linkedComponent, type ComponentIndex } from './links'
 import { massState } from './mass-input'
@@ -45,5 +45,7 @@ export function propulsionState(
     bodyCd: doc.bodyDrag?.value ?? null,
     ...(ground ? { ground } : {}),
   }
-  return { motors: slots.map(analyseMotor), ready: readyToFly(input) }
+  const pack = input.battery?.component ? batteryModel(input.battery.component) : null
+  const supply = pack?.ok ? pack.value.openCircuitVoltage : null
+  return { motors: slots.map((s) => analyseMotor(s, supply)), ready: readyToFly(input) }
 }

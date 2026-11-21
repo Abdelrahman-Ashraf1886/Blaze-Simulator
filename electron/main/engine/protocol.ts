@@ -72,6 +72,8 @@ export const PropulsionDefinitionSchema = z.strictObject({
       thrustCoefNs2: positive,
       torqueCoefNms2: positive,
       inertiaKgM2: positive,
+      /** [throttle, effective duty] pairs (an empirical bench ratio); absent = ideal ESC. */
+      throttleMap: z.array(z.tuple([num, num])).min(1).optional(),
     }),
   ),
   battery: z.strictObject({ openCircuitVoltageV: positive, internalResistanceOhm: positive, capacityC: positive }),

@@ -45,7 +45,7 @@ it('a seed quad with the missing values entered loads with its propulsion in the
     motor: { partId: m.partId, name: m.partId, component: motor },
     prop: { partId: `p-${m.partId}`, name: 'prop', component: prop },
   }))
-  const propulsion = propulsionDefinition(slots.map(analyseMotor), battery)!
+  const propulsion = propulsionDefinition(slots.map((s) => analyseMotor(s)), battery)!
   expect(propulsion).not.toBeNull()
 
   sup.start()

@@ -5,9 +5,17 @@ import { createInterface } from 'node:readline'
 import type { EngineStatus } from '../../ipc/contract'
 import {
   PROTOCOL_VERSION,
+  SimRunParamsSchema,
+  SimRunResultSchema,
+  VehicleDefinitionSchema,
+  VehicleLoadResultSchema,
   isEngineResponse,
   type EngineCommand,
   type HelloResult,
+  type SimRunParams,
+  type SimRunResult,
+  type VehicleDefinition,
+  type VehicleLoadResult,
 } from './protocol'
 
 export interface SupervisorOptions {
@@ -108,6 +116,27 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
     const t0 = performance.now()
     await this.request({ type: 'ping' })
     return performance.now() - t0
+  }
+
+  /**
+   * Sends a vehicle definition. Resolves with the engine's recomputed totals,
+   * or with its list of validation errors (`valid: false`); an invalid
+   * definition also clears the engine's loaded vehicle.
+   */
+  async loadVehicle(vehicle: VehicleDefinition): Promise<VehicleLoadResult> {
+    const checked = VehicleDefinitionSchema.parse(vehicle)
+    const result = await this.request({ type: 'vehicle.load', vehicle: checked })
+    return VehicleLoadResultSchema.parse(result)
+  }
+
+  /**
+   * Batch run of the loaded vehicle from rest. The engine caps a run at
+   * 120 000 steps (≈0.9 s of compute), so the default timeout is enough.
+   */
+  async runSim(params: SimRunParams): Promise<SimRunResult> {
+    const checked = SimRunParamsSchema.parse(params)
+    const result = await this.request({ type: 'sim.run', ...checked })
+    return SimRunResultSchema.parse(result)
   }
 
   private launch(state: 'starting' | 'restarting'): void {

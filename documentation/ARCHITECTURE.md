@@ -11,7 +11,7 @@
 │        ◀───── engine:statusChanged ──── └─────────┬────────────┘     │
 │                                                   │ stdin/stdout     │
 └───────────────────────────────────────────────────┼──────────────────┘
-                                                    │ NDJSON protocol v1
+                                                    │ NDJSON protocol v2
                                       ┌─────────────▼─────────────┐
                                       │ drone-engine (Rust)       │
                                       │  engine-host: protocol,   │
@@ -31,7 +31,7 @@
 | Engine host | `simulation-engine/engine-host` | Wire protocol, process loop, (later) real-time scheduler | Contain physics |
 | Engine core | `simulation-engine/engine-core` | All physical models | Perform IO |
 
-## Engine protocol (v1)
+## Engine protocol (v2)
 
 Newline-delimited JSON on stdin/stdout; stderr is log only.
 
@@ -40,8 +40,14 @@ Newline-delimited JSON on stdin/stdout; stderr is log only.
 | `{"id":n,"type":"hello"}` | `{engineVersion, protocolVersion, threads}` |
 | `{"id":n,"type":"ping"}` | `{engineUptimeUs}` |
 | `{"id":n,"type":"shutdown"}` | `{}` then the process exits 0 |
+| `{"id":n,"type":"vehicle.load","vehicle":VehicleDefinition}` | `{valid:true, partCount, motorCount, totals:{massKg, com, inertia}, missingMass}` or `{valid:false, errors:[{path, message}]}` (an invalid one clears the loaded vehicle) |
+| `{"id":n,"type":"sim.run","durationS",dtS?,forceBodyN?,torqueBodyNm?}` | `{steps, dtS, durationS, gravityMps2, state, stateHash}`: the loaded vehicle from rest, constant body-frame inputs, at most 120 000 steps |
 
-Errors: `{"id":n|null,"ok":false,"error":{"code":"INVALID_JSON"|"INVALID_REQUEST","message"}}`.
+Errors: `{"id":n|null,"ok":false,"error":{"code","message"}}` with code
+`INVALID_JSON`, `INVALID_REQUEST`, `INVALID_PARAMS`, `NO_VEHICLE` or
+`VEHICLE_INCOMPLETE`. `VehicleDefinition` is pinned in
+`documentation/plans/phase-4-physics.md`; main validates it with zod before
+sending, and the engine validates it again in full (ADR 0006).
 A malformed line never terminates the engine. Rust source of truth:
 `engine-host/src/protocol.rs`; TS mirror: `electron/main/engine/protocol.ts`.
 

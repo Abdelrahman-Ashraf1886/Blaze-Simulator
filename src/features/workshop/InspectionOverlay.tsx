@@ -64,9 +64,10 @@ export function MountMarkers({ doc, geo }: { doc: AssemblyDocument; geo: FrameGe
   const selection = useWorkshopView((s) => s.selection)
   const exploded = useWorkshopView((s) => s.exploded)
   const snapTarget = useWorkshopView((s) => s.snapTarget)
+  const dragging = useWorkshopView((s) => s.libraryDrag) !== null
   const part = selection?.kind === 'part' ? doc.parts.find((p) => p.id === selection.id) : undefined
-  if (!part || exploded) return null
-  const current = part.parentId === null ? part.mountId : null
+  if ((!part && !dragging) || exploded) return null
+  const current = part && !dragging && part.parentId === null ? part.mountId : null
   return (
     <>
       {mountPoints(geo).map((mp) => (

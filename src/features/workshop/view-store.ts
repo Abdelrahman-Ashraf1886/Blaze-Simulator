@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { readPref, writePref } from '@/lib/prefs'
+import type { PartKind } from '../../../electron/ipc/contract'
 import type { Projection, Vec3, ViewPreset } from '@/three/views'
 
 /** A one-shot camera command; `n` makes repeated identical requests distinct. */
@@ -19,8 +20,9 @@ interface ViewState {
   selectPart(id: string | null): void
   clearSelection(): void
   /** Gizmo mode for the selected part. */
-  gizmo: 'translate' | 'rotate'
-  setGizmo(mode: 'translate' | 'rotate'): void
+  /** Scale resizes the envelope of a part that is not linked to a library component. */
+  gizmo: 'translate' | 'rotate' | 'scale'
+  setGizmo(mode: 'translate' | 'rotate' | 'scale'): void
   /** Snap gizmo moves to SNAP_MM and rotations to SNAP_DEG. */
   snap: boolean
   setSnap(on: boolean): void
@@ -49,6 +51,9 @@ interface ViewState {
   /** Mount a part being dragged would attach to if released now. */
   snapTarget: string | null
   setSnapTarget(id: string | null): void
+  /** Kind being dragged from the part library (mount markers show while it is). */
+  libraryDrag: PartKind | null
+  setLibraryDrag(kind: PartKind | null): void
   /** Show the centre-of-mass marker in the viewport. */
   showCom: boolean
   setShowCom(on: boolean): void
@@ -137,6 +142,10 @@ export const useWorkshopView = create<ViewState>((set) => ({
   snapTarget: null,
   setSnapTarget(snapTarget) {
     set((s) => (s.snapTarget === snapTarget ? s : { snapTarget }))
+  },
+  libraryDrag: null,
+  setLibraryDrag(libraryDrag) {
+    set({ libraryDrag })
   },
   showCom: readPref('workshop.showCom', true),
   setShowCom(showCom) {

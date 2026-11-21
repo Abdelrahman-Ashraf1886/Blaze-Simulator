@@ -1,4 +1,18 @@
-import { Camera, Expand, Grid3x3, Ruler, Magnet, Maximize, Move3d, PanelLeft, PanelRight, Redo2, Rotate3d, Undo2 } from 'lucide-react'
+import {
+  Camera,
+  Expand,
+  Grid3x3,
+  Magnet,
+  Maximize,
+  Move3d,
+  PanelLeft,
+  PanelRight,
+  Redo2,
+  Rotate3d,
+  Ruler,
+  Scaling,
+  Undo2,
+} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import {
@@ -9,7 +23,7 @@ import {
   type LayoutStorage,
   type PanelImperativeHandle,
 } from 'react-resizable-panels'
-import { FRAME_SPECS, type AssemblyDocument, type Project } from '../../../electron/ipc/contract'
+import { FRAME_SPECS, PART_KINDS, type AssemblyDocument, type PartKind, type Project } from '../../../electron/ipc/contract'
 import { FrameGlyph } from '@/components/frame-glyph'
 import { PageHeader } from '@/components/page-header'
 import { EmptyState, Readout, Readouts, Section } from '@/components/section'
@@ -30,7 +44,15 @@ import { assemblyBounds, assemblyStatus, explodedDoc, partBounds } from './inspe
 import { FrameEditor } from './FrameEditor'
 import { FrameModel, MountLabels } from './FrameModel'
 import { MotorInspector, MotorList } from './MotorPanels'
-import { AssemblyTree, PartInspector, PartLibrary, deleteSelected, useComponentIndex } from './PartPanels'
+import {
+  AssemblyTree,
+  PART_DRAG_TYPE,
+  PartInspector,
+  PartLibrary,
+  addLibraryPart,
+  deleteSelected,
+  useComponentIndex,
+} from './PartPanels'
 import { effectiveMass, resolveLinks } from './links'
 import { useComponents } from '@/stores/components'
 import { ComDropLine, ComMarker, MassPanel } from './MassPanel'
@@ -288,6 +310,13 @@ function Workshop({ project }: { project: Project }) {
             <Rotate3d />
           </ToolButton>
           <ToolButton
+            label="Resize selected part (R): parts not linked to a library component"
+            pressed={view.gizmo === 'scale'}
+            onClick={() => view.setGizmo('scale')}
+          >
+            <Scaling />
+          </ToolButton>
+          <ToolButton
             label={`Snap to ${SNAP_MM} mm and 15° (S)`}
             pressed={view.snap}
             onClick={() => view.setSnap(!view.snap)}
@@ -403,7 +432,28 @@ function Workshop({ project }: { project: Project }) {
         </Panel>
         <Separator className="w-px bg-line outline-none hover:bg-accent/70 focus-visible:bg-accent" />
         <Panel id="viewport" minSize="320px">
-          <Viewport
+          <div
+            className="h-full w-full"
+            data-testid="viewport-drop"
+            onDragOver={(e) => {
+              if (!doc || !e.dataTransfer.types.includes(PART_DRAG_TYPE)) return
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'copy'
+              useWorkshopView.getState().setSnapTarget(markerUnder(e.clientX, e.clientY))
+            }}
+            onDragLeave={() => useWorkshopView.getState().setSnapTarget(null)}
+            onDrop={(e) => {
+              const kind = e.dataTransfer.getData(PART_DRAG_TYPE) as PartKind
+              const v = useWorkshopView.getState()
+              v.setSnapTarget(null)
+              v.setLibraryDrag(null)
+              if (!doc || !PART_KINDS.includes(kind)) return
+              e.preventDefault()
+              const mount = markerUnder(e.clientX, e.clientY)
+              addLibraryPart(kind, mount ? { kind: 'mount', id: mount } : { kind: 'none' }, doc.frame.armThickness)
+            }}
+          >
+            <Viewport
             bounds={bounds}
             focusBounds={focusBounds}
             overlay={
@@ -425,6 +475,7 @@ function Workshop({ project }: { project: Project }) {
             <MeasureLine />
             {geo && doc && <ComDropLine doc={doc} geo={geo} />}
           </Viewport>
+          </div>
         </Panel>
         <Separator className="w-px bg-line outline-none hover:bg-accent/70 focus-visible:bg-accent" />
         <Panel
@@ -746,13 +797,14 @@ function SegmentButton({
 }
 
 
-/** Part shortcuts: W/E gizmo mode, S snap, Del delete, arrows/PgUp/PgDn nudge. Returns true if handled. */
+/** Part shortcuts: W/E/R gizmo mode, S snap, Del delete, arrows/PgUp/PgDn nudge. Returns true if handled. */
 function partKeys(e: KeyboardEvent): boolean {
   const v = useWorkshopView.getState()
   const a = useAssembly.getState()
   const k = e.key
   if (k === 'w' || k === 'W') return v.setGizmo('translate'), true
   if (k === 'e' || k === 'E') return v.setGizmo('rotate'), true
+  if (k === 'r' || k === 'R') return v.setGizmo('scale'), true
   if (k === 's' || k === 'S') return v.setSnap(!v.snap), true
   const sel = v.selection
   if (sel?.kind !== 'part' || !a.doc) return false
@@ -792,4 +844,19 @@ function duplicateSelected() {
     return r.doc
   })
   if (rootId) v.selectPart(rootId)
+}
+
+/** The mount marker nearest a screen point, within 28 px (markers show while a library part is dragged). */
+function markerUnder(x: number, y: number): string | null {
+  let best: string | null = null
+  let bestDistance = 28
+  for (const el of document.querySelectorAll<HTMLElement>('[data-testid^="mount-marker-"]')) {
+    const r = el.getBoundingClientRect()
+    const d = Math.hypot(r.left + r.width / 2 - x, r.top + r.height / 2 - y)
+    if (d < bestDistance) {
+      bestDistance = d
+      best = el.dataset.testid!.slice('mount-marker-'.length)
+    }
+  }
+  return best
 }

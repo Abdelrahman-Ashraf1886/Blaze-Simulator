@@ -16,7 +16,8 @@
  *     averaged over a revolution:  Izz = m R²/3, Ixx = Iyy = m R²/6
  *     (a rod at angle φ in the disc gives m R² sin²φ / 3 about X; the mean of sin²φ is ½)
  *   - convex hull: its axis-aligned bounding box as a uniform solid box.
- *   These are labelled assumptions; a part's own measured tensor can replace them later (4.2).
+ *   These are labelled assumptions; a part's own entered tensor and CoM offset
+ *   (`override`) replace them.
  * - In body axes: I_body = R · I_local · Rᵀ (R from the part's rotation).
  * - Totals: m = Σ mᵢ, CoM = Σ mᵢ rᵢ / Σ mᵢ,
  *   I_CoM = Σ [ I_bodyᵢ + mᵢ (|dᵢ|² E − dᵢ dᵢᵀ) ] with dᵢ = rᵢ − CoM (parallel axis theorem).
@@ -55,6 +56,11 @@ export interface BodyInput {
   /** Shape centre (and so the part's centre of mass), body coordinates. */
   position: Vec3
   quaternion: Quat
+  /**
+   * The user's own inertia about the part's CoM in the part's axes, and the CoM's
+   * offset from the shape centre (part axes). Replaces the shape-derived values.
+   */
+  override?: { inertia: Inertia6; comOffset: Vec3 } | null
 }
 
 export interface MotorInput {
@@ -140,6 +146,14 @@ export function rotationMatrix([x, y, z, w]: Quat): Mat3 {
   ]
 }
 
+const add3 = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+
+/** A vector in part axes, expressed in body axes. */
+function rotate(q: Quat, v: Vec3): Vec3 {
+  const m = rotationMatrix(q)
+  return [0, 1, 2].map((i) => m[i * 3]! * v[0] + m[i * 3 + 1]! * v[1] + m[i * 3 + 2]! * v[2]) as Vec3
+}
+
 const add6 = (a: Inertia6, b: Inertia6): Inertia6 => a.map((v, i) => v + b[i]!) as Inertia6
 
 /** Inertia of a point mass m at offset d: m (|d|² E − d dᵀ). */
@@ -197,8 +211,8 @@ export function massProperties(bodies: readonly BodyInput[]): MassProperties {
     parts.push({
       partId: b.id,
       massKg: b.massKg,
-      com: [...b.position],
-      inertia: rotateInertia(shapeInertia(b.shape, b.massKg, b.model), b.quaternion),
+      com: b.override ? add3(b.position, rotate(b.quaternion, b.override.comOffset)) : [...b.position],
+      inertia: rotateInertia(b.override ? b.override.inertia : shapeInertia(b.shape, b.massKg, b.model), b.quaternion),
       pose: { position: [...b.position], quaternion: [...b.quaternion] },
       shape: b.shape,
     })

@@ -45,7 +45,7 @@ export function frameBoxes(geo: FrameGeometry, plateSize: number, armWidth: numb
 
 const quatZ = (angle: number): Quat => [0, 0, Math.sin(angle / 2), Math.cos(angle / 2)]
 
-function collisionShape(shape: PartShape, assets: AssetBounds): CollisionShape {
+export function collisionShape(shape: PartShape, assets: AssetBounds): CollisionShape {
   if (shape.type === 'box') return { type: 'box', halfExtents: shape.size.map((v) => v / 2) as Vec3 }
   if (shape.type === 'cylinder') return { type: 'cylinder', radius: shape.radius, halfHeight: shape.height / 2 }
   // An imported model is taken as its bounding box until its hull is computed (4.4).
@@ -96,6 +96,7 @@ export function massBodies(
       model: p.kind === 'propeller' ? 'propeller' : 'solid',
       shape: collisionShape(effectiveShape(p, components), assets),
       ...placed,
+      override: p.inertia ? { inertia: p.inertia.inertia, comOffset: p.inertia.comOffset } : null,
     })
   }
   return bodies

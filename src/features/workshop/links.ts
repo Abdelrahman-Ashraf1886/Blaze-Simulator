@@ -34,6 +34,11 @@ export const KIND_CATEGORIES: Record<PartKind, readonly ComponentCategory[]> = {
   battery: ['battery'],
   esc: ['esc'],
   'flight-controller': ['flight-controller'],
+  gps: ['peripheral'],
+  camera: ['peripheral'],
+  sensor: ['peripheral'],
+  // No library category describes landing gear yet: its size and mass are the user's.
+  'landing-gear': [],
   payload: ['peripheral', 'power-module'],
   custom: COMPONENT_CATEGORIES,
 }

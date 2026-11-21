@@ -1,5 +1,64 @@
 # Development log
 
+## 2026-11-21 — Phase 4, milestone 4.2: editor additions
+
+**Built**
+- **Part kinds**: GPS, camera, sensor and landing gear (migration
+  `0009_part_kinds_inertia.sql`, schema v9).
+  - SQLite cannot change a CHECK in place, so the part table is rebuilt with every
+    column, constraint and index, and the rows are copied.
+  - GPS, camera and sensor link to peripheral components. Landing gear has no
+    library category, so its size and mass are the user's.
+  - New detailed models: a camera (housing, lens barrel, glass) and landing gear
+    (skids, angled struts, cross tubes) that fill their envelopes.
+  - Landing gear added with nothing selected goes under the bottom plate.
+- **Drag from the library**:
+  - each part button can be dragged onto the viewport;
+  - mount markers show during the drag, and the nearest one within 28 px lights up;
+  - dropping attaches there (anywhere else: free);
+  - one undo step.
+- **Resize (R)**: a scale gizmo for parts not linked to a library component (box
+  or cylinder envelopes).
+  - The scale is written back as the envelope's size, rounded to 0.1 mm and kept
+    within the saved limits.
+  - Cylinders stay round.
+  - Linked parts keep their stated size, and the gizmo falls back to move.
+- **Per-part inertia** (Inertia in the part inspector):
+  - shows the derived Ixx/Iyy/Izz;
+  - "Enter measured values" starts from them, then takes the user's full tensor and
+    a CoM offset from the shape centre;
+  - "Use values from size" goes back to the derived values.
+  - `electron/ipc/inertia.ts` refuses impossible tensors, both in the field and in
+    IPC validation: non-positive moments, the triangle inequality broken, or a
+    tensor that is not positive definite.
+  - `mass.ts` uses the override, rotating the CoM offset and the tensor with the
+    part.
+
+**Known**
+- Landing gear hangs below the workshop grid, because the workshop's ground is
+  still the underside of the frame. Standing the drone on its gear comes with
+  ground contact (4.4).
+
+**Verified** (`npm run test:all`, exit 0)
+- Rust: 11 tests. Typecheck and lint clean.
+- vitest: 212 tests, 7 new:
+  - tensor validity (including the flat-plate limit and products too large);
+  - the save schema;
+  - the override's rotated CoM offset and tensor;
+  - resize rounding and clamping;
+  - which parts can be resized;
+  - migration 0009 on a v8 database (parts kept, then the new kinds and an override
+    round-trip).
+- Playwright: 36 tests, 1 new:
+  - landing gear goes under the bottom plate;
+  - a GPS dragged onto the motor 2 marker attaches there;
+  - the camera's derived Ixx matches the hand value (0.009 g·m²);
+  - an impossible Izz is refused with the reason;
+  - a CoM offset is entered, cleared and restored with undo;
+  - R selects resize;
+  - everything survives a restart.
+  - Performance: 59.0 fps at 1080p and 38.4 fps at 4K, with 50 parts.
+
 ## 2026-11-21 — Phase 4, milestone 4.1: mass properties
 
 **Built**

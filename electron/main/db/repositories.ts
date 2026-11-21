@@ -54,6 +54,7 @@ interface PartRow {
   mass_kg: number | null
   mass_source: 'user' | null
   component_id: string | null
+  inertia_json: string | null
 }
 
 const toPart = (r: PartRow): AssemblyPart => ({
@@ -68,6 +69,8 @@ const toPart = (r: PartRow): AssemblyPart => ({
   mass: r.mass_kg !== null && r.mass_source ? { valueKg: r.mass_kg, source: r.mass_source } : null,
   // Omitted when unlinked, so documents without links round-trip unchanged.
   ...(r.component_id ? { componentId: r.component_id } : {}),
+  // Omitted when not set, so documents without an override round-trip unchanged.
+  ...(r.inertia_json ? { inertia: JSON.parse(r.inertia_json) as AssemblyPart['inertia'] } : {}),
 })
 
 const wiringFields = (w: Pick<Assembly, 'wires' | 'schematic'>) => ({
@@ -397,8 +400,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
         db.prepare('DELETE FROM assembly_parts WHERE project_id = ?').run(input.projectId)
         const insert = db.prepare(
           `INSERT INTO assembly_parts (id, project_id, sort_index, parent_id, mount_id, kind, name, shape_json,
-             px, py, pz, qx, qy, qz, qw, mass_kg, mass_source, component_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             px, py, pz, qx, qy, qz, qw, mass_kg, mass_source, component_id, inertia_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         input.parts.forEach((p, i) =>
           insert.run(
@@ -415,6 +418,7 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
             p.mass?.valueKg ?? null,
             p.mass?.source ?? null,
             p.componentId ?? null,
+            p.inertia ? JSON.stringify(p.inertia) : null,
           ),
         )
         db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(ts, input.projectId)

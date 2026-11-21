@@ -38,6 +38,10 @@ export const PART_LABELS: Record<PartKind, string> = {
   battery: 'Battery',
   'flight-controller': 'Flight controller',
   esc: 'ESC',
+  gps: 'GPS',
+  camera: 'Camera',
+  sensor: 'Sensor',
+  'landing-gear': 'Landing gear',
   payload: 'Payload',
   custom: 'Custom',
 }
@@ -53,6 +57,10 @@ export const STARTING_SHAPES: Record<PartKind, PartShape> = {
   battery: { type: 'box', size: [0.14, 0.045, 0.035] },
   'flight-controller': { type: 'box', size: [0.036, 0.036, 0.01] },
   esc: { type: 'box', size: [0.05, 0.025, 0.008] },
+  gps: { type: 'box', size: [0.05, 0.05, 0.016] },
+  camera: { type: 'box', size: [0.04, 0.03, 0.03] },
+  sensor: { type: 'box', size: [0.025, 0.02, 0.008] },
+  'landing-gear': { type: 'box', size: [0.22, 0.2, 0.1] },
   payload: { type: 'box', size: [0.08, 0.06, 0.05] },
   custom: { type: 'box', size: [0.05, 0.05, 0.05] },
 }
@@ -350,4 +358,19 @@ export function fromEulerDeg(deg: Vec3): [number, number, number, number] {
   const r = (d: number) => (d * Math.PI) / 180
   const q = new Quaternion().setFromEuler(new Euler(r(deg[0]), r(deg[1]), r(deg[2]), 'XYZ')).normalize()
   return [q.x, q.y, q.z, q.w]
+}
+
+/** Parts whose size is the user's own: not linked to a component, and a box or cylinder envelope. */
+export const resizable = (p: AssemblyPart) => !p.componentId && (p.shape.type === 'box' || p.shape.type === 'cylinder')
+
+/**
+ * The envelope after a scale gizmo drag, rounded to 0.1 mm and kept within the saved
+ * shape limits (0.1 mm – 3 m; cylinder radius ≤ 1.5 m). A cylinder stays round: its
+ * radius follows the larger of the X and Y scales.
+ */
+export function scaledShape(shape: PartShape, [sx, sy, sz]: [number, number, number]): PartShape | null {
+  const mm = (v: number, max: number) => Math.min(max, Math.max(1e-4, Math.round(v * 1e4) / 1e4))
+  if (shape.type === 'box') return { type: 'box', size: [mm(shape.size[0] * sx, 3), mm(shape.size[1] * sy, 3), mm(shape.size[2] * sz, 3)] }
+  if (shape.type === 'cylinder') return { type: 'cylinder', radius: mm(shape.radius * Math.max(sx, sy), 1.5), height: mm(shape.height * sz, 3) }
+  return null
 }

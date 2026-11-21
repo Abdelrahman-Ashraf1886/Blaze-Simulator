@@ -817,6 +817,42 @@ mod tests {
         assert!(errors[0].message.contains("rapier"));
     }
 
+    /// The part mass.ts (4.1) builds that is hardest for rapier: a propeller
+    /// modelled as thin rods (Izz = m R²/3, Ixx = Iyy = m R²/6, so the smallest
+    /// moment is repeated and Izz = Ixx + Iyy exactly), on a motor tilted 10°,
+    /// with a tilted motor body under it and a frame plate. Inertias in body
+    /// axes are R I Rᵀ, as mass.ts sends them.
+    #[test]
+    fn tilted_propeller_from_mass_ts_loads_and_rapier_agrees() {
+        let tilt = Rotation::from_rotation_y(10f64.to_radians());
+        let r = Matrix::from_quat(tilt);
+        let body_axes = |d: [f64; 3]| inertia6(&(r * Matrix::from_diagonal(vec(d)) * r.transpose()));
+        let (m, rp) = (0.012, 0.127);
+        let prop = body_axes([m * rp * rp / 6.0, m * rp * rp / 6.0, m * rp * rp / 3.0]);
+        let (mm, rm, hm) = (0.035, 0.014, 0.02);
+        let side = mm * (3.0 * rm * rm + hm * hm) / 12.0;
+        let motor = body_axes([side, side, mm * rm * rm / 2.0]);
+        let q = [tilt.x, tilt.y, tilt.z, tilt.w];
+        let part = |id: &str, mass, com: Vec3, inertia, shape| PartBody {
+            part_id: id.into(),
+            mass_kg: mass,
+            com,
+            inertia,
+            pose: ShapePose { position: com, quaternion: q },
+            shape,
+        };
+        let plate = 0.12 * (0.12f64.powi(2) + 0.003f64.powi(2)) / 12.0;
+        let parts = vec![
+            box_part("frame:plate", 0.12, [0.0, 0.0, 0.0015], [plate, plate, 0.12 * 2.0 * 0.0144 / 12.0, 0.0, 0.0, 0.0]),
+            part("motor-1", mm, [0.16, 0.0, 0.02], motor, CollisionShape::Cylinder { radius: rm, half_height: hm / 2.0 }),
+            part("prop-1", m, [0.16, 0.0, 0.035], prop, CollisionShape::Cylinder { radius: rp, half_height: 0.004 }),
+        ];
+        let vehicle = Vehicle::from_definition(with_totals(parts)).expect("valid");
+        let (mut bodies, mut colliders) = (RigidBodySet::new(), ColliderSet::new());
+        let h = vehicle.build_body(&mut bodies, &mut colliders);
+        assert!(vehicle.rapier_agrees(&bodies[h]));
+    }
+
     #[test]
     fn every_number_must_be_finite_json_cannot_carry_nan_but_huge_values_are_refused() {
         // JSON has no NaN/Infinity; an out-of-range literal fails to parse.

@@ -51,7 +51,14 @@
   supervisor's 3 s request timeout.
 
 **Verified**
-- `npm run test:all` green: 44 Rust tests (33 engine-core, 5 protocol, 6 sidecar),
+- Cross-check with 4.1 (`src/domain/mass.ts` at 5e2f015, run in a temporary test,
+  not committed here because mass.ts is not on this branch): its
+  `VehicleDefinition` type and the engine's zod type are assignable both ways,
+  and five quad builds from `massProperties` (tilted motors, rod-model
+  propellers, offset battery, hull GPS, frame as plate plus arms) load in the real
+  engine; totals agree to ~1e-18 kg·m². The hardest part, a tilted propeller, is
+  now a Rust test.
+- `npm run test:all` green: 45 Rust tests (34 engine-core, 5 protocol, 6 sidecar),
   189 unit tests (4 new against the real engine binary) and 34 e2e tests; typecheck
   and lint clean.
 

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { FrameParams } from '../../../electron/ipc/contract'
+import { NumberField, numberParser } from '@/components/number-field'
 import { cn } from '@/lib/utils'
 import { useAssembly } from './assembly-store'
 import { parseFrameValue, toMm } from './frame-values'
@@ -11,8 +12,15 @@ const FIELDS: { key: keyof FrameParams; label: string; edit: string }[] = [
   { key: 'armThickness', label: 'Arm thickness', edit: 'Change arm thickness' },
 ]
 
+const frameMassG = (text: string): { ok: true; value: number | null } | { ok: false; message: string } => {
+  if (text.trim() === '') return { ok: true, value: null }
+  const r = numberParser(0.1, 100_000, 'g')(text)
+  return r.ok ? { ok: true, value: r.value } : r
+}
+
 export function FrameEditor() {
   const frame = useAssembly((s) => s.doc?.frame)
+  const frameMass = useAssembly((s) => s.doc?.frameMass ?? null)
   if (!frame) return null
   return (
     <div className="border-t border-line" data-testid="frame-editor">
@@ -20,6 +28,25 @@ export function FrameEditor() {
         // Keyed by the stored value: undo/redo or a reload resets the field to it.
         <FrameField key={`${f.key}:${frame[f.key]}`} field={f} frame={frame} />
       ))}
+      <div className="border-b border-line/60">
+        <NumberField
+          key={`frame-mass:${frameMass?.valueKg ?? 'none'}`}
+          id="frame-mass"
+          label="Frame mass"
+          initial={frameMass ? String(Math.round(frameMass.valueKg * 1e4) / 10) : ''}
+          placeholder="not set"
+          unit="g"
+          parse={frameMassG}
+          onCommit={(g) =>
+            useAssembly
+              .getState()
+              .edit(g === null ? 'Clear frame mass' : 'Set frame mass', (d) => ({
+                ...d,
+                frameMass: g === null ? null : { valueKg: g / 1000, source: 'user' },
+              }))
+          }
+        />
+      </div>
     </div>
   )
 }

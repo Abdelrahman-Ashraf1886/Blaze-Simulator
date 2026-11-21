@@ -9,7 +9,7 @@
  */
 import { RoundedBox } from '@react-three/drei'
 import { useMemo } from 'react'
-import { BufferGeometry, Float32BufferAttribute, LatheGeometry, Shape, Vector2, type Material } from 'three'
+import { BufferGeometry, Float32BufferAttribute, LatheGeometry, Quaternion, Shape, Vector2, Vector3, type Material } from 'three'
 import { materials } from './materials'
 import type { Vec3 } from './views'
 
@@ -391,6 +391,77 @@ export function ModuleModel({ size: [l, w, h] }: { size: Vec3 }) {
       <RBox size={[l, w, h * 0.85]} at={[0, 0, z0 + h * 0.425]} r={Math.min(l, w, h) * 0.08} m={m.anodizedBlack} />
       <RBox size={[l * 0.92, w * 0.92, h * 0.15]} at={[0, 0, h / 2 - h * 0.075]} r={h * 0.05} m={m.aluminiumDark} />
       <Box size={[l * 0.04, w * 0.35, h * 0.3]} at={[-l / 2 + l * 0.02, 0, z0 + h * 0.35]} m={m.plasticWhite} />
+    </group>
+  )
+}
+
+/** A tube of radius r from a to b (for struts and skids). */
+function Tube({ a, b, r, m }: { a: Vec3; b: Vec3; r: number; m: Material }) {
+  const { position, quaternion, length } = useMemo(() => {
+    const from = new Vector3(...a)
+    const dir = new Vector3(...b).sub(from)
+    const len = dir.length()
+    const q = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), dir.clone().normalize())
+    return { position: from.add(dir.multiplyScalar(0.5)), quaternion: q, length: len }
+  }, [a, b])
+  return (
+    <mesh position={position} quaternion={quaternion} material={m}>
+      <cylinderGeometry args={[r, r, length, 16]} />
+    </mesh>
+  )
+}
+
+/**
+ * Camera: housing, a lens barrel looking forward (+X) with its glass, and a
+ * mounting tab. Fills the part's envelope; the stated size includes the lens.
+ */
+export function CameraModel({ size: [l, w, h] }: { size: Vec3 }) {
+  const m = materials()
+  const body = l * 0.62
+  const lensR = Math.min(w, h) * 0.32
+  const lensL = l - body
+  return (
+    <group>
+      <RBox size={[body, w, h * 0.9]} at={[-l / 2 + body / 2, 0, h * 0.05]} r={Math.min(w, h) * 0.08} m={m.anodizedBlack} />
+      <Box size={[body * 0.5, w * 0.6, h * 0.1]} at={[-l / 2 + body * 0.4, 0, -h / 2 + h * 0.05]} m={m.aluminiumDark} />
+      <mesh position={[-l / 2 + body + lensL * 0.45, 0, h * 0.05]} rotation-z={-Math.PI / 2} material={m.aluminiumDark}>
+        <cylinderGeometry args={[lensR, lensR * 1.1, lensL * 0.9, 32]} />
+      </mesh>
+      <mesh position={[l / 2 - lensL * 0.05, 0, h * 0.05]} rotation-z={-Math.PI / 2} material={m.lens}>
+        <cylinderGeometry args={[lensR * 0.8, lensR * 0.8, lensL * 0.1, 32]} />
+      </mesh>
+      <Cyl r={Math.min(w, h) * 0.04} h={h * 0.02} x={-l / 2 + body * 0.2} y={w * 0.3} z={h / 2 - h * 0.04} m={m.ledGreen} n={12} />
+    </group>
+  )
+}
+
+/**
+ * Landing gear: two skids along X joined to the frame by four angled struts and two
+ * cross tubes under a mounting plate. Fills the part's envelope (length = skid
+ * length, width = skid spacing, height = the clearance it adds); a display model,
+ * not a structural one.
+ */
+export function LandingGearModel({ size: [l, w, h] }: { size: Vec3 }) {
+  const m = materials()
+  const r = Math.max(Math.min(l, w, h) * 0.035, 0.0015)
+  const top = h / 2 - r
+  const bottom = -h / 2 + r
+  const sy = w / 2 - r
+  const ty = Math.min(w * 0.18, sy)
+  const sx = l / 2 - r
+  const tx = l * 0.22
+  return (
+    <group>
+      {[-1, 1].map((s) => (
+        <group key={s}>
+          <Tube a={[-sx, s * sy, bottom]} b={[sx, s * sy, bottom]} r={r} m={m.plasticBlack} />
+          <Tube a={[-tx, s * ty, top]} b={[-tx * 1.1, s * sy, bottom]} r={r * 0.8} m={m.carbon} />
+          <Tube a={[tx, s * ty, top]} b={[tx * 1.1, s * sy, bottom]} r={r * 0.8} m={m.carbon} />
+        </group>
+      ))}
+      <Tube a={[-tx, -ty, top]} b={[-tx, ty, top]} r={r * 0.8} m={m.carbon} />
+      <Tube a={[tx, -ty, top]} b={[tx, ty, top]} r={r * 0.8} m={m.carbon} />
+      <Box size={[tx * 2 + r * 4, ty * 2, r * 1.2]} at={[0, 0, h / 2 - r * 0.6]} m={m.anodizedBlack} />
     </group>
   )
 }

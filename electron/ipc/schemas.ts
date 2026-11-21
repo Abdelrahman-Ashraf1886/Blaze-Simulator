@@ -1,5 +1,6 @@
 /** zod validation for IPC request payloads. Main process only. */
 import { z } from 'zod'
+import { inertiaProblem } from './inertia'
 import {
   FRAME_PARAM_LIMITS,
   FRAME_TYPES,
@@ -76,6 +77,19 @@ const partSchema = z.object({
   rotation: quaternion,
   mass: z.object({ valueKg: z.number().gt(0).max(1000), source: z.literal('user') }).nullable(),
   componentId: z.uuid().nullable().optional(),
+  inertia: z
+    .object({
+      inertia: z.tuple([z.number(), z.number(), z.number(), z.number(), z.number(), z.number()]),
+      comOffset: z.tuple([coord, coord, coord]),
+      source: z.literal('user'),
+    })
+    .strict()
+    .superRefine((v, ctx) => {
+      const problem = inertiaProblem(v.inertia)
+      if (problem) ctx.addIssue({ code: 'custom', message: problem, path: ['inertia'] })
+    })
+    .nullable()
+    .optional(),
 })
 
 const motorMountSchema = z.object({
@@ -106,6 +120,11 @@ export const saveAssemblySchema = z
     projectId: z.uuid(),
     baseRevision: z.int().min(0),
     frame: frameParamsSchema,
+    frameMass: z
+      .object({ valueKg: z.number().positive('Frame mass must be more than 0').max(100, 'Frame mass must be at most 100 kg'), source: z.literal('user') })
+      .strict()
+      .nullable()
+      .optional(),
     motors: z.record(z.string(), motorMountSchema).superRefine((motors, ctx) => {
       for (const key of Object.keys(motors)) {
         if (!/^motor-[1-8]$/.test(key)) ctx.addIssue({ code: 'custom', message: `Unknown motor mount "${key}"` })

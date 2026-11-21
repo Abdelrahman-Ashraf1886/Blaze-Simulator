@@ -8,7 +8,7 @@ import { assetUrl, type AssemblyDocument, type AssemblyPart, type PartKind, type
 import type { FrameGeometry } from '@/three/frame-geometry'
 import { placeModel } from '@/three/model-units'
 import type { Vec3 } from '@/three/views'
-import { attach, halfHeight, mountFrames, shapeExtent, updatePart } from './assembly-ops'
+import { attach, halfHeight, mountFrames, resizable, scaledShape, shapeExtent, updatePart } from './assembly-ops'
 import { useAssembly } from './assembly-store'
 import { useAssets } from './asset-store'
 import { NO_CAPTURE } from './capture'
@@ -23,6 +23,8 @@ import {
   GpsModel,
   ModuleModel,
   PowerModuleModel,
+  CameraModel,
+  LandingGearModel,
   RadioModel,
   MotorModel,
   PropellerModel,
@@ -36,6 +38,10 @@ const KIND_COLOR: Record<PartKind, string> = {
   battery: '#5f6b5c',
   'flight-controller': '#4f5f6e',
   esc: '#5d5868',
+  gps: '#4f5f6e',
+  camera: '#585e66',
+  sensor: '#5d5868',
+  'landing-gear': '#5f6670',
   payload: '#6b6255',
   custom: '#666c74',
 }
@@ -119,12 +125,19 @@ export function PartsModel({
           ref={drawOnTop}
           key={`${selectedPart.id}:${gizmo}`}
           object={target}
-          mode={gizmo}
+          mode={gizmo === 'scale' && !resizable(selectedPart) ? 'translate' : gizmo}
           size={0.8}
           translationSnap={snap ? SNAP_MM / 1000 : null}
           rotationSnap={snap ? (SNAP_DEG * Math.PI) / 180 : null}
           // Moving with snapping on: a mount under the part lights up, and releasing attaches there.
           onObjectChange={() => {
+            if (gizmo === 'scale') return
+            const q = target.quaternion.clone().normalize()
+            useWorkshopView.getState().setDragPose({
+              id: selectedPart.id,
+              position: [target.position.x, target.position.y, target.position.z],
+              rotation: [q.x, q.y, q.z, q.w],
+            })
             if (gizmo !== 'translate' || !snap) return
             const c = target.getWorldPosition(new Vector3())
             const h = halfHeight(selectedPart.shape, useAssets.getState().assets)
@@ -132,6 +145,16 @@ export function PartsModel({
             useWorkshopView.getState().setSnapTarget(snapMount(geo, [c.x, c.y, c.z], h, current))
           }}
           onMouseUp={() => {
+            useWorkshopView.getState().setDragPose(null)
+            if (gizmo === 'scale' && resizable(selectedPart)) {
+              const s = target.scale.clone()
+              target.scale.set(1, 1, 1)
+              const shape = scaledShape(selectedPart.shape, [Math.abs(s.x), Math.abs(s.y), Math.abs(s.z)])
+              if (shape && JSON.stringify(shape) !== JSON.stringify(selectedPart.shape)) {
+                useAssembly.getState().edit(`Resize ${selectedPart.name}`, (d) => updatePart(d, selectedPart.id, { shape }))
+              }
+              return
+            }
             const mountId = useWorkshopView.getState().snapTarget
             useWorkshopView.getState().setSnapTarget(null)
             if (mountId) {
@@ -215,7 +238,10 @@ function detailedModel(part: AssemblyPart, look: Look): ReactNode {
   if (part.kind === 'esc') return <EscModel size={s.size} />
   if (part.kind === 'flight-controller') return <FlightControllerModel size={s.size} ports={look.ports} />
   if (look.category === 'power-module') return <PowerModuleModel size={s.size} />
-  if (look.role === 'gps') return <GpsModel size={s.size} />
+  if (look.role === 'gps' || part.kind === 'gps') return <GpsModel size={s.size} />
+  if (part.kind === 'camera') return <CameraModel size={s.size} />
+  if (part.kind === 'landing-gear') return <LandingGearModel size={s.size} />
+  if (part.kind === 'sensor') return <ModuleModel size={s.size} />
   if (look.role === 'telemetry-radio') return <RadioModel size={s.size} />
   if (part.kind === 'payload') return <ModuleModel size={s.size} />
   return null

@@ -1,4 +1,20 @@
-import { BatteryFull, Box, CircuitBoard, Cog, Copy, Cpu, Fan, Package, Trash2, X, type LucideIcon } from 'lucide-react'
+import {
+  BatteryFull,
+  Box,
+  Camera,
+  CircuitBoard,
+  Cog,
+  Copy,
+  Cpu,
+  Fan,
+  Footprints,
+  Gauge,
+  Package,
+  Satellite,
+  Trash2,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import {
   MODEL_UNITS,
@@ -50,6 +66,7 @@ import {
 import { componentIndex, useComponentIndex } from './component-index'
 export { useComponentIndex }
 const shapeOfFor = (components: ComponentIndex) => (p: AssemblyPart) => effectiveShape(p, components)
+import { InertiaEditor } from './InertiaEditor'
 import { useWorkshopView, type Selection } from './view-store'
 
 const KIND_ICON: Record<PartKind, LucideIcon> = {
@@ -58,6 +75,10 @@ const KIND_ICON: Record<PartKind, LucideIcon> = {
   battery: BatteryFull,
   'flight-controller': Cpu,
   esc: CircuitBoard,
+  gps: Satellite,
+  camera: Camera,
+  sensor: Gauge,
+  'landing-gear': Footprints,
   payload: Package,
   custom: Box,
 }
@@ -86,19 +107,27 @@ function targetLabel(geo: FrameGeometry, doc: AssemblyDocument, t: AttachTarget)
 
 // ---- Library ------------------------------------------------------------------
 
+/** MIME type of a part kind dragged from the library onto the viewport. */
+export const PART_DRAG_TYPE = 'application/x-blaze-part-kind'
+
+/** Adds a new part of `kind` to `target` (one undo step) and selects it. */
+export function addLibraryPart(kind: PartKind, target: AttachTarget, frameTop: number) {
+  let created: AssemblyPart | null = null
+  edit(`Add ${PART_LABELS[kind].toLowerCase()}`, (d) => {
+    const index = componentIndex(useComponents.getState().components)
+    // Landing gear belongs under the frame: with nothing selected it goes on the bottom plate.
+    const to: AttachTarget = kind === 'landing-gear' && target.kind === 'none' ? { kind: 'mount', id: 'plate-bottom' } : target
+    const r = addPart(d, kind, to, frameTop, undefined, useAssets.getState().assets, shapeOfFor(index))
+    created = r.part
+    return r.doc
+  })
+  if (created) useWorkshopView.getState().selectPart((created as AssemblyPart).id)
+}
+
 export function PartLibrary({ doc, geo, frameTop }: { doc: AssemblyDocument; geo: FrameGeometry; frameTop: number }) {
   const selection = useWorkshopView((s) => s.selection)
   const target = targetFor(selection)
-  const add = (kind: PartKind) => {
-    let created: AssemblyPart | null = null
-    edit(`Add ${PART_LABELS[kind].toLowerCase()}`, (d) => {
-      const index = componentIndex(useComponents.getState().components)
-      const r = addPart(d, kind, target, frameTop, undefined, useAssets.getState().assets, shapeOfFor(index))
-      created = r.part
-      return r.doc
-    })
-    if (created) useWorkshopView.getState().selectPart((created as AssemblyPart).id)
-  }
+  const add = (kind: PartKind) => addLibraryPart(kind, target, frameTop)
   return (
     <div data-testid="part-library">
       <div className="grid grid-cols-2 gap-1 border-t border-line pt-2">
@@ -109,6 +138,17 @@ export function PartLibrary({ doc, geo, frameTop }: { doc: AssemblyDocument; geo
               key={kind}
               type="button"
               onClick={() => add(kind)}
+              draggable
+              title={`Add a ${PART_LABELS[kind].toLowerCase()}, or drag it onto a mount in the viewport`}
+              onDragStart={(e) => {
+                e.dataTransfer.setData(PART_DRAG_TYPE, kind)
+                e.dataTransfer.effectAllowed = 'copy'
+                useWorkshopView.getState().setLibraryDrag(kind)
+              }}
+              onDragEnd={() => {
+                useWorkshopView.getState().setLibraryDrag(null)
+                useWorkshopView.getState().setSnapTarget(null)
+              }}
               className="flex h-8 items-center gap-2 rounded-[var(--radius-sm)] border border-line px-2 text-left text-[12.5px] text-fg-muted hover:border-line-strong hover:bg-hover hover:text-fg"
             >
               <Icon className="size-3.5 shrink-0" strokeWidth={1.75} />
@@ -119,7 +159,7 @@ export function PartLibrary({ doc, geo, frameTop }: { doc: AssemblyDocument; geo
       </div>
       <ModelImport target={target} frameTop={frameTop} />
       <p className="mt-2 text-[12px] text-fg-subtle" data-testid="add-target">
-        Adds to {targetLabel(geo, doc, target)}. New parts start with a placeholder shape and no mass.
+        Adds to {targetLabel(geo, doc, target)}, or drag onto a mount. New parts start with a placeholder shape and no mass.
       </p>
     </div>
   )
@@ -394,6 +434,9 @@ export function PartInspector({ doc, geo }: { doc: AssemblyDocument; geo: FrameG
           </>
         )}
       </div>
+
+      <SubHeading>Inertia</SubHeading>
+      <InertiaEditor part={part} components={components} />
 
       <CopyToMounts doc={doc} geo={geo} part={part} />
 

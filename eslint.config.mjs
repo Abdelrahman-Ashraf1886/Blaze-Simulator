@@ -4,7 +4,7 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['out/**', 'release/**', 'node_modules/**', 'simulation-engine/target/**', 'test-results/**'] },
+  { ignores: ['out/**', 'release/**', 'node_modules/**', 'simulation-engine/target/**', 'test-results/**', '.claude/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

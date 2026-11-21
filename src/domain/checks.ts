@@ -41,6 +41,7 @@ export type RuleId =
   | 'wire-kind'
   | 'port-conflict'
   | 'unwired'
+  | 'hover-balance'
 
 /** Minimum tip-to-tip gap before a warning, in metres (10 mm). */
 export const PROP_CLEARANCE = 0.01
@@ -60,6 +61,7 @@ export const RULES: Record<RuleId, string> = {
   'wire-kind': 'A wire may only join ports of the same kind (power to power, motor phases to an ESC output, UART to UART…).',
   'port-conflict': 'A point-to-point port (UART, RC, ESC signal, motor phases, power sense) takes one cable; power, CAN and I²C are shared buses.',
   'unwired': 'Once wiring has started: the battery and power module must be connected, every ESC powered, every motor on an ESC output, every used ESC output given a signal, every peripheral connected, and the flight controller powered.',
+  'hover-balance': 'To hover level, the thrust of the motors must hold the weight with no roll or pitch moment about the centre of mass. A motor whose share is far above the mean has less headroom for control; a centre of mass outside the motors cannot be held at all.',
 }
 
 

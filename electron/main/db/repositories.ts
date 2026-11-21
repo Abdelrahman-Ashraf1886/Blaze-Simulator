@@ -54,6 +54,7 @@ interface PartRow {
   mass_kg: number | null
   mass_source: 'user' | null
   component_id: string | null
+  inertia_json: string | null
 }
 
 const toPart = (r: PartRow): AssemblyPart => ({
@@ -68,6 +69,8 @@ const toPart = (r: PartRow): AssemblyPart => ({
   mass: r.mass_kg !== null && r.mass_source ? { valueKg: r.mass_kg, source: r.mass_source } : null,
   // Omitted when unlinked, so documents without links round-trip unchanged.
   ...(r.component_id ? { componentId: r.component_id } : {}),
+  // Omitted when not set, so documents without an override round-trip unchanged.
+  ...(r.inertia_json ? { inertia: JSON.parse(r.inertia_json) as AssemblyPart['inertia'] } : {}),
 })
 
 const wiringFields = (w: Pick<Assembly, 'wires' | 'schematic'>) => ({
@@ -304,7 +307,15 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
       load: db.transaction((projectId: string): Assembly => {
         const project = getProject(projectId)
         let row = db.prepare('SELECT * FROM assemblies WHERE project_id = ?').get(projectId) as
-          | { revision: number; frame_json: string; motors_json: string; wiring_json: string; updated_at: string }
+          | {
+              revision: number
+              frame_json: string
+              motors_json: string
+              wiring_json: string
+              frame_mass_kg: number | null
+              frame_mass_source: 'user' | null
+              updated_at: string
+            }
           | undefined
         if (!row) {
           row = {
@@ -312,6 +323,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
             frame_json: JSON.stringify(STARTING_FRAME[project.frameType]),
             motors_json: '{}',
             wiring_json: '{}',
+            frame_mass_kg: null,
+            frame_mass_source: null,
             updated_at: now().toISOString(),
           }
           db.prepare('INSERT INTO assemblies (project_id, revision, frame_json, updated_at) VALUES (?, ?, ?, ?)').run(
@@ -331,6 +344,10 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           frame: JSON.parse(row.frame_json) as FrameParams,
           motors: JSON.parse(row.motors_json) as Record<string, MotorMount>,
           parts: parts.map(toPart),
+          // Omitted when not set, so documents saved before schema v8 round-trip unchanged.
+          ...(row.frame_mass_kg !== null && row.frame_mass_source !== null
+            ? { frameMass: { valueKg: row.frame_mass_kg, source: row.frame_mass_source } }
+            : {}),
           // Omitted when empty, so documents without wiring round-trip unchanged.
           ...wiringFields(JSON.parse(row.wiring_json) as Pick<Assembly, 'wires' | 'schematic'>),
         }
@@ -364,22 +381,27 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
         const revision = stored + 1
         const ts = now().toISOString()
         db.prepare(
-          `INSERT INTO assemblies (project_id, revision, frame_json, motors_json, wiring_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+          `INSERT INTO assemblies (project_id, revision, frame_json, motors_json, wiring_json, frame_mass_kg, frame_mass_source, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (project_id) DO UPDATE SET revision = excluded.revision, frame_json = excluded.frame_json,
-             motors_json = excluded.motors_json, wiring_json = excluded.wiring_json, updated_at = excluded.updated_at`,
+             motors_json = excluded.motors_json, wiring_json = excluded.wiring_json,
+             frame_mass_kg = excluded.frame_mass_kg, frame_mass_source = excluded.frame_mass_source,
+             updated_at = excluded.updated_at`,
         ).run(
           input.projectId,
           revision,
           JSON.stringify(input.frame),
           JSON.stringify(input.motors),
           JSON.stringify(wiringFields(input)),
+          input.frameMass?.valueKg ?? null,
+          input.frameMass?.source ?? null,
           ts,
         )
         db.prepare('DELETE FROM assembly_parts WHERE project_id = ?').run(input.projectId)
         const insert = db.prepare(
           `INSERT INTO assembly_parts (id, project_id, sort_index, parent_id, mount_id, kind, name, shape_json,
-             px, py, pz, qx, qy, qz, qw, mass_kg, mass_source, component_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             px, py, pz, qx, qy, qz, qw, mass_kg, mass_source, component_id, inertia_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         input.parts.forEach((p, i) =>
           insert.run(
@@ -396,6 +418,7 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
             p.mass?.valueKg ?? null,
             p.mass?.source ?? null,
             p.componentId ?? null,
+            p.inertia ? JSON.stringify(p.inertia) : null,
           ),
         )
         db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(ts, input.projectId)

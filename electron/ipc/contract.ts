@@ -86,7 +86,19 @@ export const FRAME_PARAM_LIMITS: Record<keyof FrameParams, { min: number; max: n
   plateSize: { min: 0.02, max: 0.6 },
 }
 
-export const PART_KINDS = ['motor', 'propeller', 'battery', 'flight-controller', 'esc', 'payload', 'custom'] as const
+export const PART_KINDS = [
+  'motor',
+  'propeller',
+  'battery',
+  'flight-controller',
+  'esc',
+  'gps',
+  'camera',
+  'sensor',
+  'landing-gear',
+  'payload',
+  'custom',
+] as const
 export type PartKind = (typeof PART_KINDS)[number]
 
 /** Length unit of an imported model's coordinates (glTF specifies metres; many exporters ignore that). */
@@ -148,6 +160,20 @@ export interface AssemblyPart {
    * shown and used while linked; the part's own values are kept for unlinking.
    */
   componentId?: string | null
+  /**
+   * The user's own inertia (absent or null = derived from the part's shape, see
+   * src/domain/mass.ts). About the part's own CoM, in the part's axes.
+   */
+  inertia?: PartInertia | null
+}
+
+/** A measured or calculated inertia the user entered for one part. */
+export interface PartInertia {
+  /** [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] in kg·m², tensor sign convention (Ixy = −Σ m·x·y). */
+  inertia: [number, number, number, number, number, number]
+  /** The part's CoM relative to its shape centre, metres, part axes. */
+  comOffset: [number, number, number]
+  source: 'user'
 }
 
 export type Spin = 'cw' | 'ccw'
@@ -185,8 +211,19 @@ export interface Wire {
   color: WireColor | null
 }
 
+/** A mass the user entered (null = not set). */
+export interface UserMass {
+  valueKg: number
+  source: 'user'
+}
+
 export interface AssemblyDocument {
   frame: FrameParams
+  /**
+   * The frame's own mass (plates and arms, with their hardware). Absent or null = not
+   * set: the centre of mass is then incomplete. Used by src/domain/mass.ts.
+   */
+  frameMass?: UserMass | null
   /** Keyed by mount id (`motor-1` …); motors not listed use PX4 defaults. */
   motors: Record<string, MotorMount>
   parts: AssemblyPart[]

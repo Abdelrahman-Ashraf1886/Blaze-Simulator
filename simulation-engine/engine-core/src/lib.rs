@@ -13,6 +13,7 @@
 pub mod math;
 pub mod sim;
 pub mod vehicle;
+pub mod controller;
 
 /// Engine crate version, reported to the host during the handshake.
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -16,6 +16,7 @@ import type {
   AssemblyPart,
   AssetInfo,
   Bounds3,
+  ModelHull,
   ModelUnits,
   PartKind,
   PartShape,
@@ -25,8 +26,8 @@ import type { FrameGeometry } from '../../three/frame-geometry'
 import { placeModel } from '../../three/model-units'
 import type { Vec3 } from '../../three/views'
 
-/** Bounds of imported models by asset id; models whose asset is unknown have no extent. */
-export type AssetBounds = Readonly<Record<string, { bounds: Bounds3 }>>
+/** Bounds (and hulls) of imported models by asset id; models whose asset is unknown have no extent. */
+export type AssetBounds = Readonly<Record<string, { bounds: Bounds3; hull?: ModelHull | null }>>
 
 /** The shape used for placement; linked parts take their component's size (see links.ts). */
 export type ShapeOf = (p: AssemblyPart) => PartShape

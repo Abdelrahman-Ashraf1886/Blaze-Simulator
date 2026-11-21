@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
 import { createHandlers } from '../ipc/handlers'
-import { importAssetFile, removeAssetFiles, resolveAssetUrl } from './assets/store'
+import { backfillHulls, importAssetFile, removeAssetFiles, resolveAssetUrl } from './assets/store'
 import { safeFileName, savePngSchema } from './screenshot'
 import { MAX_PACK_BYTES, PackError, buildPack, importPack } from './components/pack'
 import { loadBuiltIns } from './components/seed'
@@ -205,6 +205,12 @@ function start(): void {
     removeAssetFiles(assetsDir, repos.assets.collectGarbage())
   } catch (e) {
     console.error('[assets] cleanup failed', e) // never blocks startup
+  }
+  try {
+    const filled = backfillHulls(assetsDir, repos)
+    if (filled.length) console.log(`[assets] computed the hull of ${filled.length} model(s) imported before 4.4`)
+  } catch (e) {
+    console.error('[assets] hull back-fill failed', e) // those parts keep their bounding box
   }
   protocol.handle(ASSET_SCHEME, async (request) => {
     const file = resolveAssetUrl(request.url, assetsDir)

@@ -21,6 +21,7 @@ import {
   type Vec3,
 } from '../../domain/mass'
 import type { FrameGeometry } from '../../three/frame-geometry'
+import { placeModel, placePoint } from '../../three/model-units'
 import { mountFrames, shapeExtent, worldMatrix, type AssetBounds } from './assembly-ops'
 import { effectiveMass, effectiveShape, type ComponentIndex } from './links'
 
@@ -45,10 +46,30 @@ export function frameBoxes(geo: FrameGeometry, plateSize: number, armWidth: numb
 
 const quatZ = (angle: number): Quat => [0, 0, Math.sin(angle / 2), Math.cos(angle / 2)]
 
+/**
+ * The shape a part collides as: its box or cylinder envelope, or for an imported model the
+ * convex hull computed at import (electron/main/assets/hull.ts), mapped with the part's
+ * units and up axis like the drawn model. A model without a usable hull collides as its
+ * bounding box, which contains it.
+ */
 export function collisionShape(shape: PartShape, assets: AssetBounds): CollisionShape {
+  if (shape.type !== 'model') return massShape(shape, assets)
+  const asset = assets[shape.assetId]
+  const points = asset?.hull?.points
+  if (asset && points && points.length >= 4) {
+    const placement = placeModel(asset.bounds, shape.units, shape.upAxis)
+    return { type: 'hull', points: points.map((p) => placePoint(p, placement) as Vec3) }
+  }
+  return massShape(shape, assets)
+}
+
+/**
+ * The shape the mass model takes for a part's derived inertia: the envelope, or a model's
+ * bounding box as a uniform solid (a labelled approximation; see mass.ts).
+ */
+export function massShape(shape: PartShape, assets: AssetBounds): CollisionShape {
   if (shape.type === 'box') return { type: 'box', halfExtents: shape.size.map((v) => v / 2) as Vec3 }
   if (shape.type === 'cylinder') return { type: 'cylinder', radius: shape.radius, halfHeight: shape.height / 2 }
-  // An imported model is taken as its bounding box until its hull is computed at import (open after 4.4).
   const extent = shapeExtent(shape, assets) ?? [0, 0, 0]
   return { type: 'box', halfExtents: extent.map((v) => v / 2) as Vec3 }
 }
@@ -95,6 +116,7 @@ export function massBodies(
       massKg: effectiveMass(p, components)?.valueKg ?? null,
       model: p.kind === 'propeller' ? 'propeller' : 'solid',
       shape: collisionShape(effectiveShape(p, components), assets),
+      inertiaShape: massShape(effectiveShape(p, components), assets),
       ...placed,
       override: p.inertia ? { inertia: p.inertia.inertia, comOffset: p.inertia.comOffset } : null,
     })

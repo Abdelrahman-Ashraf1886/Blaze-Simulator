@@ -1,15 +1,13 @@
 /**
  * Placement of new and resized parts (src/features/workshop/placement.ts): clear of other
  * parts, on what supports them, deterministic, and an explicit failure when nothing fits.
+ * Adding through the editor (one undo step, nothing added on failure) is in collisions.spec.ts.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { AssemblyDocument, FrameParams } from '../../electron/ipc/contract'
 import { addPart, duplicatePart, halfHeight, updatePart } from '../../src/features/workshop/assembly-ops'
-import { useAssembly } from '../../src/features/workshop/assembly-store'
 import { assemblyOverlaps } from '../../src/features/workshop/interference-input'
-import { addPlaced } from '../../src/features/workshop/place-actions'
 import { candidates, partErrors, placeClear, reseat, supportOf } from '../../src/features/workshop/placement'
-import { useWorkshopView } from '../../src/features/workshop/view-store'
 import { buildFrame } from '../../src/three/frame-geometry'
 
 const frame: FrameParams = { motorDiagonal: 0.45, armWidth: 0.02, armThickness: 0.004, plateSize: 0.12 }
@@ -113,32 +111,5 @@ describe('placement', () => {
     expect(partErrors(seated, geo, 'b1', {}, {})).toEqual([])
     // Without reseating the battery would sink 7.5 mm into the plate.
     expect(errors(taller).length).toBeGreaterThan(0)
-  })
-})
-
-describe('adding through the editor (one undo step, or nothing)', () => {
-  beforeEach(() => {
-    vi.useFakeTimers() // no save is sent: the debounced save never fires
-    useAssembly.setState({ projectId: 'p', doc: base, past: [], future: [] })
-    useWorkshopView.getState().setPlacementNote(null)
-  })
-  afterEach(() => vi.useRealTimers())
-
-  it('adds and places in one undo step; a part that does not fit adds nothing and says why', () => {
-    const id = addPlaced('Add motor', geo, (d) => {
-      const r = addPart(d, 'motor', { kind: 'mount', id: 'motor-1' }, t, 'm1')
-      return { doc: r.doc, roots: [r.part.id] }
-    })
-    expect(id).toBe('m1')
-    expect(useAssembly.getState().past.map((h) => h.label)).toEqual(['Add motor'])
-    const before = useAssembly.getState().doc
-    const none = addPlaced('Add motor', geo, (d) => {
-      const r = addPart(d, 'motor', { kind: 'mount', id: 'motor-1' }, t, 'm2')
-      return { doc: r.doc, roots: [r.part.id] }
-    })
-    expect(none).toBeNull()
-    expect(useAssembly.getState().doc).toBe(before)
-    expect(useAssembly.getState().past).toHaveLength(1)
-    expect(useWorkshopView.getState().placementNote).toMatch(/^No free spot on Motor 1 mount/)
   })
 })

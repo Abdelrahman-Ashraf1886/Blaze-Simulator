@@ -31,15 +31,30 @@ export interface GltfFacts {
   bounds: Bounds3
 }
 
-type Mat4 = number[] // 16 numbers, column-major as in glTF
+export type Mat4 = number[] // 16 numbers, column-major as in glTF
 
-interface Gltf {
+export interface Gltf {
   asset?: { version?: unknown }
   scene?: number
   scenes?: { nodes?: number[] }[]
   nodes?: { mesh?: number; children?: number[]; matrix?: number[]; translation?: number[]; rotation?: number[]; scale?: number[] }[]
   meshes?: { primitives?: { attributes?: Record<string, number>; indices?: number; mode?: number }[] }[]
-  accessors?: { count?: number; min?: number[]; max?: number[] }[]
+  accessors?: {
+    count?: number
+    min?: number[]
+    max?: number[]
+    bufferView?: number
+    byteOffset?: number
+    componentType?: number
+    normalized?: boolean
+    type?: string
+    sparse?: {
+      count: number
+      indices: { bufferView: number; byteOffset?: number; componentType: number }
+      values: { bufferView: number; byteOffset?: number }
+    }
+  }[]
+  bufferViews?: { buffer: number; byteOffset?: number; byteLength: number; byteStride?: number }[]
   buffers?: { uri?: string; byteLength?: number }[]
   images?: { uri?: string; bufferView?: number }[]
   extensionsRequired?: string[]
@@ -78,7 +93,7 @@ export function inspectGltf(bytes: Uint8Array, filename: string): GltfFacts {
 export const tooLarge = (bytes: number) =>
   `The file is ${(bytes / 1024 / 1024).toFixed(1)} MB; the limit is ${MAX_ASSET_BYTES / 1024 / 1024} MB.`
 
-function readGlb(bytes: Uint8Array, view: DataView): { json: Gltf; binLength: number } {
+export function readGlb(bytes: Uint8Array, view: DataView): { json: Gltf; binLength: number } {
   if (bytes.byteLength < 20) throw new AssetError('The GLB file is truncated.')
   const version = view.getUint32(4, true)
   if (version !== 2) throw new AssetError(`GLB version ${version} is not supported; only version 2 is.`)
@@ -101,7 +116,7 @@ function readGlb(bytes: Uint8Array, view: DataView): { json: Gltf; binLength: nu
   return { json, binLength }
 }
 
-function parseJson(text: string): Gltf {
+export function parseJson(text: string): Gltf {
   try {
     const v: unknown = JSON.parse(text)
     if (v && typeof v === 'object' && !Array.isArray(v)) return v as Gltf
@@ -141,7 +156,7 @@ const short = (s: string) => (s.length > 60 ? `${s.slice(0, 57)}…` : s)
 
 // ---- Bounds and triangle count -------------------------------------------------
 
-function nodeMatrix(n: NonNullable<Gltf['nodes']>[number]): Mat4 {
+export function nodeMatrix(n: NonNullable<Gltf['nodes']>[number]): Mat4 {
   if (n.matrix?.length === 16) return n.matrix
   const [tx, ty, tz] = n.translation ?? [0, 0, 0]
   const [x, y, z, w] = n.rotation ?? [0, 0, 0, 1]
@@ -155,7 +170,7 @@ function nodeMatrix(n: NonNullable<Gltf['nodes']>[number]): Mat4 {
   ]
 }
 
-function multiply(a: Mat4, b: Mat4): Mat4 {
+export function multiply(a: Mat4, b: Mat4): Mat4 {
   const out = new Array<number>(16)
   for (let c = 0; c < 4; c++)
     for (let r = 0; r < 4; r++) {
@@ -166,7 +181,7 @@ function multiply(a: Mat4, b: Mat4): Mat4 {
   return out
 }
 
-const IDENTITY: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+export const IDENTITY: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 
 function primitiveTriangles(json: Gltf, p: NonNullable<NonNullable<Gltf['meshes']>[number]['primitives']>[number]): number {
   const mode = p.mode ?? 4
@@ -226,7 +241,7 @@ function measure(json: Gltf): { triangles: number; bounds: Bounds3 } {
 }
 
 /** Nodes that are nobody's child (used when a file has no scenes). */
-function rootNodes(json: Gltf): number[] {
+export function rootNodes(json: Gltf): number[] {
   const children = new Set((json.nodes ?? []).flatMap((n) => n.children ?? []))
   return (json.nodes ?? []).map((_, i) => i).filter((i) => !children.has(i))
 }
@@ -237,7 +252,7 @@ function corners(a: number[], b: number[]): [number, number, number][] {
   return out
 }
 
-function transform(m: Mat4, [x, y, z]: [number, number, number]): [number, number, number] {
+export function transform(m: Mat4, [x, y, z]: [number, number, number]): [number, number, number] {
   return [
     m[0]! * x + m[4]! * y + m[8]! * z + m[12]!,
     m[1]! * x + m[5]! * y + m[9]! * z + m[13]!,

@@ -11,7 +11,7 @@
  *   - a parent part: resting on the parent's top face, its centre within that face (a
  *     box's rectangle, a cylinder's disc).
  *   "Resting" means its bottom face is on the support's surface (unrotated parts only).
- * - Search: positions on a 5 mm grid of the support face (SNAP_MM), plus the preferred
+ * - Search: positions on a 5 mm grid of the support face (PLACEMENT_STEP_M), plus the preferred
  *   position, ordered by distance from the preferred position, then by angle from +X,
  *   then by x and y. The first one where the part (with everything attached to it) has
  *   no interference error is taken. Deterministic: the same document gives the same spot.
@@ -25,9 +25,9 @@ import type { FrameGeometry } from '../../three/frame-geometry'
 import { halfHeight, shapeExtent, subtreeIds, updatePart, worldMatrix, type AssetBounds } from './assembly-ops'
 import { interferenceInput, interferenceSettings } from './interference-input'
 import { effectiveShape, type ComponentIndex } from './links'
-import { SNAP_MM } from './view-store'
 
-export const PLACEMENT_STEP_M = SNAP_MM / 1000
+/** Search grid: 5 mm, the workshop's move snap (SNAP_MM in view-store.ts). */
+export const PLACEMENT_STEP_M = 0.005
 
 /** What a part rests on, in the frame of what it is attached to. */
 export interface Support {

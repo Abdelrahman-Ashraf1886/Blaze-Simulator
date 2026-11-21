@@ -139,6 +139,17 @@ export interface AssetInfo {
   bounds: Bounds3
   importedAt: string
   warnings: string[]
+  /**
+   * Convex hull computed at import (electron/main/assets/hull.ts), in file units and axes.
+   * Absent or null: not computed yet. `points` null: no usable hull (`reason` says why);
+   * the model then collides as its bounding box.
+   */
+  hull?: ModelHull | null
+}
+
+export interface ModelHull {
+  points: [number, number, number][] | null
+  reason: string | null
 }
 
 export interface AssemblyPart {

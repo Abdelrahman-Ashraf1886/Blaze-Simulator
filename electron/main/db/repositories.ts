@@ -17,6 +17,7 @@ import type {
   EnvironmentDoc,
   FrameType,
   InterferenceSettingsDoc,
+  ModelHull,
   MotorMount,
   PartKind,
   Project,
@@ -123,6 +124,7 @@ interface AssetRow {
   bytes: number
   triangles: number
   bounds_json: string
+  hull_json: string | null
   imported_at: string
 }
 
@@ -133,6 +135,7 @@ const toAsset = (r: AssetRow): AssetInfo => ({
   bytes: r.bytes,
   triangles: r.triangles,
   bounds: JSON.parse(r.bounds_json) as Bounds3,
+  hull: r.hull_json === null ? null : (JSON.parse(r.hull_json) as ModelHull),
   importedAt: r.imported_at,
   warnings:
     r.triangles > TRIANGLE_WARNING
@@ -445,10 +448,14 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
       /** Records an imported file; re-importing identical bytes keeps the first record. */
       add(a: Omit<AssetInfo, 'importedAt' | 'warnings'>): AssetInfo {
         db.prepare(
-          `INSERT INTO assets (id, filename, format, bytes, triangles, bounds_json, imported_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
-        ).run(a.id, a.filename, a.format, a.bytes, a.triangles, JSON.stringify(a.bounds), now().toISOString())
+          `INSERT INTO assets (id, filename, format, bytes, triangles, bounds_json, hull_json, imported_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+        ).run(a.id, a.filename, a.format, a.bytes, a.triangles, JSON.stringify(a.bounds), a.hull ? JSON.stringify(a.hull) : null, now().toISOString())
         return toAsset(db.prepare('SELECT * FROM assets WHERE id = ?').get(a.id) as AssetRow)
+      },
+      /** Stores the hull of an asset imported before hulls were computed (startup back-fill). */
+      setHull(id: string, hull: ModelHull): void {
+        db.prepare('UPDATE assets SET hull_json = ? WHERE id = ?').run(JSON.stringify(hull), id)
       },
       /**
        * Removes assets no part uses and returns their ids, so main can delete the

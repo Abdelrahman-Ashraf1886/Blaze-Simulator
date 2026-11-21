@@ -1,0 +1,15 @@
+[package]
+name = "engine-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sidecar process: speaks the engine protocol over stdin/stdout."
+
+[[bin]]
+name = "drone-engine"
+path = "src/main.rs"
+
+[dependencies]
+engine-core = { path = "../engine-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,9 @@
+[package]
+name = "engine-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure simulation library: no IO, no transport, no UI."
+
+[dependencies]
+serde = { workspace = true }

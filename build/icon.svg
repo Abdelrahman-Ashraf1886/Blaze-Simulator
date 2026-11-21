@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Source for build/icon.png (run `npm run icon`). Quad-X seen from above; same geometry as src/components/brand-mark.tsx. -->
+  <rect x="24" y="24" width="464" height="464" rx="100" fill="#16191d"/>
+  <rect x="25" y="25" width="462" height="462" rx="99" fill="none" stroke="#2c3138" stroke-width="2"/>
+  <path d="M160 160 352 352M352 160 160 352" stroke="#e7ebee" stroke-width="32" stroke-linecap="round"/>
+  <g fill="none" stroke="#62d2e0" stroke-width="22">
+    <circle cx="160" cy="160" r="64"/>
+    <circle cx="352" cy="160" r="64"/>
+    <circle cx="160" cy="352" r="64"/>
+    <circle cx="352" cy="352" r="64"/>
+  </g>
+  <rect x="214" y="214" width="84" height="84" rx="20" fill="#e7ebee"/>
+</svg>

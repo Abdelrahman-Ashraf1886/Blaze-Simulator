@@ -1,0 +1,2844 @@
+{
+  "format": "blaze-uav.components",
+  "version": 1,
+  "seedVersion": 2,
+  "note": "Built-in components. Every value was read on the manufacturer's page given in its reference on the date shown.",
+  "components": [
+    {
+      "id": "cfaa5fdd-37eb-56ed-a221-ef1f57b05567",
+      "category": "flight-controller",
+      "name": "Pixhawk 6C",
+      "manufacturer": "Holybro",
+      "notes": "USB power input 4.75–5.25 V; servo rail input 0–36 V (manufacturer page).",
+      "specs": {
+        "processor": {
+          "value": "STM32H743 (FMU), STM32F103 (IO)",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/autopilot/pixhawk-6c/technical-specification",
+            "retrieved": "2026-11-21",
+            "locator": "Processors & Sensors"
+          }
+        },
+        "inputVoltageMax": {
+          "value": 6,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/autopilot/pixhawk-6c/technical-specification",
+            "retrieved": "2026-11-21",
+            "locator": "Electrical data"
+          },
+          "condition": "Max input voltage (power ports)"
+        },
+        "ports": {
+          "value": [
+            {
+              "name": "Telem1",
+              "type": "uart"
+            },
+            {
+              "name": "Telem2",
+              "type": "uart"
+            },
+            {
+              "name": "Telem3",
+              "type": "uart"
+            },
+            {
+              "name": "GPS1",
+              "type": "uart"
+            },
+            {
+              "name": "GPS2",
+              "type": "uart"
+            },
+            {
+              "name": "I2C",
+              "type": "i2c"
+            },
+            {
+              "name": "CAN1",
+              "type": "can"
+            },
+            {
+              "name": "CAN2",
+              "type": "can"
+            },
+            {
+              "name": "DSM RC",
+              "type": "rc"
+            },
+            {
+              "name": "PPM/SBUS RC",
+              "type": "rc"
+            },
+            {
+              "name": "USB",
+              "type": "usb"
+            },
+            {
+              "name": "Power1",
+              "type": "adc"
+            },
+            {
+              "name": "Power2",
+              "type": "adc"
+            }
+          ],
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/autopilot/pixhawk-6c/pixhawk-6c-ports",
+            "retrieved": "2026-11-21",
+            "locator": "Port pinout tables"
+          }
+        },
+        "pwmOutputs": {
+          "value": 16,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/autopilot/pixhawk-6c/technical-specification",
+            "retrieved": "2026-11-21",
+            "locator": "Interfaces"
+          },
+          "condition": "8 from IO (MAIN OUT), 8 from FMU (AUX OUT)"
+        },
+        "mass": {
+          "value": 59.3,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/autopilot/pixhawk-6c/technical-specification",
+            "retrieved": "2026-11-21",
+            "locator": "Mechanical data"
+          },
+          "condition": "Aluminium case (plastic case: 34.6 g)"
+        },
+        "length": {
+          "value": 84.8,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/autopilot/pixhawk-6c/technical-specification",
+            "retrieved": "2026-11-21",
+            "locator": "Mechanical data"
+          },
+          "condition": "Stated as 84.8 * 44 * 12.4 mm"
+        },
+        "width": {
+          "value": 44,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/autopilot/pixhawk-6c/technical-specification",
+            "retrieved": "2026-11-21",
+            "locator": "Mechanical data"
+          },
+          "condition": "Stated as 84.8 * 44 * 12.4 mm"
+        },
+        "height": {
+          "value": 12.4,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/autopilot/pixhawk-6c/technical-specification",
+            "retrieved": "2026-11-21",
+            "locator": "Mechanical data"
+          },
+          "condition": "Stated as 84.8 * 44 * 12.4 mm"
+        }
+      }
+    },
+    {
+      "id": "dca7630f-6f8a-5600-aa25-7ea420e099fb",
+      "category": "power-module",
+      "name": "PM02 V3",
+      "manufacturer": "Holybro",
+      "notes": "Ports: XT60, 6-pin GHR 1.25 mm. Max current sensing 120 A.",
+      "specs": {
+        "cellsMin": {
+          "value": 2,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Stated as 2~12S"
+        },
+        "cellsMax": {
+          "value": 12,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Stated as 2~12S"
+        },
+        "continuousCurrent": {
+          "value": 60,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "PCB continuous rating; burst 100 A"
+        },
+        "sensing": {
+          "value": "analog",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          }
+        },
+        "outputVoltage": {
+          "value": 5.2,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          }
+        },
+        "outputCurrent": {
+          "value": 3,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Max"
+        },
+        "mass": {
+          "value": 20,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          }
+        },
+        "length": {
+          "value": 25,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Stated as 25 x 25 x10 mm"
+        },
+        "width": {
+          "value": 25,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Stated as 25 x 25 x10 mm"
+        },
+        "height": {
+          "value": 10,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Stated as 25 x 25 x10 mm"
+        }
+      }
+    },
+    {
+      "id": "d3e0ee7d-a4ae-5d7c-99e7-16e7c283a504",
+      "category": "power-module",
+      "name": "PM06 V2",
+      "manufacturer": "Holybro",
+      "notes": "Built-in power distribution (4 B+ pads). Max current sensing 120 A. Mounting 30.5 × 30.5 mm.",
+      "specs": {
+        "cellsMin": {
+          "value": 2,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Stated as 2~14S"
+        },
+        "cellsMax": {
+          "value": 14,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Stated as 2~14S"
+        },
+        "continuousCurrent": {
+          "value": 70,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "PCB continuous rating; burst 120 A"
+        },
+        "sensing": {
+          "value": "analog",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          }
+        },
+        "outputVoltage": {
+          "value": 5.2,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          }
+        },
+        "outputCurrent": {
+          "value": 3,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Max"
+        },
+        "mass": {
+          "value": 24,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          }
+        },
+        "length": {
+          "value": 35,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Stated as 35 x 35 x10 mm"
+        },
+        "width": {
+          "value": 35,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Stated as 35 x 35 x10 mm"
+        },
+        "height": {
+          "value": 10,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "Analog Power Module"
+          },
+          "condition": "Stated as 35 x 35 x10 mm"
+        }
+      }
+    },
+    {
+      "id": "9c0374f7-3c4e-52c1-aa44-63ace08b99a8",
+      "category": "power-module",
+      "name": "PM08-CAN",
+      "manufacturer": "Holybro",
+      "notes": "Max current sensing 376 A. Port: Molex CLIK-Mate 2 mm 6-pin.",
+      "specs": {
+        "cellsMin": {
+          "value": 2,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          },
+          "condition": "Stated as 2S to 14S"
+        },
+        "cellsMax": {
+          "value": 14,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          },
+          "condition": "Stated as 2S to 14S"
+        },
+        "inputVoltageMin": {
+          "value": 7,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          }
+        },
+        "inputVoltageMax": {
+          "value": 60,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          }
+        },
+        "continuousCurrent": {
+          "value": 200,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          },
+          "condition": "Burst 400 A at 25 °C for 1 s"
+        },
+        "sensing": {
+          "value": "digital",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          },
+          "condition": "DroneCAN"
+        },
+        "outputVoltage": {
+          "value": 5.2,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          }
+        },
+        "outputCurrent": {
+          "value": 3,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          },
+          "condition": "Max"
+        },
+        "mass": {
+          "value": 185,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          },
+          "condition": "Including cable"
+        },
+        "length": {
+          "value": 45,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          },
+          "condition": "Stated as 45 × 41 × 26mm (not including cable)"
+        },
+        "width": {
+          "value": 41,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          },
+          "condition": "Stated as 45 × 41 × 26mm (not including cable)"
+        },
+        "height": {
+          "value": 26,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/power-module-and-pdb/power-module-comparison",
+            "retrieved": "2026-11-21",
+            "locator": "DroneCAN Power Module"
+          },
+          "condition": "Stated as 45 × 41 × 26mm (not including cable)"
+        }
+      }
+    },
+    {
+      "id": "c72a4592-2579-5dad-bad2-dbec6c354f4f",
+      "category": "peripheral",
+      "name": "M10 GPS",
+      "manufacturer": "Holybro",
+      "notes": "u-blox M10, IST8310 compass, 2.0 m CEP. Port type JST-GH-10P.",
+      "specs": {
+        "role": {
+          "value": "gps",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M10 GPS column"
+          }
+        },
+        "requiredPort": {
+          "value": "uart",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M10 GPS column"
+          },
+          "condition": "UBX/NMEA output, default 115200 baud"
+        },
+        "supplyVoltageMin": {
+          "value": 4.7,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M10 GPS column"
+          },
+          "condition": "Stated as 4.7-5.2V"
+        },
+        "supplyVoltageMax": {
+          "value": 5.2,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M10 GPS column"
+          },
+          "condition": "Stated as 4.7-5.2V"
+        },
+        "supplyCurrent": {
+          "value": 200,
+          "unit": "mA",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M10 GPS column"
+          },
+          "condition": "Less than 200 mA at 5 V"
+        },
+        "mass": {
+          "value": 36.8,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M10 GPS column"
+          },
+          "condition": "V2 (V1: 32 g)"
+        }
+      }
+    },
+    {
+      "id": "415b7b98-693a-5d84-8332-e02c0b850d10",
+      "category": "peripheral",
+      "name": "M9N GPS",
+      "manufacturer": "Holybro",
+      "notes": "u-blox M9N, IST8310 compass, 1.5 m CEP. Port type JST-GH-10P.",
+      "specs": {
+        "role": {
+          "value": "gps",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M9N GPS column"
+          }
+        },
+        "requiredPort": {
+          "value": "uart",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M9N GPS column"
+          },
+          "condition": "UBX/NMEA output, default 115200 baud"
+        },
+        "supplyVoltageMin": {
+          "value": 4.7,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M9N GPS column"
+          },
+          "condition": "Stated as 4.7-5.2V"
+        },
+        "supplyVoltageMax": {
+          "value": 5.2,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M9N GPS column"
+          },
+          "condition": "Stated as 4.7-5.2V"
+        },
+        "supplyCurrent": {
+          "value": 200,
+          "unit": "mA",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M9N GPS column"
+          },
+          "condition": "Less than 200 mA at 5 V"
+        },
+        "mass": {
+          "value": 36.8,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-21",
+            "locator": "Holybro M9N GPS column"
+          },
+          "condition": "V2 (V1: 32 g)"
+        }
+      }
+    },
+    {
+      "id": "9198d12b-32af-5f85-ba16-f4255f550b96",
+      "category": "peripheral",
+      "name": "SiK Telemetry Radio V3 100mW",
+      "manufacturer": "Holybro",
+      "notes": "915 MHz or 433 MHz versions. Max RF power 20 dBm.",
+      "specs": {
+        "role": {
+          "value": "telemetry-radio",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 100mW column"
+          }
+        },
+        "requiredPort": {
+          "value": "uart",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          },
+          "condition": "6-pin JST-GH connector, 3.3V-TTL serial"
+        },
+        "supplyVoltage": {
+          "value": 5,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 100mW column"
+          },
+          "condition": "Input voltage (DC)"
+        },
+        "supplyCurrent": {
+          "value": 100,
+          "unit": "mA",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Electrical Data"
+          },
+          "condition": "Transmitting at 20 dBm; receiving: 25 mA at 5 V"
+        },
+        "mass": {
+          "value": 23.5,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 100mW column"
+          },
+          "condition": "With antenna"
+        },
+        "length": {
+          "value": 28,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 100mW column"
+          },
+          "condition": "Stated as 28 x 53 x 10.7mm (without antenna)"
+        },
+        "width": {
+          "value": 53,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 100mW column"
+          },
+          "condition": "Stated as 28 x 53 x 10.7mm (without antenna)"
+        },
+        "height": {
+          "value": 10.7,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 100mW column"
+          },
+          "condition": "Stated as 28 x 53 x 10.7mm (without antenna)"
+        }
+      }
+    },
+    {
+      "id": "bc36a1cb-2cec-5eb0-8ed4-0f08b6d280fd",
+      "category": "peripheral",
+      "name": "SiK Telemetry Radio V3 1W",
+      "manufacturer": "Holybro",
+      "notes": "Max RF power 30 dBm. The page does not state the supply current of this version.",
+      "specs": {
+        "role": {
+          "value": "telemetry-radio",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 1W column"
+          }
+        },
+        "requiredPort": {
+          "value": "uart",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          },
+          "condition": "6-pin JST-GH connector, 3.3V-TTL serial"
+        },
+        "supplyVoltageMin": {
+          "value": 7,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 1W column"
+          },
+          "condition": "Stated as 7~28V, via XT30 power connector"
+        },
+        "supplyVoltageMax": {
+          "value": 28,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 1W column"
+          },
+          "condition": "Stated as 7~28V, via XT30 power connector"
+        },
+        "mass": {
+          "value": 67,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 1W column"
+          },
+          "condition": "With antenna"
+        },
+        "length": {
+          "value": 66.5,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 1W column"
+          },
+          "condition": "Stated as 66.5 x 32 x 16.5mm (without antenna)"
+        },
+        "width": {
+          "value": 32,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 1W column"
+          },
+          "condition": "Stated as 66.5 x 32 x 16.5mm (without antenna)"
+        },
+        "height": {
+          "value": 16.5,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/radio/sik-telemetry-radio-v3",
+            "retrieved": "2026-11-21",
+            "locator": "Specification, 1W column"
+          },
+          "condition": "Stated as 66.5 x 32 x 16.5mm (without antenna)"
+        }
+      }
+    },
+    {
+      "id": "ed8bd3e2-a6fa-555f-acae-018e66ef83fd",
+      "category": "motor",
+      "name": "MN3110 KV470",
+      "manufacturer": "T-Motor",
+      "notes": "12N14P. Cable 600 mm, 18 AWG.",
+      "specs": {
+        "kv": {
+          "value": 470,
+          "unit": "rpm/V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          }
+        },
+        "cellsMin": {
+          "value": 3,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          },
+          "condition": "No. of cells (LiPo): 3-6S"
+        },
+        "cellsMax": {
+          "value": 6,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          },
+          "condition": "No. of cells (LiPo): 3-6S"
+        },
+        "maxCurrent": {
+          "value": 15,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          },
+          "condition": "Max continuous current (180 s)"
+        },
+        "maxPower": {
+          "value": 330,
+          "unit": "W",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          },
+          "condition": "Max power (180 s)"
+        },
+        "internalResistance": {
+          "value": 135,
+          "unit": "mΩ",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          }
+        },
+        "noLoadCurrent": {
+          "value": 0.3,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          },
+          "condition": "Idle current at 10 V"
+        },
+        "mass": {
+          "value": 98,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          },
+          "condition": "Including cables (excluding cables: 80 g)"
+        },
+        "statorDiameter": {
+          "value": 31,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          }
+        },
+        "statorHeight": {
+          "value": 10,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          }
+        },
+        "shaftDiameter": {
+          "value": 4,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          }
+        },
+        "bodyDiameter": {
+          "value": 37.7,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          },
+          "condition": "Motor dimensions Φ37.7×28.5mm"
+        },
+        "bodyLength": {
+          "value": 28.5,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV470 table"
+          },
+          "condition": "Motor dimensions Φ37.7×28.5mm"
+        },
+        "thrustTable": {
+          "value": {
+            "units": {
+              "voltage": "V",
+              "throttle": "%",
+              "thrust": "gf",
+              "current": "A",
+              "power": "W",
+              "rpm": "rpm"
+            },
+            "rows": [
+              {
+                "prop": "T-MOTO13*4.4CF",
+                "voltage": 14.8,
+                "throttle": 50,
+                "current": 1.5,
+                "power": 22.2,
+                "thrust": 290,
+                "rpm": 3300
+              },
+              {
+                "prop": "T-MOTO13*4.4CF",
+                "voltage": 14.8,
+                "throttle": 65,
+                "current": 2.6,
+                "power": 38.48,
+                "thrust": 410,
+                "rpm": 4000
+              },
+              {
+                "prop": "T-MOTO13*4.4CF",
+                "voltage": 14.8,
+                "throttle": 75,
+                "current": 3.5,
+                "power": 51.8,
+                "thrust": 550,
+                "rpm": 4600
+              },
+              {
+                "prop": "T-MOTO13*4.4CF",
+                "voltage": 14.8,
+                "throttle": 85,
+                "current": 4.9,
+                "power": 72.52,
+                "thrust": 680,
+                "rpm": 5200
+              },
+              {
+                "prop": "T-MOTO13*4.4CF",
+                "voltage": 14.8,
+                "throttle": 100,
+                "current": 5.8,
+                "power": 85.84,
+                "thrust": 780,
+                "rpm": 5500
+              },
+              {
+                "prop": "T-MOTOR14*4.8CF",
+                "voltage": 14.8,
+                "throttle": 50,
+                "current": 2,
+                "power": 29.6,
+                "thrust": 370,
+                "rpm": 3000
+              },
+              {
+                "prop": "T-MOTOR14*4.8CF",
+                "voltage": 14.8,
+                "throttle": 65,
+                "current": 3.5,
+                "power": 51.8,
+                "thrust": 600,
+                "rpm": 3800
+              },
+              {
+                "prop": "T-MOTOR14*4.8CF",
+                "voltage": 14.8,
+                "throttle": 75,
+                "current": 5,
+                "power": 74,
+                "thrust": 790,
+                "rpm": 4300
+              },
+              {
+                "prop": "T-MOTOR14*4.8CF",
+                "voltage": 14.8,
+                "throttle": 85,
+                "current": 7,
+                "power": 103.6,
+                "thrust": 990,
+                "rpm": 4800
+              },
+              {
+                "prop": "T-MOTOR14*4.8CF",
+                "voltage": 14.8,
+                "throttle": 100,
+                "current": 8,
+                "power": 118.4,
+                "thrust": 1090,
+                "rpm": 5050
+              },
+              {
+                "prop": "T-MOTOR15*5CF",
+                "voltage": 14.8,
+                "throttle": 50,
+                "current": 2.2,
+                "power": 32.56,
+                "thrust": 460,
+                "rpm": 2800
+              },
+              {
+                "prop": "T-MOTOR15*5CF",
+                "voltage": 14.8,
+                "throttle": 65,
+                "current": 4.3,
+                "power": 63.64,
+                "thrust": 730,
+                "rpm": 3600
+              },
+              {
+                "prop": "T-MOTOR15*5CF",
+                "voltage": 14.8,
+                "throttle": 75,
+                "current": 6.2,
+                "power": 91.76,
+                "thrust": 930,
+                "rpm": 4100
+              },
+              {
+                "prop": "T-MOTOR15*5CF",
+                "voltage": 14.8,
+                "throttle": 85,
+                "current": 8.2,
+                "power": 121.36,
+                "thrust": 1100,
+                "rpm": 4500
+              },
+              {
+                "prop": "T-MOTOR15*5CF",
+                "voltage": 14.8,
+                "throttle": 100,
+                "current": 9.5,
+                "power": 140.6,
+                "thrust": 1220,
+                "rpm": 4800
+              },
+              {
+                "prop": "T-MOTO10*3.3CF",
+                "voltage": 22.2,
+                "throttle": 50,
+                "current": 1.5,
+                "power": 33.3,
+                "thrust": 350,
+                "rpm": 5500
+              },
+              {
+                "prop": "T-MOTO10*3.3CF",
+                "voltage": 22.2,
+                "throttle": 65,
+                "current": 2.5,
+                "power": 55.5,
+                "thrust": 500,
+                "rpm": 6500
+              },
+              {
+                "prop": "T-MOTO10*3.3CF",
+                "voltage": 22.2,
+                "throttle": 75,
+                "current": 3.5,
+                "power": 77.7,
+                "thrust": 630,
+                "rpm": 7300
+              },
+              {
+                "prop": "T-MOTO10*3.3CF",
+                "voltage": 22.2,
+                "throttle": 85,
+                "current": 4.8,
+                "power": 106.56,
+                "thrust": 780,
+                "rpm": 8300
+              },
+              {
+                "prop": "T-MOTO10*3.3CF",
+                "voltage": 22.2,
+                "throttle": 100,
+                "current": 5.3,
+                "power": 117.66,
+                "thrust": 890,
+                "rpm": 8600
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 22.2,
+                "throttle": 50,
+                "current": 1.9,
+                "power": 42.18,
+                "thrust": 430,
+                "rpm": 4900
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 22.2,
+                "throttle": 65,
+                "current": 3.5,
+                "power": 77.7,
+                "thrust": 690,
+                "rpm": 6300
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 22.2,
+                "throttle": 75,
+                "current": 5,
+                "power": 111,
+                "thrust": 860,
+                "rpm": 7100
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 22.2,
+                "throttle": 85,
+                "current": 6.3,
+                "power": 139.86,
+                "thrust": 1030,
+                "rpm": 7700
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 22.2,
+                "throttle": 100,
+                "current": 7.4,
+                "power": 164.28,
+                "thrust": 1110,
+                "rpm": 8200
+              }
+            ]
+          },
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, test data table"
+          },
+          "condition": "Manufacturer bench test; propeller names as printed"
+        }
+      }
+    },
+    {
+      "id": "848ce891-d434-50bd-93b7-ee012c0129f8",
+      "category": "motor",
+      "name": "MN3110 KV700",
+      "manufacturer": "T-Motor",
+      "notes": "12N14P. Cable 600 mm, 18 AWG.",
+      "specs": {
+        "kv": {
+          "value": 700,
+          "unit": "rpm/V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          }
+        },
+        "cellsMin": {
+          "value": 3,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          },
+          "condition": "No. of cells (LiPo): 3-6S"
+        },
+        "cellsMax": {
+          "value": 6,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          },
+          "condition": "No. of cells (LiPo): 3-6S"
+        },
+        "maxCurrent": {
+          "value": 21,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          },
+          "condition": "Max continuous current (180 s)"
+        },
+        "maxPower": {
+          "value": 466,
+          "unit": "W",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          },
+          "condition": "Max power (180 s)"
+        },
+        "internalResistance": {
+          "value": 92,
+          "unit": "mΩ",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          }
+        },
+        "noLoadCurrent": {
+          "value": 0.3,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          },
+          "condition": "Idle current at 10 V"
+        },
+        "mass": {
+          "value": 99,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          },
+          "condition": "Including cables (excluding cables: 80 g)"
+        },
+        "statorDiameter": {
+          "value": 31,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          }
+        },
+        "statorHeight": {
+          "value": 10,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          }
+        },
+        "shaftDiameter": {
+          "value": 4,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          }
+        },
+        "bodyDiameter": {
+          "value": 37.7,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          },
+          "condition": "Motor dimensions Φ37.7×28.5mm"
+        },
+        "bodyLength": {
+          "value": 28.5,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV700 table"
+          },
+          "condition": "Motor dimensions Φ37.7×28.5mm"
+        },
+        "thrustTable": {
+          "value": {
+            "units": {
+              "voltage": "V",
+              "throttle": "%",
+              "thrust": "gf",
+              "current": "A",
+              "power": "W",
+              "rpm": "rpm"
+            },
+            "rows": [
+              {
+                "prop": "T-MOTO11*3.7CF",
+                "voltage": 11.1,
+                "throttle": 50,
+                "current": 1.8,
+                "power": 19.98,
+                "thrust": 280,
+                "rpm": 3900
+              },
+              {
+                "prop": "T-MOTO11*3.7CF",
+                "voltage": 11.1,
+                "throttle": 65,
+                "current": 3,
+                "power": 33.3,
+                "thrust": 380,
+                "rpm": 4600
+              },
+              {
+                "prop": "T-MOTO11*3.7CF",
+                "voltage": 11.1,
+                "throttle": 75,
+                "current": 4.3,
+                "power": 47.73,
+                "thrust": 500,
+                "rpm": 5500
+              },
+              {
+                "prop": "T-MOTO11*3.7CF",
+                "voltage": 11.1,
+                "throttle": 85,
+                "current": 5.6,
+                "power": 62.16,
+                "thrust": 600,
+                "rpm": 6000
+              },
+              {
+                "prop": "T-MOTO11*3.7CF",
+                "voltage": 11.1,
+                "throttle": 100,
+                "current": 6.9,
+                "power": 76.59,
+                "thrust": 700,
+                "rpm": 6400
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 11.1,
+                "throttle": 50,
+                "current": 2.1,
+                "power": 23.31,
+                "thrust": 320,
+                "rpm": 3600
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 11.1,
+                "throttle": 65,
+                "current": 3.7,
+                "power": 41.07,
+                "thrust": 500,
+                "rpm": 4500
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 11.1,
+                "throttle": 75,
+                "current": 5.3,
+                "power": 58.83,
+                "thrust": 630,
+                "rpm": 5000
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 11.1,
+                "throttle": 85,
+                "current": 7.2,
+                "power": 79.92,
+                "thrust": 780,
+                "rpm": 5700
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 11.1,
+                "throttle": 100,
+                "current": 8.9,
+                "power": 98.79,
+                "thrust": 890,
+                "rpm": 6100
+              },
+              {
+                "prop": "T-MOTOR13*4.4CF",
+                "voltage": 11.1,
+                "throttle": 50,
+                "current": 2.4,
+                "power": 26.64,
+                "thrust": 320,
+                "rpm": 3500
+              },
+              {
+                "prop": "T-MOTOR13*4.4CF",
+                "voltage": 11.1,
+                "throttle": 65,
+                "current": 4.3,
+                "power": 47.73,
+                "thrust": 480,
+                "rpm": 4500
+              },
+              {
+                "prop": "T-MOTOR13*4.4CF",
+                "voltage": 11.1,
+                "throttle": 75,
+                "current": 6.3,
+                "power": 69.93,
+                "thrust": 680,
+                "rpm": 5000
+              },
+              {
+                "prop": "T-MOTOR13*4.4CF",
+                "voltage": 11.1,
+                "throttle": 85,
+                "current": 8.5,
+                "power": 94.35,
+                "thrust": 880,
+                "rpm": 5600
+              },
+              {
+                "prop": "T-MOTOR13*4.4CF",
+                "voltage": 11.1,
+                "throttle": 100,
+                "current": 10.2,
+                "power": 113.22,
+                "thrust": 980,
+                "rpm": 6000
+              },
+              {
+                "prop": "T-MOTO10*3.3CF",
+                "voltage": 14.8,
+                "throttle": 50,
+                "current": 2.3,
+                "power": 34.04,
+                "thrust": 320,
+                "rpm": 5500
+              },
+              {
+                "prop": "T-MOTO10*3.3CF",
+                "voltage": 14.8,
+                "throttle": 65,
+                "current": 3.5,
+                "power": 51.8,
+                "thrust": 430,
+                "rpm": 6500
+              },
+              {
+                "prop": "T-MOTO10*3.3CF",
+                "voltage": 14.8,
+                "throttle": 75,
+                "current": 5,
+                "power": 74,
+                "thrust": 560,
+                "rpm": 7100
+              },
+              {
+                "prop": "T-MOTO10*3.3CF",
+                "voltage": 14.8,
+                "throttle": 85,
+                "current": 6.8,
+                "power": 100.64,
+                "thrust": 700,
+                "rpm": 8000
+              },
+              {
+                "prop": "T-MOTO10*3.3CF",
+                "voltage": 14.8,
+                "throttle": 100,
+                "current": 8.1,
+                "power": 119.88,
+                "thrust": 800,
+                "rpm": 8600
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 14.8,
+                "throttle": 50,
+                "current": 2.6,
+                "power": 38.48,
+                "thrust": 350,
+                "rpm": 4900
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 14.8,
+                "throttle": 65,
+                "current": 4.7,
+                "power": 69.56,
+                "thrust": 560,
+                "rpm": 6000
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 14.8,
+                "throttle": 75,
+                "current": 6.5,
+                "power": 96.2,
+                "thrust": 720,
+                "rpm": 6900
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 14.8,
+                "throttle": 85,
+                "current": 9,
+                "power": 133.2,
+                "thrust": 880,
+                "rpm": 7600
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 14.8,
+                "throttle": 100,
+                "current": 10,
+                "power": 148,
+                "thrust": 1030,
+                "rpm": 8100
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 14.8,
+                "throttle": 50,
+                "current": 3.2,
+                "power": 47.36,
+                "thrust": 420,
+                "rpm": 4800
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 14.8,
+                "throttle": 65,
+                "current": 6.2,
+                "power": 91.76,
+                "thrust": 790,
+                "rpm": 5700
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 14.8,
+                "throttle": 75,
+                "current": 8.5,
+                "power": 125.8,
+                "thrust": 930,
+                "rpm": 6500
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 14.8,
+                "throttle": 85,
+                "current": 11.6,
+                "power": 171.68,
+                "thrust": 1190,
+                "rpm": 7200
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 14.8,
+                "throttle": 100,
+                "current": 14,
+                "power": 207.2,
+                "thrust": 1290,
+                "rpm": 7600
+              }
+            ]
+          },
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, test data table"
+          },
+          "condition": "Manufacturer bench test; propeller names as printed"
+        }
+      }
+    },
+    {
+      "id": "6a181aa7-121d-543a-ac2d-6d6864946c88",
+      "category": "motor",
+      "name": "MN3110 KV780",
+      "manufacturer": "T-Motor",
+      "notes": "12N14P. Cable 600 mm, 18 AWG.",
+      "specs": {
+        "kv": {
+          "value": 780,
+          "unit": "rpm/V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          }
+        },
+        "cellsMin": {
+          "value": 3,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          },
+          "condition": "No. of cells (LiPo): 3-6S"
+        },
+        "cellsMax": {
+          "value": 6,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          },
+          "condition": "No. of cells (LiPo): 3-6S"
+        },
+        "maxCurrent": {
+          "value": 26,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          },
+          "condition": "Max continuous current (180 s)"
+        },
+        "maxPower": {
+          "value": 481,
+          "unit": "W",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          },
+          "condition": "Max power (180 s)"
+        },
+        "internalResistance": {
+          "value": 71,
+          "unit": "mΩ",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          }
+        },
+        "noLoadCurrent": {
+          "value": 0.4,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          },
+          "condition": "Idle current at 10 V"
+        },
+        "mass": {
+          "value": 100,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          },
+          "condition": "Including cables (excluding cables: 80 g)"
+        },
+        "statorDiameter": {
+          "value": 31,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          }
+        },
+        "statorHeight": {
+          "value": 10,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          }
+        },
+        "shaftDiameter": {
+          "value": 4,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          }
+        },
+        "bodyDiameter": {
+          "value": 37.7,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          },
+          "condition": "Motor dimensions Φ37.7×28.5mm"
+        },
+        "bodyLength": {
+          "value": 28.5,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, MN3110 KV780 table"
+          },
+          "condition": "Motor dimensions Φ37.7×28.5mm"
+        },
+        "thrustTable": {
+          "value": {
+            "units": {
+              "voltage": "V",
+              "throttle": "%",
+              "thrust": "gf",
+              "current": "A",
+              "power": "W",
+              "rpm": "rpm"
+            },
+            "rows": [
+              {
+                "prop": "T-MOTO11*3.7CF",
+                "voltage": 11.1,
+                "throttle": 50,
+                "current": 2.3,
+                "power": 25.53,
+                "thrust": 260,
+                "rpm": 4300
+              },
+              {
+                "prop": "T-MOTO11*3.7CF",
+                "voltage": 11.1,
+                "throttle": 65,
+                "current": 4.1,
+                "power": 45.51,
+                "thrust": 400,
+                "rpm": 5300
+              },
+              {
+                "prop": "T-MOTO11*3.7CF",
+                "voltage": 11.1,
+                "throttle": 75,
+                "current": 5.7,
+                "power": 63.27,
+                "thrust": 530,
+                "rpm": 6000
+              },
+              {
+                "prop": "T-MOTO11*3.7CF",
+                "voltage": 11.1,
+                "throttle": 85,
+                "current": 7.7,
+                "power": 85.47,
+                "thrust": 660,
+                "rpm": 6800
+              },
+              {
+                "prop": "T-MOTO11*3.7CF",
+                "voltage": 11.1,
+                "throttle": 100,
+                "current": 9.4,
+                "power": 104.34,
+                "thrust": 750,
+                "rpm": 7100
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 11.1,
+                "throttle": 50,
+                "current": 2.7,
+                "power": 29.97,
+                "thrust": 320,
+                "rpm": 4000
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 11.1,
+                "throttle": 65,
+                "current": 5.1,
+                "power": 56.61,
+                "thrust": 530,
+                "rpm": 5000
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 11.1,
+                "throttle": 75,
+                "current": 7.5,
+                "power": 83.25,
+                "thrust": 700,
+                "rpm": 5700
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 11.1,
+                "throttle": 85,
+                "current": 9.8,
+                "power": 108.78,
+                "thrust": 840,
+                "rpm": 6300
+              },
+              {
+                "prop": "T-MOTOR12*4CF",
+                "voltage": 11.1,
+                "throttle": 100,
+                "current": 12,
+                "power": 133.2,
+                "thrust": 990,
+                "rpm": 6700
+              },
+              {
+                "prop": "T-MOTO9*3CF",
+                "voltage": 14.8,
+                "throttle": 50,
+                "current": 2.7,
+                "power": 39.96,
+                "thrust": 300,
+                "rpm": 6800
+              },
+              {
+                "prop": "T-MOTO9*3CF",
+                "voltage": 14.8,
+                "throttle": 65,
+                "current": 3.6,
+                "power": 53.28,
+                "thrust": 380,
+                "rpm": 7500
+              },
+              {
+                "prop": "T-MOTO9*3CF",
+                "voltage": 14.8,
+                "throttle": 75,
+                "current": 4.8,
+                "power": 71.04,
+                "thrust": 460,
+                "rpm": 8500
+              },
+              {
+                "prop": "T-MOTO9*3CF",
+                "voltage": 14.8,
+                "throttle": 85,
+                "current": 6.6,
+                "power": 97.68,
+                "thrust": 590,
+                "rpm": 9200
+              },
+              {
+                "prop": "T-MOTO9*3CF",
+                "voltage": 14.8,
+                "throttle": 100,
+                "current": 8,
+                "power": 118.4,
+                "thrust": 680,
+                "rpm": 10000
+              },
+              {
+                "prop": "T-MOTOR10*3.3CF",
+                "voltage": 14.8,
+                "throttle": 50,
+                "current": 3.1,
+                "power": 45.88,
+                "thrust": 360,
+                "rpm": 6000
+              },
+              {
+                "prop": "T-MOTOR10*3.3CF",
+                "voltage": 14.8,
+                "throttle": 65,
+                "current": 4.8,
+                "power": 71.04,
+                "thrust": 530,
+                "rpm": 7000
+              },
+              {
+                "prop": "T-MOTOR10*3.3CF",
+                "voltage": 14.8,
+                "throttle": 75,
+                "current": 6.8,
+                "power": 100.64,
+                "thrust": 660,
+                "rpm": 8000
+              },
+              {
+                "prop": "T-MOTOR10*3.3CF",
+                "voltage": 14.8,
+                "throttle": 85,
+                "current": 9.2,
+                "power": 136.16,
+                "thrust": 850,
+                "rpm": 8800
+              },
+              {
+                "prop": "T-MOTOR10*3.3CF",
+                "voltage": 14.8,
+                "throttle": 100,
+                "current": 11,
+                "power": 162.8,
+                "thrust": 980,
+                "rpm": 9500
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 14.8,
+                "throttle": 50,
+                "current": 3.4,
+                "power": 50.32,
+                "thrust": 430,
+                "rpm": 5500
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 14.8,
+                "throttle": 65,
+                "current": 6.5,
+                "power": 96.2,
+                "thrust": 700,
+                "rpm": 6700
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 14.8,
+                "throttle": 75,
+                "current": 9.2,
+                "power": 136.16,
+                "thrust": 880,
+                "rpm": 7600
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 14.8,
+                "throttle": 85,
+                "current": 12.4,
+                "power": 183.52,
+                "thrust": 1100,
+                "rpm": 8500
+              },
+              {
+                "prop": "T-MOTOR11*3.7CF",
+                "voltage": 14.8,
+                "throttle": 100,
+                "current": 14.9,
+                "power": 220.52,
+                "thrust": 1260,
+                "rpm": 9000
+              }
+            ]
+          },
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/mn3110-motor-navigator-type.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab, test data table"
+          },
+          "condition": "Manufacturer bench test; propeller names as printed"
+        }
+      }
+    },
+    {
+      "id": "b80c76e1-16e2-5694-84f6-7231953becc4",
+      "category": "esc",
+      "name": "Tekko32 F4 4in1 50A ESC (AM32)",
+      "manufacturer": "Holybro",
+      "notes": "No output BEC. Onboard analog current sensor. 1000 µF 35 V capacitor included.",
+      "specs": {
+        "format": {
+          "value": "4-in-1",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Product description"
+          }
+        },
+        "cellsMin": {
+          "value": 4,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          },
+          "condition": "Supports 4-6S battery"
+        },
+        "cellsMax": {
+          "value": 6,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          },
+          "condition": "Supports 4-6S battery"
+        },
+        "continuousCurrent": {
+          "value": 50,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          },
+          "condition": "Per motor (50A x4)"
+        },
+        "burstCurrent": {
+          "value": 60,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          },
+          "condition": "Per motor (60A x4); duration not stated"
+        },
+        "protocols": {
+          "value": "DShot 150/300/600/1200, MultiShot, OneShot, ProShot, PWM",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          }
+        },
+        "mass": {
+          "value": 13.8,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          }
+        },
+        "mountPattern": {
+          "value": "M4 30.5 × 30.5 mm (M3 grommets included)",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          }
+        },
+        "length": {
+          "value": 48,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          },
+          "condition": "Stated as 48x37x6 mm"
+        },
+        "width": {
+          "value": 37,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          },
+          "condition": "Stated as 48x37x6 mm"
+        },
+        "height": {
+          "value": 6,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-4in1-50a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Specification"
+          },
+          "condition": "Stated as 48x37x6 mm"
+        }
+      }
+    },
+    {
+      "id": "e739b0af-1cdb-5887-9f28-b23d0f538d87",
+      "category": "esc",
+      "name": "Tekko32 F4 45A ESC (AM32)",
+      "manufacturer": "Holybro",
+      "notes": "External capacitor recommended for 6S (330 µF 35 V included).",
+      "specs": {
+        "format": {
+          "value": "single",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-45a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Product description"
+          }
+        },
+        "cellsMin": {
+          "value": 2,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-45a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Spec"
+          },
+          "condition": "2-6s LIPO input"
+        },
+        "cellsMax": {
+          "value": 6,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-45a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Spec"
+          },
+          "condition": "2-6s LIPO input"
+        },
+        "continuousCurrent": {
+          "value": 45,
+          "unit": "A",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-45a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Spec"
+          },
+          "condition": "Stated as \"45A designed\"; the page does not say continuous or burst"
+        },
+        "protocols": {
+          "value": "DShot1200, PWM up to 48 kHz",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-45a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Features"
+          }
+        },
+        "mass": {
+          "value": 5.8,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-45a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Spec"
+          }
+        },
+        "length": {
+          "value": 17.3,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-45a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Spec"
+          },
+          "condition": "Stated as 17.3*34.3*4.5mm"
+        },
+        "width": {
+          "value": 34.3,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-45a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Spec"
+          },
+          "condition": "Stated as 17.3*34.3*4.5mm"
+        },
+        "height": {
+          "value": 4.5,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://holybro.com/products/tekko32-f4-45a-esc",
+            "retrieved": "2026-11-21",
+            "locator": "Spec"
+          },
+          "condition": "Stated as 17.3*34.3*4.5mm"
+        }
+      }
+    },
+    {
+      "id": "0b593a6b-7366-57ee-88a6-f71140d38214",
+      "category": "propeller",
+      "name": "P13*4.4 CF propeller",
+      "manufacturer": "T-Motor",
+      "notes": "Polished carbon fibre.",
+      "specs": {
+        "diameter": {
+          "value": 13,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-13x4_4-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab"
+          },
+          "condition": "Model No."
+        },
+        "pitch": {
+          "value": 4.4,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-13x4_4-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab"
+          },
+          "condition": "Model No."
+        },
+        "blades": {
+          "value": 2,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-13x4_4-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab"
+          },
+          "condition": "2 blades, integrated"
+        },
+        "hand": {
+          "value": "pair",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-13x4_4-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Product title"
+          },
+          "condition": "Sold as 2 pcs/pair"
+        },
+        "mass": {
+          "value": 14.2,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-13x4_4-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab"
+          },
+          "condition": "Stated as \"Weight (Single Blade)\""
+        },
+        "material": {
+          "value": "CF+Epoxy",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-13x4_4-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab"
+          }
+        }
+      }
+    },
+    {
+      "id": "5a8f99af-4271-5877-b66e-3170dbccfe98",
+      "category": "propeller",
+      "name": "P15*5 CF propeller",
+      "manufacturer": "T-Motor",
+      "notes": "Polished carbon fibre.",
+      "specs": {
+        "diameter": {
+          "value": 15,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-15x5-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab"
+          },
+          "condition": "Model No."
+        },
+        "pitch": {
+          "value": 5,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-15x5-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab"
+          },
+          "condition": "Model No."
+        },
+        "blades": {
+          "value": 2,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-15x5-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab"
+          },
+          "condition": "2 blades, integrated"
+        },
+        "hand": {
+          "value": "pair",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-15x5-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Product title"
+          },
+          "condition": "Sold as 2 pcs/pair"
+        },
+        "mass": {
+          "value": 21,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-15x5-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab"
+          },
+          "condition": "±1.5 g; stated as \"Weight (Single Blade)\""
+        },
+        "material": {
+          "value": "CF+Epoxy",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://store.tmotor.com/product/polish-carbon-fiber-15x5-prop.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications tab"
+          }
+        }
+      }
+    },
+    {
+      "id": "fa9ebd61-c209-545c-94c2-ab6bbb2659a8",
+      "category": "propeller",
+      "name": "10x4.5MR",
+      "manufacturer": "APC Propellers",
+      "notes": "Multi-rotor (electric only) series. Hub diameter 0.65 in.",
+      "specs": {
+        "diameter": {
+          "value": 10,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/10x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Propeller Diameter (in.)"
+        },
+        "pitch": {
+          "value": 4.5,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/10x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Pitch (inches)"
+        },
+        "boreDiameter": {
+          "value": 0.25,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/10x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Stated as \"Shaft Diameter 1/4 in.\"; LPAR06E adapter rings not included"
+        },
+        "mass": {
+          "value": 0.53,
+          "unit": "oz",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/10x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Product Weight"
+        }
+      }
+    },
+    {
+      "id": "6ea303fa-bca1-5543-9e3a-cc5524a8eb3d",
+      "category": "propeller",
+      "name": "11x4.5MR",
+      "manufacturer": "APC Propellers",
+      "notes": "Multi-rotor (electric only) series. Hub diameter 0.65 in.",
+      "specs": {
+        "diameter": {
+          "value": 11,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/11x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Propeller Diameter (in.)"
+        },
+        "pitch": {
+          "value": 4.5,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/11x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Pitch (inches)"
+        },
+        "boreDiameter": {
+          "value": 0.25,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/11x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Stated as \"Shaft Diameter 1/4 in.\"; LPAR06E adapter rings not included"
+        },
+        "mass": {
+          "value": 0.6,
+          "unit": "oz",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/11x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Product Weight"
+        }
+      }
+    },
+    {
+      "id": "55f67cb7-059d-5799-b653-329e351076a0",
+      "category": "propeller",
+      "name": "12x4.5MR",
+      "manufacturer": "APC Propellers",
+      "notes": "Multi-rotor (electric only) series. Hub diameter 0.65 in.",
+      "specs": {
+        "diameter": {
+          "value": 12,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/12x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Propeller Diameter (in.)"
+        },
+        "pitch": {
+          "value": 4.5,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/12x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Pitch (inches)"
+        },
+        "boreDiameter": {
+          "value": 0.25,
+          "unit": "in",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/12x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Stated as \"Shaft Diameter 1/4 in.\"; LPAR06E adapter rings not included"
+        },
+        "mass": {
+          "value": 0.78,
+          "unit": "oz",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.apcprop.com/product/12x4-5mr/",
+            "retrieved": "2026-11-21",
+            "locator": "Product specifications"
+          },
+          "condition": "Product Weight"
+        }
+      }
+    },
+    {
+      "id": "3a9a633d-bb04-5d1e-9665-d15aeaa89d6b",
+      "category": "battery",
+      "name": "Tattu G-Tech 5200mAh 4S 35C",
+      "manufacturer": "Tattu",
+      "notes": "Discharge wire 10 AWG, 120 mm. Balance connector JST-XHR.",
+      "specs": {
+        "chemistry": {
+          "value": "lipo",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Product title"
+          },
+          "condition": "Lipo Battery Pack"
+        },
+        "series": {
+          "value": 4,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "Configuration 4S1P"
+        },
+        "parallel": {
+          "value": 1,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "Configuration 4S1P"
+        },
+        "packVoltageNominal": {
+          "value": 14.8,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          }
+        },
+        "capacity": {
+          "value": 5200,
+          "unit": "mAh",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          }
+        },
+        "cRateContinuous": {
+          "value": 35,
+          "unit": "C",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "Discharge Rate"
+        },
+        "cRateBurst": {
+          "value": 70,
+          "unit": "C",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "Max Burst discharge Rate; duration not stated"
+        },
+        "mass": {
+          "value": 436.5,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "Net weight ±20 g"
+        },
+        "length": {
+          "value": 133,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "±5 mm"
+        },
+        "width": {
+          "value": 45,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "±2 mm"
+        },
+        "height": {
+          "value": 33.5,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "±2 mm"
+        },
+        "connector": {
+          "value": "XT60",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/tattu-5200mah-14-8v-35c-4s1p-lipo-battery-pack-with-xt60-plug.html",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          }
+        }
+      }
+    },
+    {
+      "id": "f9dce680-adf3-5e24-a58f-891aa138ae8a",
+      "category": "battery",
+      "name": "Gens ace Adventure G-Tech 3600mAh 4S 60C",
+      "manufacturer": "Gens ace",
+      "notes": "Discharge wire 12 AWG, 120 mm. Balance connector G-Tech-5P.",
+      "specs": {
+        "chemistry": {
+          "value": "lipo",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Product title"
+          },
+          "condition": "Lipo Battery"
+        },
+        "series": {
+          "value": 4,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "Configuration 4S1P"
+        },
+        "parallel": {
+          "value": 1,
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "Configuration 4S1P"
+        },
+        "packVoltageNominal": {
+          "value": 14.8,
+          "unit": "V",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          }
+        },
+        "capacity": {
+          "value": 3600,
+          "unit": "mAh",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          }
+        },
+        "cRateContinuous": {
+          "value": 60,
+          "unit": "C",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Product title"
+          },
+          "condition": "From the product title; the specification table lists no discharge rate"
+        },
+        "mass": {
+          "value": 215,
+          "unit": "g",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "Net weight ±20 g"
+        },
+        "length": {
+          "value": 135.86,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "±5 mm"
+        },
+        "width": {
+          "value": 44.12,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "±2 mm"
+        },
+        "height": {
+          "value": 24.05,
+          "unit": "mm",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          },
+          "condition": "±2 mm"
+        },
+        "connector": {
+          "value": "XT60",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://genstattu.com/gens-ace-3600mah-4s-60c-14-8v-adventure-g-tech-lipo-battery-with-xt60-plug/",
+            "retrieved": "2026-11-21",
+            "locator": "Specifications table"
+          }
+        }
+      }
+    }
+  ]
+}

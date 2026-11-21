@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    // E2E tests run in Node but pass callbacks to page.evaluate(), which run in the page.
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["tests/e2e/**/*.ts"]
+}

@@ -1,0 +1,36 @@
+appId: com.blazeuav.app
+productName: Blaze UAV
+copyright: Copyright © 2026
+directories:
+  output: release/${version}
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+asarUnpack:
+  - node_modules/better-sqlite3/**
+extraResources:
+  - from: simulation-engine/target/release/drone-engine.exe
+    to: engine/drone-engine.exe
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  # Code signing: set CSC_LINK / CSC_KEY_PASSWORD (or win.azureSignOptions) in the
+  # environment to sign. Unsigned builds work but trigger SmartScreen.
+  signAndEditExecutable: true
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Blaze UAV
+  artifactName: BlazeUAV-Setup-${version}.${ext}
+  deleteAppDataOnUninstall: false
+portable:
+  artifactName: BlazeUAV-Portable-${version}.${ext}

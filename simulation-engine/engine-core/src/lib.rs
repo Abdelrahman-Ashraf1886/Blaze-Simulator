@@ -8,8 +8,9 @@
 //! (`vehicle`), and the fixed-step rigid-body core on rapier (`sim`). Motors,
 //! battery, aerodynamics, contacts and the controller follow in 4.4–4.7; see
 //! `documentation/plans/phase-4-physics.md`. Modules are added when they
-//! contain real, tested models, never as empty stubs.
+//! contain real, tested models, never as empty stubs. Phase 4.7 adds the tested PX4-style controller.
 
+pub mod controller;
 pub mod math;
 pub mod sim;
 pub mod vehicle;

@@ -1,8 +1,12 @@
-import { useState } from 'react'
-import type { FrameParams } from '../../../electron/ipc/contract'
+import { useMemo, useState } from 'react'
+import type { AssemblyDocument, BodyDragInput, FrameParams } from '../../../electron/ipc/contract'
 import { NumberField, numberParser } from '@/components/number-field'
 import { cn } from '@/lib/utils'
+import type { FrameGeometry } from '@/three/frame-geometry'
+import { bodyAreas } from './aero-input'
 import { useAssembly } from './assembly-store'
+import { useAssets } from './asset-store'
+import { useComponentIndex } from './component-index'
 import { parseFrameValue, toMm } from './frame-values'
 
 const FIELDS: { key: keyof FrameParams; label: string; edit: string }[] = [
@@ -23,7 +27,7 @@ const frameMassG = (text: string): { ok: true; value: number | null } | { ok: fa
   return r.ok ? { ok: true, value: r.value } : r
 }
 
-export function FrameEditor() {
+export function FrameEditor({ geo }: { geo?: FrameGeometry | null }) {
   const frame = useAssembly((s) => s.doc?.frame)
   const frameMass = useAssembly((s) => s.doc?.frameMass ?? null)
   const bodyDrag = useAssembly((s) => s.doc?.bodyDrag ?? null)
@@ -53,24 +57,62 @@ export function FrameEditor() {
           }
         />
       </div>
-      <div title="Body drag per axis F = ½ ρ C_d A v², A from the parts' collision shapes. No source states C_d for a build.">
-        <NumberField
-          key={`body-cd:${bodyDrag?.value ?? 'none'}`}
-          id="body-cd"
-          label="Body drag coefficient C_d"
-          initial={bodyDrag ? String(bodyDrag.value) : ''}
-          placeholder="not set"
-          parse={bodyCd}
-          onCommit={(v) =>
-            useAssembly
-              .getState()
-              .edit(v === null ? 'Clear body drag coefficient' : 'Set body drag coefficient', (d) => ({
-                ...d,
-                bodyDrag: v === null ? null : { value: v, source: 'user' },
-              }))
-          }
-        />
+      <div data-testid="body-drag" title="Body drag per axis F = ½ ρ C_d A v|v|, A from the parts' collision shapes. No source states C_d for a build.">
+        {AXES.map((axis, i) => {
+          const cd = bodyDrag?.cd ?? [null, null, null]
+          return (
+            <NumberField
+              key={`body-cd-${axis.key}:${cd[i] ?? 'none'}`}
+              id={`body-cd-${axis.key}`}
+              label={`Body C_d ${axis.label}`}
+              initial={cd[i] === null ? '' : String(cd[i])}
+              placeholder="not set"
+              parse={bodyCd}
+              onCommit={(v) => useAssembly.getState().edit(v === null ? `Clear body C_d ${axis.key}` : `Set body C_d ${axis.key}`, (d) => setAxis(d.bodyDrag?.cd, i, v, d))}
+            />
+          )
+        })}
+        <p className="py-1.5 text-[11.5px] leading-relaxed text-fg-subtle">
+          The first value entered is copied to the axes still empty; change any axis afterwards.
+        </p>
+        {geo && <DragAreas geo={geo} />}
       </div>
+    </div>
+  )
+}
+
+const AXES = [
+  { key: 'x', label: 'X (forward)' },
+  { key: 'y', label: 'Y (left)' },
+  { key: 'z', label: 'Z (up)' },
+] as const
+
+/** Sets one axis; when every axis was empty, the value fills all three (stated in the UI). */
+function setAxis(cd: BodyDragInput['cd'] | undefined, i: number, v: number | null, d: AssemblyDocument): AssemblyDocument {
+  const cur: BodyDragInput['cd'] = cd ? [...cd] : [null, null, null]
+  const empty = cur.every((x) => x === null)
+  const next: BodyDragInput['cd'] = empty && v !== null ? [v, v, v] : (cur.map((x, k) => (k === i ? v : x)) as typeof cur)
+  return { ...d, bodyDrag: next.every((x) => x === null) ? null : { cd: next, source: 'user' } }
+}
+
+/** Derived projected areas A_x, A_y, A_z (src/domain/aero.ts), with their resolution error. */
+function DragAreas({ geo }: { geo: FrameGeometry }) {
+  const doc = useAssembly((s) => s.doc)
+  const components = useComponentIndex()
+  const assets = useAssets((s) => s.assets)
+  const a = useMemo(() => (doc ? bodyAreas(doc, geo, components, assets) : null), [doc, geo, components, assets])
+  if (!a) return null
+  const cm2 = (m2: number) => (m2 * 1e4).toFixed(1)
+  return (
+    <div className="border-t border-line/60 py-1.5 text-[12px]" data-testid="drag-areas">
+      <span className="text-fg-muted">Projected areas (derived)</span>
+      <span className="num block text-right text-fg">
+        A_x {cm2(a.area[0])} · A_y {cm2(a.area[1])} · A_z {cm2(a.area[2])} cm²
+      </span>
+      <span className="block text-right text-[11.5px] text-fg-subtle">
+        Union of the collision shapes on each body plane, {a.cell * 1000} mm grid (± {cm2(Math.max(...a.error))} cm²); propeller
+        discs left out.
+      </span>
     </div>
   )
 }

@@ -59,7 +59,7 @@ it('a seed quad with the missing values entered loads with its propulsion in the
     sup.on('status', f)
     f()
   })
-  const ok = await sup.loadVehicle(vehicle, propulsion)
+  const ok = await sup.loadVehicle(vehicle, { propulsion })
   expect(ok.valid ? ok.propulsion : ok.errors).toEqual({ motorCount: 4 })
 
   // Without propulsion the 4.3 result is unchanged.
@@ -68,6 +68,6 @@ it('a seed quad with the missing values entered loads with its propulsion in the
 
   // A motor the vehicle does not have is refused by the engine.
   const wrong = { ...propulsion, motors: propulsion.motors.map((m, i) => (i === 0 ? { ...m, partId: 'nope' } : m)) }
-  const bad = await sup.loadVehicle(vehicle, wrong)
+  const bad = await sup.loadVehicle(vehicle, { propulsion: wrong })
   expect(bad.valid ? [] : bad.errors.map((e) => e.path)).toEqual(['propulsion.motors[0].partId', 'propulsion.motors'])
 })

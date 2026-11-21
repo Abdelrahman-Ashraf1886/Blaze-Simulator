@@ -398,7 +398,7 @@ describe('ready-to-fly checklist', () => {
     partsWithoutMass: [],
     motors: quad(KV470, P13),
     battery: { partId: 'b', name: 'Battery 1', component: TATTU },
-    bodyCd: null,
+    bodyCd: [null, null, null],
   }
 
   it('lists exactly the values no source states for the built-in parts, once each', () => {
@@ -412,7 +412,12 @@ describe('ready-to-fly checklist', () => {
     ])
     expect(items[0]!.link).toEqual({ to: 'component', componentId: KV470.id, field: 'rotorInertia' })
     expect(items[1]!.link).toEqual({ to: 'component', componentId: TATTU.id, field: 'internalResistance' })
-    expect(items[2]!.link).toEqual({ to: 'body-drag' })
+    expect(items[2]!.link).toEqual({ to: 'body-drag', axis: 'x' })
+    expect(items[2]!.label).toBe('Body drag coefficient C_d (x, y, z)')
+    // A partly entered C_d names only the missing axes and links to the first.
+    const partial = readyToFly({ ...base, bodyCd: [1.1, null, 1.3] }).find((i) => i.id === 'body-cd')!
+    expect(partial.label).toBe('Body drag coefficient C_d (y)')
+    expect(partial.link).toEqual({ to: 'body-drag', axis: 'y' })
     // Ground settings come with 4.4: listed, without a link until they exist.
     expect(items[3]!.link).toBeNull()
   })
@@ -436,7 +441,7 @@ describe('ready-to-fly checklist', () => {
     const motor = withSpec(KV470, 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured' })
     const battery = withSpec(TATTU, 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured' })
     const motors = quad(motor, P13)
-    expect(readyToFly({ ...base, motors, battery: { partId: 'b', name: 'Battery 1', component: battery }, bodyCd: 1.1, ground: { friction: 0.6, restitution: 0.1 } })).toEqual([])
+    expect(readyToFly({ ...base, motors, battery: { partId: 'b', name: 'Battery 1', component: battery }, bodyCd: [1.1, 1.1, 1.2], ground: { friction: 0.6, restitution: 0.1 } })).toEqual([])
     const def = propulsionDefinition(motors.map((s) => analyseMotor(s)), battery)!
     expect(def.motors).toHaveLength(4)
     const m = def.motors[0]!

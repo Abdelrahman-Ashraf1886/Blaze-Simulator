@@ -107,6 +107,19 @@ describe('assembly repository', () => {
     expect(repos.assemblies.load(p.id).motors).toEqual(motors)
   })
 
+  it('stores the per-axis body C_d (schema v11), and documents without it round-trip unchanged', () => {
+    const repos = createRepositories(db)
+    const p = repos.projects.create({ name: 'Quad', frameType: 'quad-x' })
+    const a = repos.assemblies.load(p.id)
+    expect(a).not.toHaveProperty('bodyDrag')
+    const bodyDrag = { cd: [1.1, null, 1.3] as [number, null, number], source: 'user' as const }
+    repos.assemblies.save({ projectId: p.id, baseRevision: 0, frame: a.frame, motors: {}, parts: [], bodyDrag })
+    expect(repos.assemblies.load(p.id).bodyDrag).toEqual(bodyDrag)
+    repos.assemblies.save({ projectId: p.id, baseRevision: 1, frame: a.frame, motors: {}, parts: [], bodyDrag: null })
+    expect(repos.assemblies.load(p.id)).not.toHaveProperty('bodyDrag')
+    expect(saveAssemblySchema.safeParse({ projectId: p.id, baseRevision: 2, frame: a.frame, motors: {}, parts: [], bodyDrag: { cd: [0, 1, 1], source: 'user' } }).success).toBe(false)
+  })
+
   it('deletes the assembly with its project', () => {
     const repos = createRepositories(db)
     const p = repos.projects.create({ name: 'Quad', frameType: 'quad-x' })

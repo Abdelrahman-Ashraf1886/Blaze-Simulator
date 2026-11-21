@@ -627,7 +627,7 @@ function ProjectPanel({
         </>
       )}
       <Section title="Frame">
-        <FrameEditor />
+        <FrameEditor geo={geo} />
         <p className="mt-2 text-[12px] leading-relaxed text-fg-subtle">
           New projects start with typical values for a {frame.name}; set them to match your frame.
         </p>

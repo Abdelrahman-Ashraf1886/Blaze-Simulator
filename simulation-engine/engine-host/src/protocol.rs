@@ -35,6 +35,9 @@ pub enum Command {
         vehicle: Value,
         #[serde(default)]
         propulsion: Option<Value>,
+        /// Optional body drag (`engine_core::aero`, additive in 4.5).
+        #[serde(default)]
+        aero: Option<Value>,
     },
     /// Runs the loaded vehicle from rest at the origin (identity attitude)
     /// for `durationS`, with an optional constant body-frame force (through

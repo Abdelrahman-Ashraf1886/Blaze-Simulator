@@ -42,7 +42,7 @@ export function propulsionState(
     partsWithoutMass: mp.missingMass.filter((m) => !m.id.startsWith('frame')),
     motors: slots,
     battery: battery ? { partId: battery.id, name: battery.name, component: linkedComponent(battery, components) } : null,
-    bodyCd: doc.bodyDrag?.value ?? null,
+    bodyCd: doc.bodyDrag?.cd ?? [null, null, null],
     ...(ground ? { ground } : {}),
   }
   const pack = input.battery?.component ? batteryModel(input.battery.component) : null

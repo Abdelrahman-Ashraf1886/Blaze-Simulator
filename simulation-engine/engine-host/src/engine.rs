@@ -1,6 +1,7 @@
 //! Request dispatch and the sidecar's state (the loaded vehicle).
 
 use crate::protocol::{Command, ErrorCode, HelloResult, PongResult, Request, Response, PROTOCOL_VERSION};
+use engine_core::aero::BodyDrag;
 use engine_core::propulsion::Propulsion;
 use engine_core::sim::{hash_hex, BodyInput, SimConfig, SimState, Simulation, DEFAULT_DT_S};
 use engine_core::vehicle::{vec, MassTotals, Vehicle, VehicleError};
@@ -59,11 +60,14 @@ pub struct Engine {
     /// flight step uses them from 4.6.
     #[allow(dead_code)]
     propulsion: Option<Propulsion>,
+    /// Body drag of the loaded vehicle (4.5); applied from 4.6.
+    #[allow(dead_code)]
+    aero: Option<BodyDrag>,
 }
 
 impl Engine {
     pub fn new() -> Self {
-        Engine { started: Instant::now(), vehicle: None, propulsion: None }
+        Engine { started: Instant::now(), vehicle: None, propulsion: None, aero: None }
     }
 
     /// Handles one request; the flag is true when the engine should exit.
@@ -86,21 +90,42 @@ impl Engine {
                 false,
             ),
             Command::Shutdown => (Response::ok(id, serde_json::json!({})), true),
-            Command::VehicleLoad { vehicle, propulsion } => (self.load(id, vehicle, propulsion), false),
+            Command::VehicleLoad { vehicle, propulsion, aero } => (self.load(id, vehicle, propulsion, aero), false),
             Command::SimRun { duration_s, dt_s, force_body_n, torque_body_nm } => {
                 (self.run(id, duration_s, dt_s, force_body_n, torque_body_nm), false)
             }
         }
     }
 
-    fn load(&mut self, id: u64, value: serde_json::Value, propulsion: Option<serde_json::Value>) -> Response {
+    fn load(
+        &mut self,
+        id: u64,
+        value: serde_json::Value,
+        propulsion: Option<serde_json::Value>,
+        aero: Option<serde_json::Value>,
+    ) -> Response {
         self.propulsion = None;
-        let loaded = Vehicle::from_json(value).and_then(|v| match propulsion {
-            None => Ok((v, None)),
-            Some(p) => Propulsion::from_json(p, &v.definition).map(|p| (v, Some(p))),
+        self.aero = None;
+        let loaded = Vehicle::from_json(value).and_then(|v| {
+            let p = match propulsion {
+                None => None,
+                Some(p) => Some(Propulsion::from_json(p, &v.definition)),
+            };
+            let a = aero.map(BodyDrag::from_json);
+            let mut errors = Vec::new();
+            if let Some(Err(e)) = &p {
+                errors.extend(e.iter().cloned());
+            }
+            if let Some(Err(e)) = &a {
+                errors.extend(e.iter().cloned());
+            }
+            if !errors.is_empty() {
+                return Err(errors);
+            }
+            Ok((v, p.map(Result::unwrap), a.map(Result::unwrap)))
         });
         match loaded {
-            Ok((v, propulsion)) => {
+            Ok((v, propulsion, aero)) => {
                 let response = Response::ok(
                     id,
                     VehicleLoadResult::Valid {
@@ -114,6 +139,7 @@ impl Engine {
                 );
                 self.vehicle = Some(v);
                 self.propulsion = propulsion;
+                self.aero = aero;
                 response
             }
             Err(errors) => {

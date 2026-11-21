@@ -7,11 +7,13 @@ import {
   PROTOCOL_VERSION,
   SimRunParamsSchema,
   SimRunResultSchema,
+  BodyDragSchema,
   PropulsionDefinitionSchema,
   VehicleDefinitionSchema,
   VehicleLoadResultSchema,
   isEngineResponse,
   type EngineCommand,
+  type BodyDrag,
   type HelloResult,
   type PropulsionDefinition,
   type SimRunParams,
@@ -123,15 +125,20 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
   /**
    * Sends a vehicle definition. Resolves with the engine's recomputed totals,
    * or with its list of validation errors (`valid: false`); an invalid
-   * definition also clears the engine's loaded vehicle. `propulsion` (4.5) adds
-   * the motors' fitted coefficients and the battery.
+   * definition also clears the engine's loaded vehicle. Optional (4.5):
+   * `propulsion` (the motors' fitted coefficients and the battery) and `aero`
+   * (per-axis body drag).
    */
-  async loadVehicle(vehicle: VehicleDefinition, propulsion?: PropulsionDefinition): Promise<VehicleLoadResult> {
+  async loadVehicle(
+    vehicle: VehicleDefinition,
+    extra: { propulsion?: PropulsionDefinition; aero?: BodyDrag } = {},
+  ): Promise<VehicleLoadResult> {
     const checked = VehicleDefinitionSchema.parse(vehicle)
     const result = await this.request({
       type: 'vehicle.load',
       vehicle: checked,
-      ...(propulsion ? { propulsion: PropulsionDefinitionSchema.parse(propulsion) } : {}),
+      ...(extra.propulsion ? { propulsion: PropulsionDefinitionSchema.parse(extra.propulsion) } : {}),
+      ...(extra.aero ? { aero: BodyDragSchema.parse(extra.aero) } : {}),
     })
     return VehicleLoadResultSchema.parse(result)
   }

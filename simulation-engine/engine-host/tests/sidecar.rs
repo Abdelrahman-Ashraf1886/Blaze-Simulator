@@ -233,3 +233,15 @@ fn vehicle_load_accepts_propulsion_and_refuses_a_mismatch() {
     let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.01}));
     assert_eq!(r["error"]["code"], "NO_VEHICLE");
 }
+
+#[test]
+fn vehicle_load_accepts_aero_and_lists_its_errors() {
+    let mut e = Engine::start();
+    let aero = serde_json::json!({ "cdBody": [1.1, 1.1, 1.2], "areaM2": [0.012, 0.012, 0.03] });
+    let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": two_part_vehicle(), "aero": aero}));
+    assert_eq!(r["result"]["valid"], true, "{r}");
+    let bad = serde_json::json!({ "cdBody": [1.1, 0.0, 1.2], "areaM2": [0.012, 0.012, 0.03] });
+    let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": two_part_vehicle(), "aero": bad}));
+    assert_eq!(r["result"]["valid"], false);
+    assert_eq!(r["result"]["errors"][0]["path"], "aero.cdBody[1]");
+}

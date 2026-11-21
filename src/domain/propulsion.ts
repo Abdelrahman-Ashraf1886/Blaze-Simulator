@@ -721,7 +721,8 @@ export function analyseMotor(slot: MotorSlot, supplyVoltage: number | null = nul
 
 export type ReadyLink =
   | { to: 'frame-mass' }
-  | { to: 'body-drag' }
+  /** The body C_d field of `axis` (the first one missing). */
+  | { to: 'body-drag'; axis: 'x' | 'y' | 'z' }
   | { to: 'part'; partId: string }
   | { to: 'component'; componentId: string; field: string }
   /** The environment settings (ground contact); null target until they exist in this build. */
@@ -744,7 +745,8 @@ export interface ReadyInput {
   motors: readonly MotorSlot[]
   battery: { partId: string; name: string; component: Component | null } | null
   /** The build's body drag coefficient; null = not entered. */
-  bodyCd: number | null
+  /** Body C_d per axis [x, y, z]; null = that axis not entered. */
+  bodyCd: readonly [number | null, number | null, number | null]
   /**
    * Ground contact settings. `undefined`: this build has no environment settings yet
    * (they come with 4.4), so they are listed as missing without a link.
@@ -885,8 +887,14 @@ export function readyToFly(input: ReadyInput): ReadyItem[] {
     }
   }
 
-  if (input.bodyCd === null) {
-    add({ id: 'body-cd', label: 'Body drag coefficient C_d', detail: 'No source states it for this build; enter it (F = ½ ρ C_d A v² per axis).', link: { to: 'body-drag' } })
+  const axes = (['x', 'y', 'z'] as const).filter((_, i) => input.bodyCd[i] === null)
+  if (axes.length > 0) {
+    add({
+      id: 'body-cd',
+      label: `Body drag coefficient C_d (${axes.join(', ')})`,
+      detail: 'No source states it for this build; enter it per axis (F = ½ ρ C_d A v|v|, A derived).',
+      link: { to: 'body-drag', axis: axes[0]! },
+    })
   }
   const g = input.ground
   if (!g || g.friction === null) {

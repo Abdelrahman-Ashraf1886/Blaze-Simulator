@@ -314,7 +314,9 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
               wiring_json: string
               frame_mass_kg: number | null
               frame_mass_source: 'user' | null
-              body_cd?: number | null
+              body_cd_x?: number | null
+              body_cd_y?: number | null
+              body_cd_z?: number | null
               body_cd_source?: 'user' | null
               updated_at: string
             }
@@ -351,7 +353,9 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
             ? { frameMass: { valueKg: row.frame_mass_kg, source: row.frame_mass_source } }
             : {}),
           // Omitted when not set (schema v11), like the frame mass.
-          ...(row.body_cd != null && row.body_cd_source != null ? { bodyDrag: { value: row.body_cd, source: row.body_cd_source } } : {}),
+          ...(row.body_cd_source != null
+            ? { bodyDrag: { cd: [row.body_cd_x ?? null, row.body_cd_y ?? null, row.body_cd_z ?? null], source: row.body_cd_source } }
+            : {}),
           // Omitted when empty, so documents without wiring round-trip unchanged.
           ...wiringFields(JSON.parse(row.wiring_json) as Pick<Assembly, 'wires' | 'schematic'>),
         }
@@ -402,8 +406,11 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           ts,
         )
         // Separate statement so the columns of schema v11 stay apart from the upsert above.
-        db.prepare('UPDATE assemblies SET body_cd = ?, body_cd_source = ? WHERE project_id = ?').run(
-          input.bodyDrag?.value ?? null,
+        const cd = input.bodyDrag?.cd ?? [null, null, null]
+        db.prepare('UPDATE assemblies SET body_cd_x = ?, body_cd_y = ?, body_cd_z = ?, body_cd_source = ? WHERE project_id = ?').run(
+          cd[0],
+          cd[1],
+          cd[2],
           input.bodyDrag?.source ?? null,
           input.projectId,
         )

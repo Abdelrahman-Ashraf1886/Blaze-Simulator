@@ -115,6 +115,9 @@ const wireSchema = z
   })
   .strict()
 
+/** One axis of the body drag coefficient; null = not entered. */
+const bodyCd = z.number().positive('C_d must be more than 0').max(10, 'C_d must be at most 10').nullable()
+
 export const saveAssemblySchema = z
   .object({
     projectId: z.uuid(),
@@ -126,7 +129,10 @@ export const saveAssemblySchema = z
       .nullable()
       .optional(),
     bodyDrag: z
-      .object({ value: z.number().positive('C_d must be more than 0').max(10, 'C_d must be at most 10'), source: z.literal('user') })
+      .object({
+        cd: z.tuple([bodyCd, bodyCd, bodyCd]),
+        source: z.literal('user'),
+      })
       .strict()
       .nullable()
       .optional(),

@@ -31,7 +31,7 @@ function useFollow() {
   return (link: ReadyLink) => {
     if (link.to === 'part') return useWorkshopView.getState().selectPart(link.partId)
     if (link.to === 'component') return void navigate(`/components?id=${encodeURIComponent(link.componentId)}&field=${encodeURIComponent(link.field)}`)
-    const id = link.to === 'frame-mass' ? 'frame-mass' : link.to === 'body-drag' ? 'body-cd' : null
+    const id = link.to === 'frame-mass' ? 'frame-mass' : link.to === 'body-drag' ? `body-cd-${link.axis}` : null
     const el = id ? document.getElementById(id) : null
     el?.scrollIntoView({ block: 'center' })
     el?.focus()

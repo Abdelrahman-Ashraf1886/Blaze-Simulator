@@ -80,6 +80,13 @@ export const PropulsionDefinitionSchema = z.strictObject({
 })
 export type PropulsionDefinition = z.infer<typeof PropulsionDefinitionSchema>
 
+/** Body drag (4.5, additive): per-axis C_d (entered) and projected areas (derived, src/domain/aero.ts). */
+export const BodyDragSchema = z.strictObject({
+  cdBody: z.tuple([positive, positive, positive]),
+  areaM2: z.tuple([positive, positive, positive]),
+})
+export type BodyDrag = z.infer<typeof BodyDragSchema>
+
 // ---------------------------------------------------------------------------
 // Commands
 
@@ -95,7 +102,7 @@ export type EngineCommand =
   | { type: 'hello' }
   | { type: 'ping' }
   | { type: 'shutdown' }
-  | { type: 'vehicle.load'; vehicle: VehicleDefinition; propulsion?: PropulsionDefinition }
+  | { type: 'vehicle.load'; vehicle: VehicleDefinition; propulsion?: PropulsionDefinition; aero?: BodyDrag }
   | ({ type: 'sim.run' } & SimRunParams)
 
 // ---------------------------------------------------------------------------

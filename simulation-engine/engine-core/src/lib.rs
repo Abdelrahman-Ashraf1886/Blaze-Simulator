@@ -10,6 +10,7 @@
 //! `documentation/plans/phase-4-physics.md`. Modules are added when they
 //! contain real, tested models, never as empty stubs.
 
+pub mod aero;
 pub mod math;
 pub mod propulsion;
 pub mod sim;

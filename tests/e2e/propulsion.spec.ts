@@ -75,9 +75,20 @@ test('propulsion: fit and validation per pair, Ready-to-fly checklist with links
 
   // The C_d item focuses its field; entering it removes the item, and undo brings it back.
   await item(page, 'body-cd').getByRole('button').click()
-  await expect(page.getByTestId('body-cd')).toBeFocused()
-  await commit(page, 'body-cd', '1.1')
+  await expect(page.getByTestId('body-cd-x')).toBeFocused()
+  // The first value fills the empty axes; one axis can then differ.
+  await commit(page, 'body-cd-x', '1.1')
+  await expect(page.getByTestId('body-cd-y')).toHaveValue('1.1')
+  await expect(page.getByTestId('body-cd-z')).toHaveValue('1.1')
+  await commit(page, 'body-cd-z', '1.3')
+  await expect(page.getByTestId('body-cd-z')).toHaveValue('1.3')
+  await expect(page.getByTestId('body-cd-y')).toHaveValue('1.1')
   await expect(item(page, 'body-cd')).toHaveCount(0)
+  await expect(page.getByTestId('drag-areas')).toContainText('cm²')
+  // Clearing one axis brings the item back for that axis only.
+  await commit(page, 'body-cd-y', '')
+  await expect(item(page, 'body-cd')).toContainText('C_d (y)')
+  await commit(page, 'body-cd-y', '1.1')
   await expect(items(page)).toHaveCount(4)
 
   // A component item opens the library on that field, marked.

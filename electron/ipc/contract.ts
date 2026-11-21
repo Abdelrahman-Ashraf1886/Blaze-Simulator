@@ -217,9 +217,10 @@ export interface UserMass {
   source: 'user'
 }
 
-/** A dimensionless coefficient the user entered (no source states it). */
-export interface UserCoefficient {
-  value: number
+/** Body drag coefficients the user entered, per body axis (no source states them). */
+export interface BodyDragInput {
+  /** C_d along body x (forward), y (left), z (up); null = that axis not entered yet. */
+  cd: [number | null, number | null, number | null]
   source: 'user'
 }
 
@@ -231,10 +232,11 @@ export interface AssemblyDocument {
    */
   frameMass?: UserMass | null
   /**
-   * Body drag coefficient C_d (F = ½ ρ C_d A v² per axis, A derived from the collision
-   * shapes). Absent or null = not set: listed in the Ready-to-fly checklist.
+   * Body drag coefficients per axis (F_i = ½ ρ C_d,i A_i v_i|v_i|, A_i derived from the
+   * collision shapes, src/domain/aero.ts). Absent, null, or a null axis = not set:
+   * listed in the Ready-to-fly checklist.
    */
-  bodyDrag?: UserCoefficient | null
+  bodyDrag?: BodyDragInput | null
   /** Keyed by mount id (`motor-1` …); motors not listed use PX4 defaults. */
   motors: Record<string, MotorMount>
   parts: AssemblyPart[]

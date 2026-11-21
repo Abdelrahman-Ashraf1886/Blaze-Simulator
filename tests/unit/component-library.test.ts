@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Component, ComponentInput } from '../../electron/ipc/component-fields'
-import { PackError, buildPack, importPack, parsePack } from '../../electron/main/components/pack'
+import { MAX_PACK_BYTES, MAX_PACK_ENTRIES, PackError, buildPack, importPack, parsePack } from '../../electron/main/components/pack'
+import { loadBuiltIns } from '../../electron/main/components/seed'
 import { openDatabase } from '../../electron/main/db/database'
 import { createRepositories } from '../../electron/main/db/repositories'
 import { draftFrom, parseNumber, toInput } from '../../src/features/components/editor-model'
@@ -79,6 +80,29 @@ describe('component packs', () => {
     expect(message).toContain('Entry 3 (Wrong unit): Capacity: Unit must be one of Ah, mAh')
     expect(message).toContain('Entry 4: not an object')
     expect(repos.components.count()).toBe(0)
+  })
+
+  it('round-trips every built-in record exactly: export, import into an empty library, export again is byte-identical (3.8)', () => {
+    // Every category, nested ports, thrust tables, conditions, ranges and references.
+    expect(loadBuiltIns(repos).added).toBeGreaterThan(0)
+    const byId = (a: Component, b: Component) => a.id.localeCompare(b.id)
+    const at = new Date('2026-11-21T10:00:00Z')
+    const first = buildPack(repos.components.list().sort(byId), at)
+
+    const other = createRepositories(openDatabase(':memory:'))
+    expect(importPack(other, first)).toEqual({ imported: repos.components.count(), skipped: 0 })
+    const second = buildPack(other.components.list().sort(byId), at)
+    expect(second).toBe(first)
+    expect(other.components.list().every((c) => c.origin === 'imported')).toBe(true)
+  })
+
+  it('refuses a pack that is too large or has too many entries, saying which', () => {
+    expect(() => parsePack(' '.repeat(MAX_PACK_BYTES + 1))).toThrow(new PackError('The file is larger than 10 MB.'))
+    const many = JSON.stringify({ format: 'blaze-uav.components', version: 1, components: Array.from({ length: MAX_PACK_ENTRIES + 1 }, () => ({})) })
+    expect(() => parsePack(many)).toThrow(new PackError(`A pack can hold at most ${MAX_PACK_ENTRIES} components`))
+    // More than five bad entries: the first five are listed and the rest counted.
+    const bad = JSON.stringify({ format: 'blaze-uav.components', version: 1, components: Array.from({ length: 7 }, () => 'x') })
+    expect(() => parsePack(bad)).toThrow(/7 problems:\n(Entry \d: not an object\n){4}Entry 5: not an object\n…and 2 more$/)
   })
 
   it('refuses duplicate ids inside a pack', () => {

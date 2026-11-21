@@ -1,7 +1,7 @@
 # Phase 3 plan: Components and Electrical
 
-Status: **in progress**. Progress: 3.1 ✅ (values stored as stated by the source,
-not converted to SI; see DEVLOG) · 3.2 ✅ · 3.3 ✅ (20 parts; see DEVLOG for sources and gaps) · 3.4 ✅ (links store only the component id; values resolved at display) · detailed part models (see DEVLOG) · 3.5 ✅ (port and wire-rating checks move to 3.6–3.7 with the wiring) · 3.6 ✅ (wiring stored with the assembly, not in separate tables; see DEVLOG) · 3.7 ✅ (wire ampacity and connector ratings deferred: no cited table yet; see DEVLOG).
+Status: **done** (2026-11-21), awaiting user review. Progress: 3.1 ✅ (values stored as stated by the source,
+not converted to SI; see DEVLOG) · 3.2 ✅ · 3.3 ✅ (20 parts; see DEVLOG for sources and gaps) · 3.4 ✅ (links store only the component id; values resolved at display) · detailed part models (see DEVLOG) · 3.5 ✅ (port and wire-rating checks move to 3.6–3.7 with the wiring) · 3.6 ✅ (wiring stored with the assembly, not in separate tables; see DEVLOG) · 3.7 ✅ (wire ampacity and connector ratings deferred: no cited table yet; see DEVLOG) · 3.8 ✅ (performance with 200 components and 100 wires, acceptance list walked, ADRs 0007 and 0008; see DEVLOG).
 The proposed options were chosen: a cited starter set,
 `@xyflow/react`, and checks and electrical maths in TypeScript. Phase 1 and
 Phase 2 must stay green throughout: every milestone ends with `npm run test:all`

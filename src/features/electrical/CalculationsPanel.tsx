@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { memo, useMemo, useState, type ReactNode } from 'react'
 import type { Wire } from '../../../electron/ipc/contract'
 import { cn } from '@/lib/utils'
 import { COPPER_ALPHA_20C, COPPER_RESISTIVITY_20C, DEFAULT_LOAD_CASE, calculate, type Calc, type LoadCase } from '@/domain/electrical'
@@ -22,7 +22,8 @@ function Value({ c, unit, scale = 1, digits = 3, testId }: { c: Calc; unit: stri
 
 const reasons = (cs: Calc[]) => [...new Set(cs.flatMap((c) => (c.value === null && c.reason ? [c.reason] : [])))]
 
-export function CalculationsPanel({ parts, wires, onSelectWire, onSelectPart }: { parts: WiringPart[]; wires: Wire[]; onSelectWire: (id: string) => void; onSelectPart: (id: string) => void }) {
+/** Memoised: it re-renders when the wiring or the load case changes, not on every selection in the designer. */
+export const CalculationsPanel = memo(function CalculationsPanel({ parts, wires, onSelectWire, onSelectPart }: { parts: WiringPart[]; wires: Wire[]; onSelectWire: (id: string) => void; onSelectPart: (id: string) => void }) {
   const [load, setLoad] = useState<LoadCase>(DEFAULT_LOAD_CASE)
   const [currentText, setCurrentText] = useState('10')
   const r = useMemo(() => calculate(parts, wires, load), [parts, wires, load])
@@ -243,7 +244,7 @@ export function CalculationsPanel({ parts, wires, onSelectWire, onSelectPart }: 
       </div>
     </div>
   )
-}
+})
 
 function Block({ title, wide, children }: { title: string; wide?: boolean; children: ReactNode }) {
   return (

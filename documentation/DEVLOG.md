@@ -1,5 +1,116 @@
 # Development log
 
+## 2026-11-21 — Phase 3, milestone 3.8: hardening and docs (Phase 3 done)
+
+**Performance** (`tests/e2e/phase3-performance.spec.ts`)
+- **Set-up**:
+  - a library of 200 components (the built-ins plus test-only user entries);
+  - an Octo X with 85 parts: battery, PM02 V3, Pixhawk 6C, 40 Tekko32 45A ESCs,
+    40 MN3110 KV700 (8 on the mounts), GPS and radio;
+  - auto-wire gives 100 wires. This is not a sensible drone: it is sized to load
+    the wiring, checks and calculations.
+- **Method**: each action is dispatched inside the page and timed to the first
+  animation frame that shows its result. Pan and zoom are real mouse input,
+  measured as frame intervals. 1920×1080, background throttling off.
+- **Limits**:
+  - 250 ms per interaction;
+  - 3 s to open a page;
+  - 33 ms median frame while panning or zooming;
+  - 500 ms to select a part in the workshop (see the follow-up below).
+- **Measured** (two runs after the fixes):
+
+  | | Before 3.8 | After |
+  |---|---|---|
+  | Components: open with 200 rows | 100–185 ms | 107–134 ms |
+  | Search / category filter / show all | 6–85 ms | 5–69 ms |
+  | Select a component (detail) | 25–48 ms | 25–26 ms |
+  | Electrical Designer: open (85 boxes) | 192–297 ms | 149–185 ms |
+  | Auto-wire (100 wires) | 150–271 ms | 140–171 ms |
+  | Select a wire (list / schematic) | **110–190 ms** | 20–30 ms |
+  | Select a box | **110–193 ms** | 37–46 ms |
+  | Open the Calculations drawer | 77–166 ms | 69–80 ms |
+  | Recalculate at 60 °C | 9–17 ms | 9–14 ms |
+  | Move a cable → port conflict shown | 49–115 ms | 50–63 ms |
+  | Undo → conflict cleared | 125–174 ms | 95–108 ms |
+  | Pan / zoom, median frame | 16.6 / 16.7 ms | 16.6 / 16.7 ms (p95 16.9 / 33–50 ms) |
+  | Workshop: checks listed (25 findings) | 231–248 ms | 202–255 ms |
+  | Workshop: click a finding (selects Battery 1) | 221–290 ms | 201–265 ms |
+  | Workshop: same part from the tree, for comparison | 197 ms | 94–123 ms |
+
+**Bottlenecks fixed**
+- **Selection in the Electrical Designer re-rendered the whole schematic.**
+  - Cause: boxes and cables were rebuilt whenever the selection changed, so
+    React Flow re-rendered all 85 boxes (about 400 port handles) and 100 cables.
+    A CPU profile showed the time in React's commit, `HandleComponent` and
+    `NodeWrapper`.
+  - Fix: boxes and cables are now built from the document only. A selection
+    replaces just the selected item, and the box component is memoised.
+  - Also: ports are looked up from one index per parts list, not rebuilt per wire
+    and per label. The Calculations drawer and the checks list are memoised, with
+    stable callbacks.
+- **Super-linear work in the domain modules** (`src/domain/wiring.ts`,
+  `electrical.ts`), measured at the schema maximum of 2000 wires:
+  - the wiring checks and the ESC pairing scanned every wire for every port. They
+    now use `wireIndex`, built in one pass. At 100 wires the checks took 1.3 ms
+    before the fix;
+  - `calculate` copied the adjacency list once per cable (a power module feeding n
+    ESCs is O(n²)), dequeued with `shift()`, built the ports once per wire end, and
+    searched the ESC results once per motor. It took 105 ms at 2000 wires before
+    and takes 36–50 ms after, run alone. The checks take 18–24 ms and the ESC
+    pairing 4–7 ms;
+  - unit tests: the index lists the same wires as a full scan at every port of the
+    100-wire assembly, including a wire that loops on one port. A 2000-wire guard
+    (300 ms bound) catches a return to quadratic work.
+- **The checks ran twice per edit in the workshop** (once for the panel, once for
+  the status strip). One result is now kept per document and shared, the designer
+  included. Unit test: same document, same array; an edit or a different library,
+  a new one.
+
+**Follow-up (not fixed here; workshop code is being changed for Phase 4.1)**:
+selecting the battery in the workshop takes about 0.1–0.2 s from the assembly tree.
+That is the inspector and 3D view, not the checks. The first 3D canvas once took
+5.6 s to appear (GPU process start); every other run took 37–84 ms.
+
+**Acceptance list, item by item**
+
+| Criterion | Proved by |
+|---|---|
+| No value stored or shown without a source; calculated values labelled with their formula | `seed.test.ts` (every built-in value cited, allowed hosts); `components.test.ts` (manufacturer value without source or date refused); `components.spec.ts` (source and link shown per value); `checks.test.ts` battery-current ("calculated: 20 C × 1000 mAh"); calculation tooltips carry the formula |
+| Every check has passing and failing inputs, and says "cannot check" when data is missing | `checks.test.ts`: a new coverage table, one row per rule with pass, fail and cannot-check inputs (it fails if a rule is added without a row); `wiring.test.ts` for the four wiring rules. **Gap found and fixed**: prop-bore and prop-hand were silent for unlinked parts, and prop-hand for a propeller that states no hand (the APC 10x4.5MR). Both now report "cannot check" with the reason. |
+| e2e across a restart: hex from library parts, auto-wire, zero errors, out-of-rating battery → error, fix → zero errors | **Was split** across `electrical.spec.ts` (auto-wire, restart) and `checks.spec.ts` (a quad, no restart). **New** `phase3-acceptance.spec.ts`: 23 parts linked in the workshop UI, 22 wires from auto-wire, no errors in either view; an 8S test pack gives two battery-cells errors (ESCs and motors, 6S max) that survive a restart; the 4S Tattu clears them, and that survives another restart |
+| Electrical results match hand calculations within 0.1 % | `electrical.test.ts` (hand calculations written in the file) |
+| JSON packs round-trip exactly; bad packs refused with reasons | `component-library.test.ts`: **new** byte-identical export → import → export of every built-in record; refusals for bad JSON, format, version, size (10 MB), entry count (5000), each bad entry named (first five listed); `components.spec.ts` through the UI |
+| Undo/redo covers linking, wiring and component edits in a project | `links.spec.ts` (link, unlink, undo); `electrical.spec.ts` (moving a cable, undo); `acceptance.spec.ts` (every workshop edit kind, back to empty and forward) |
+| Phase 1–2 suites pass; no console errors; typecheck and lint clean | `npm run test:all`; every Phase 3 e2e asserts no console errors |
+
+**Docs**
+- [ADR 0007](adr/0007-component-provenance.md): values are stored as stated, with
+  their source, and converted only where they are used.
+- [ADR 0008](adr/0008-pure-domain-modules.md): the domain-module boundary, now
+  enforced by ESLint. `src/domain/**` may import other domain modules and IPC
+  types only.
+- 0005 and 0006 are left to Phase 4.
+- `ARCHITECTURE.md`: the provenance sources were listed wrongly ("estimated";
+  it is "measured").
+- ROADMAP: Phase 3 done and awaiting review; Phase 4 in progress.
+
+**Verified** (`npm run test:all`, exit 0)
+- `cargo test`: 11 passed. Typecheck and lint are clean, including the new
+  domain-boundary rule.
+- `vitest`: 193 passed, 8 new:
+  - the rule coverage table;
+  - cannot-check for prop-bore and prop-hand;
+  - a passing prop-frame case;
+  - the shared findings cache;
+  - the wire index against a full scan;
+  - the 2000-wire guard;
+  - the byte-exact pack round-trip;
+  - the pack size and entry-count refusals.
+- `playwright`: 36 passed, 2 new (the Phase 3 acceptance hex, the Phase 3
+  performance test). In that run: designer selection 38–62 ms, undo 149 ms, pan and
+  zoom 16.7 ms median, workshop checks listed in 201 ms. Phase 2 orbit: 59.3 fps at
+  1080p and 40.7 fps at 4K.
+
 ## 2026-11-21 — Workshop realism: frame, parts, materials, lighting
 
 Display only. Sizes, masses and every check still use the part envelopes and the

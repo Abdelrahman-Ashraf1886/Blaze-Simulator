@@ -121,6 +121,26 @@ export function canConnect(a: { part: WiringPart; port: Port }, b: { part: Wirin
 
 const sameEnd = (a: WireEnd, b: WireEnd) => a.partId === b.partId && a.port === b.port
 export const wiresAt = (wires: readonly Wire[], end: WireEnd) => wires.filter((w) => sameEnd(w.from, end) || sameEnd(w.to, end))
+
+/**
+ * The wires at each port, built in one pass, so the checks look a port up instead of
+ * scanning every wire for every port (O(ports + wires) rather than O(ports × wires)).
+ * Same result as wiresAt, in wire order; a wire from a port to itself is listed once.
+ */
+export function wireIndex(wires: readonly Wire[]): (end: WireEnd) => readonly Wire[] {
+  const at = new Map<string, Wire[]>()
+  // A port id never contains a newline (ids come from component port names and fixed ids).
+  const key = (e: WireEnd) => `${e.partId}\n${e.port}`
+  for (const w of wires) {
+    for (const k of new Set([key(w.from), key(w.to)])) {
+      const list = at.get(k)
+      if (list) list.push(w)
+      else at.set(k, [w])
+    }
+  }
+  return (end) => at.get(key(end)) ?? []
+}
+
 export const otherEnd = (w: Wire, end: WireEnd) => (sameEnd(w.from, end) ? w.to : w.from)
 
 // ---- Auto-wire -----------------------------------------------------------------------------------
@@ -241,6 +261,7 @@ export function wiringFindings(parts: readonly WiringPart[], wires: readonly Wir
   const ports = new Map(parts.map((p) => [p.id, portsOf(p)]))
   const portOf = (e: WireEnd) => ports.get(e.partId)?.find((x) => x.id === e.port)
   const name = (e: WireEnd) => byId.get(e.partId)?.name ?? 'a removed part'
+  const at = wireIndex(wires)
   const out: Finding[] = []
 
   for (const w of wires) {
@@ -257,16 +278,16 @@ export function wiringFindings(parts: readonly WiringPart[], wires: readonly Wir
   for (const p of parts) {
     for (const port of ports.get(p.id) ?? []) {
       if (!POINT_TO_POINT.has(port.kind)) continue
-      const at = wiresAt(wires, { partId: p.id, port: port.id })
-      if (at.length > 1) {
-        const others = at.map((w) => name(otherEnd(w, { partId: p.id, port: port.id })))
-        out.push(f('port-conflict', 'error', `${port.label} on ${p.name} has ${at.length} cables (${others.join(', ')}); it takes one.`, [p.id, ...at.map((w) => otherEnd(w, { partId: p.id, port: port.id }).partId)], port.id))
+      const here = at({ partId: p.id, port: port.id })
+      if (here.length > 1) {
+        const others = here.map((w) => name(otherEnd(w, { partId: p.id, port: port.id })))
+        out.push(f('port-conflict', 'error', `${port.label} on ${p.name} has ${here.length} cables (${others.join(', ')}); it takes one.`, [p.id, ...here.map((w) => otherEnd(w, { partId: p.id, port: port.id }).partId)], port.id))
       }
     }
   }
 
   if (wires.length === 0) return out
-  const connected = (p: WiringPart, port: string) => wiresAt(wires, { partId: p.id, port }).length > 0
+  const connected = (p: WiringPart, port: string) => at({ partId: p.id, port }).length > 0
   for (const p of parts) {
     const r = role(p)
     if (r === 'motor' && !connected(p, 'phases')) out.push(f('unwired', 'warning', `${p.name} is not connected to an ESC output.`, [p.id]))
@@ -283,9 +304,9 @@ export function wiringFindings(parts: readonly WiringPart[], wires: readonly Wir
         }
       }
     }
-    if (r === 'peripheral' && portsOf(p).length > 0 && !connected(p, 'data')) out.push(f('unwired', 'warning', `${p.name} is not connected.`, [p.id]))
+    if (r === 'peripheral' && (ports.get(p.id) ?? []).length > 0 && !connected(p, 'data')) out.push(f('unwired', 'warning', `${p.name} is not connected.`, [p.id]))
     if (r === 'flight-controller') {
-      const powerPorts = portsOf(p).filter((x) => x.kind === 'adc')
+      const powerPorts = (ports.get(p.id) ?? []).filter((x) => x.kind === 'adc')
       if (powerPorts.length > 0 && !powerPorts.some((x) => connected(p, x.id))) out.push(f('unwired', 'warning', `${p.name} has no power input wired.`, [p.id], 'power'))
     }
   }
@@ -295,8 +316,9 @@ export function wiringFindings(parts: readonly WiringPart[], wires: readonly Wir
 /** Which ESC drives each motor, from the wiring (motor part id → ESC part id). */
 export function escOfMotor(parts: readonly WiringPart[], wires: readonly Wire[]): Record<string, string> {
   const out: Record<string, string> = {}
+  const at = wireIndex(wires)
   for (const m of parts.filter((p) => role(p) === 'motor')) {
-    const w = wiresAt(wires, { partId: m.id, port: 'phases' })[0]
+    const w = at({ partId: m.id, port: 'phases' })[0]
     if (w) out[m.id] = otherEnd(w, { partId: m.id, port: 'phases' }).partId
   }
   return out

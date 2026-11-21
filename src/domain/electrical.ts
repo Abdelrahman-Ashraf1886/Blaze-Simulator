@@ -29,7 +29,7 @@
 import type { Component, QuantityValue } from '../../electron/ipc/component-fields'
 import type { Wire, WireEnd } from '../../electron/ipc/contract'
 import { toSI } from './units'
-import { otherEnd, portsOf, wiresAt, type WiringPart } from './wiring'
+import { otherEnd, portsOf, wireIndex, type WiringPart } from './wiring'
 
 /** Copper resistivity at 20 °C, Ω·m (IEC 60028: 1/58 Ω·mm²/m). */
 export const COPPER_RESISTIVITY_20C = 1 / 58 / 1e6
@@ -160,13 +160,13 @@ export function calculate(parts: readonly WiringPart[], wires: readonly Wire[], 
     totalLoss: missing(problem),
   })
   const byId = new Map(parts.map((p) => [p.id, p]))
-  const portKind = (e: WireEnd) => {
-    const p = byId.get(e.partId)
-    return p ? portsOf(p).find((x) => x.id === e.port)?.kind : undefined
-  }
+  // Ports built once per part, not once per wire end.
+  const ports = new Map(parts.map((p) => [p.id, portsOf(p)]))
+  const portKind = (e: WireEnd) => ports.get(e.partId)?.find((x) => x.id === e.port)?.kind
   const powerWires = wires.filter((w) => portKind(w.from) === 'power' && portKind(w.to) === 'power')
 
-  const batteries = parts.filter((p) => role(p) === 'battery' && powerWires.some((w) => w.from.partId === p.id || w.to.partId === p.id))
+  const onPower = new Set(powerWires.flatMap((w) => [w.from.partId, w.to.partId]))
+  const batteries = parts.filter((p) => role(p) === 'battery' && onPower.has(p.id))
   if (batteries.length === 0) return empty('No battery is wired, so there is no power network to calculate.')
   if (batteries.length > 1) return empty(`${batteries.length} batteries are wired: series or parallel packs need a current split that is not modelled.`)
   const battery = batteries[0]!
@@ -186,10 +186,11 @@ export function calculate(parts: readonly WiringPart[], wires: readonly Wire[], 
   // ESC load = the motors on its outputs.
   const escCurrent = new Map<string, Calc>()
   const motorsOfEsc = new Map<string, string[]>()
+  const at = wireIndex(wires)
   for (const e of parts.filter((p) => role(p) === 'esc')) {
-    const ms = portsOf(e)
+    const ms = (ports.get(e.id) ?? [])
       .filter((p) => p.kind === 'phases')
-      .flatMap((p) => wiresAt(wires, { partId: e.id, port: p.id }).map((w) => otherEnd(w, { partId: e.id, port: p.id }).partId))
+      .flatMap((p) => at({ partId: e.id, port: p.id }).map((w) => otherEnd(w, { partId: e.id, port: p.id }).partId))
       .filter((id) => motorCurrent.has(id))
     motorsOfEsc.set(e.id, ms)
     escCurrent.set(
@@ -203,9 +204,15 @@ export function calculate(parts: readonly WiringPart[], wires: readonly Wire[], 
 
   // Walk the power tree from the battery. Nodes are ports; a power module joins in ↔ out.
   const adjacency = new Map<string, { to: WireEnd; wire: Wire | null }[]>()
+  // Lists are appended in place: copying them per cable made a power module feeding n ESCs O(n²).
+  const append = <T,>(m: Map<string, T[]>, k: string, v: T) => {
+    const list = m.get(k)
+    if (list) list.push(v)
+    else m.set(k, [v])
+  }
   const link = (a: WireEnd, b: WireEnd, wire: Wire | null) => {
-    adjacency.set(key(a), [...(adjacency.get(key(a)) ?? []), { to: b, wire }])
-    adjacency.set(key(b), [...(adjacency.get(key(b)) ?? []), { to: a, wire }])
+    append(adjacency, key(a), { to: b, wire })
+    append(adjacency, key(b), { to: a, wire })
   }
   for (const w of powerWires) link(w.from, w.to, w)
   for (const p of parts.filter((x) => role(x) === 'power-module')) link({ partId: p.id, port: 'in' }, { partId: p.id, port: 'out' }, null)
@@ -217,8 +224,8 @@ export function calculate(parts: readonly WiringPart[], wires: readonly Wire[], 
   const usedWires = new Set<string>()
   // Breadth-first, so cables come out from the battery outwards, in wiring order.
   const queue = [root]
-  while (queue.length > 0) {
-    const node = queue.shift()!
+  for (let head = 0; head < queue.length; head++) {
+    const node = queue[head]!
     order.push(node)
     for (const { to, wire } of adjacency.get(key(node)) ?? []) {
       const edgeId = wire?.id ?? `pm:${to.partId}`
@@ -239,7 +246,7 @@ export function calculate(parts: readonly WiringPart[], wires: readonly Wire[], 
     const total = sum([nodeLoad(n), ...(below.get(key(n)) ?? [])], 'loads')
     through.set(key(n), total)
     const up = parent.get(key(n))
-    if (up) below.set(key(up.from), [...(below.get(key(up.from)) ?? []), total])
+    if (up) append(below, key(up.from), total)
   }
 
   const cables: CableResult[] = []
@@ -329,9 +336,10 @@ export function calculate(parts: readonly WiringPart[], wires: readonly Wire[], 
       }
     })
   const escOf = new Map([...motorsOfEsc].flatMap(([esc, ms]) => ms.map((m) => [m, esc] as const)))
+  const escResultOf = new Map(escResults.map((x) => [x.partId, x]))
   const motorResults: LoadResult[] = motors.map((m) => {
     const esc = escOf.get(m.id)
-    const e = esc ? escResults.find((x) => x.partId === esc) : undefined
+    const e = esc ? escResultOf.get(esc) : undefined
     return {
       partId: m.id,
       name: m.name,

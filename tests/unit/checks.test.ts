@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Component, SpecValue } from '../../electron/ipc/component-fields'
-import type { PartKind, PartShape } from '../../electron/ipc/contract'
-import { PROP_CLEARANCE, report, runChecks, summary, type CheckInput, type CheckPart, type Vec3 } from '../../src/domain/checks'
+import type { AssemblyDocument, PartKind, PartShape } from '../../electron/ipc/contract'
+import { PROP_CLEARANCE, RULES, report, runChecks, summary, type CheckInput, type CheckPart, type Vec3 } from '../../src/domain/checks'
+import { allFindings } from '../../src/features/workshop/findings'
+import { buildFrame } from '../../src/three/frame-geometry'
 
 const seed = JSON.parse(readFileSync(join(__dirname, '../../database/seed/components.v1.json'), 'utf8')) as { components: Component[] }
 const lib = (name: string) => ({ ...seed.components.find((c) => c.name === name)!, origin: 'built-in' }) as Component
@@ -182,6 +184,79 @@ describe('compatibility checks', () => {
   it('prop-frame: a disc reaching below the frame top is an error', () => {
     const low = p('propeller', null, { name: 'Low', shape: disc(0.127), center: [0, 0, 0.002] })
     expect(runChecks(input([low], 0.004))).toEqual([expect.objectContaining({ rule: 'prop-frame', severity: 'error', message: "Low's swept disc reaches 6 mm below the top of the frame." })])
+  })
+
+  it('prop-bore and prop-hand say "cannot check" when a part is unlinked or states no hand (3.8)', () => {
+    // Unlinked propellers and motors: one finding per rule, naming the parts.
+    const bare = runChecks(input(quad(null, null)))
+    expect(bare.find((f) => f.rule === 'prop-bore')).toMatchObject({
+      severity: 'cannot-check',
+      message: 'Cannot check the bore of Propeller 1, Propeller 2, Propeller 3 and Propeller 4: the propellers and their motors are not linked to a component.',
+    })
+    expect(bare.find((f) => f.rule === 'prop-hand')).toMatchObject({
+      severity: 'cannot-check',
+      message: 'Cannot check the rotation of Propeller 1, Propeller 2, Propeller 3 and Propeller 4: they are not linked to a component.',
+    })
+    // Linked propellers on unlinked motors: only the motor side is named.
+    expect(runChecks(input(quad(null, P13).slice(0, 2))).find((f) => f.rule === 'prop-bore')!.message).toBe('Cannot check the bore of Propeller 1: its motor is not linked to a component.')
+    // A linked APC 10x4.5MR states no hand in its cited data, so rotation cannot be checked; the bore can.
+    const apc = runChecks(input(quad(MN700, lib('10x4.5MR')).slice(0, 2)))
+    expect(apc.find((f) => f.rule === 'prop-hand')!.message).toBe('Cannot check the rotation of Propeller 1: 10x4.5MR states no hand (CW, CCW or pair).')
+    expect(apc.filter((f) => f.rule === 'prop-bore').map((f) => f.severity)).toEqual(['warning'])
+    // A prop sold as a pair, on linked motors: nothing to report about rotation.
+    expect(runChecks(input(quad(MN700, P13))).filter((f) => f.rule === 'prop-hand')).toEqual([])
+    // A propeller not on a motor mount has no spin to compare with: not a rotor, not checked.
+    const loose = p('propeller', null, { name: 'Spare', shape: disc(0.127), center: [1, 1, 0.05] })
+    expect(runChecks(input([loose])).filter((f) => f.rule === 'prop-hand')).toEqual([])
+  })
+
+  it('prop-frame: a disc above the frame top passes', () => {
+    const high = p('propeller', null, { name: 'High', shape: disc(0.127), center: [0, 0, 0.05] })
+    expect(runChecks(input([high], 0.004)).filter((f) => f.rule === 'prop-frame')).toEqual([])
+  })
+
+  /**
+   * Acceptance (Phase 3): every check has passing and failing inputs, and says
+   * "cannot check" when data it needs is missing. One row per assembly rule; the
+   * wiring rules are covered the same way in wiring.test.ts. Geometric rules
+   * (prop-clearance, prop-frame) and motor-count need no stated data, so they have
+   * no "cannot check" case.
+   */
+  it('covers every rule with a passing, a failing and (where data can be missing) a cannot-check input', () => {
+    const weakEsc = own('esc', 'Test 20A', { format: { value: '4-in-1', source: 'user' } as SpecValue, continuousCurrent: user(20, 'A') })
+    const smallBat = own('battery', 'Test 1000 20C', { series: user(4), capacity: user(1000, 'mAh'), cRateContinuous: user(20, 'C') })
+    const cw = own('propeller', 'Test CW', { hand: { value: 'cw', source: 'user' } as SpecValue })
+    const onMount = (rule: string, parts: CheckPart[]) => runChecks(input(parts)).filter((f) => f.rule === rule).map((f) => f.severity)
+    const fails = (sev: string[]) => sev.includes('error') || sev.includes('warning')
+    const table: Record<string, { pass: CheckPart[]; fail: CheckPart[]; cannot?: CheckPart[] }> = {
+      'motor-count': { pass: quad(MN700, null), fail: quad(MN700, null).filter((x) => x.kind === 'motor').slice(0, 3) },
+      'battery-cells': { pass: [p('esc', TEKKO4IN1), p('battery', TATTU)], fail: [p('esc', TEKKO4IN1), p('battery', own('battery', '3S', { series: user(3) }))], cannot: [p('esc', null), p('battery', TATTU)] },
+      'esc-outputs': { pass: quad(MN700, null, [p('esc', TEKKO4IN1)]), fail: quad(MN700, null, [p('esc', lib('Tekko32 F4 45A ESC (AM32)'))]), cannot: quad(MN700, null, [p('esc', null)]) },
+      'esc-current': { pass: quad(MN700, null, [p('esc', TEKKO4IN1)]), fail: quad(MN700, null, [p('esc', weakEsc)]), cannot: quad(null, null, [p('esc', TEKKO4IN1)]) },
+      'battery-current': { pass: quad(MN700, null, [p('battery', TATTU)]), fail: quad(MN700, null, [p('battery', smallBat)]), cannot: quad(null, null, [p('battery', TATTU)]) },
+      'prop-bore': { pass: quad(MN700, own('propeller', '4mm', { boreDiameter: user(4, 'mm') })), fail: quad(MN700, own('propeller', '3mm', { boreDiameter: user(3, 'mm') })), cannot: quad(MN700, P13) },
+      'prop-hand': { pass: quad(MN700, P13), fail: quad(MN700, cw), cannot: quad(MN700, lib('10x4.5MR')) },
+      'prop-clearance': { pass: quad(MN700, P13, [], 0.1651, 0.275), fail: quad(MN700, P13, [], 0.1651, 0.225) },
+      'prop-frame': { pass: [p('propeller', null, { shape: disc(0.127), center: [0, 0, 0.05] })], fail: [p('propeller', null, { shape: disc(0.127), center: [0, 0, 0.002] })] },
+    }
+    const wiringRules = ['wire-port', 'wire-kind', 'port-conflict', 'unwired']
+    expect(Object.keys(table).sort()).toEqual(Object.keys(RULES).filter((r) => !wiringRules.includes(r)).sort())
+    for (const [rule, cases] of Object.entries(table)) {
+      expect(fails(onMount(rule, cases.pass)), `${rule}: pass case`).toBe(false)
+      expect(fails(onMount(rule, cases.fail)), `${rule}: fail case`).toBe(true)
+      if (cases.cannot) expect(onMount(rule, cases.cannot), `${rule}: cannot-check case`).toContain('cannot-check')
+    }
+  })
+
+  it('the workshop and the designer share one findings computation per document', () => {
+    const doc: AssemblyDocument = { frame: { motorDiagonal: 0.45, armWidth: 0.02, armThickness: 0.004, plateSize: 0.12 }, motors: {}, parts: [] }
+    const geo = buildFrame('quad-x', doc.frame, doc.motors)
+    const first = allFindings(doc, geo, {})
+    expect(allFindings(doc, geo, {})).not.toBe(first) // a different component index is a different input
+    const index = {}
+    const a = allFindings(doc, geo, index)
+    expect(allFindings(doc, geo, index)).toBe(a)
+    expect(allFindings({ ...doc }, geo, index)).not.toBe(a) // an edit makes a new document
   })
 
   it('report: Markdown with counts, sections and the rules that ran', () => {

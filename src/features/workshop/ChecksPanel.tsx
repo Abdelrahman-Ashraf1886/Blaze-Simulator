@@ -3,13 +3,10 @@ import { useMemo, useState } from 'react'
 import type { AssemblyDocument } from '../../../electron/ipc/contract'
 import { Button } from '@/components/ui/button'
 import { cn, formatTimestamp } from '@/lib/utils'
-import { report, runChecks, summary, type Finding, type Severity } from '@/domain/checks'
+import { report, summary, type Finding, type Severity } from '@/domain/checks'
 import type { FrameGeometry } from '@/three/frame-geometry'
-import { checkInput } from './check-input'
 import { useComponentIndex } from './component-index'
-import type { ComponentIndex } from './links'
-import { wiringParts } from './wiring-input'
-import { escOfMotor, wiringFindings } from '@/domain/wiring'
+import { allFindings } from './findings'
 import { useWorkshopView } from './view-store'
 
 export const SEVERITY: Record<Severity, { icon: LucideIcon; tone: string; label: string }> = {
@@ -24,14 +21,6 @@ export function useFindings(doc: AssemblyDocument, geo: FrameGeometry): Finding[
   return useMemo(() => allFindings(doc, geo, components), [doc, geo, components])
 }
 
-const ORDER = { error: 0, warning: 1, 'cannot-check': 2 } as const
-
-export function allFindings(doc: AssemblyDocument, geo: FrameGeometry, components: ComponentIndex): Finding[] {
-  const parts = wiringParts(doc, geo, components)
-  const wires = doc.wires ?? []
-  const assembly = runChecks({ ...checkInput(doc, geo, components), escOfMotor: escOfMotor(parts, wires) })
-  return [...assembly, ...wiringFindings(parts, wires)].sort((a, b) => ORDER[a.severity] - ORDER[b.severity])
-}
 
 const select = (f: Finding) => {
   if (f.partIds[0]) useWorkshopView.getState().selectPart(f.partIds[0])

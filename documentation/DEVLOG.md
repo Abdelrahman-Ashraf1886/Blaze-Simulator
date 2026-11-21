@@ -1,5 +1,56 @@
 # Development log
 
+## 2026-11-21 — Phase 4, milestone 4.1: mass properties
+
+**Built**
+- **Frame mass**: a new frame field (migration `0008_frame_mass.sql`, schema v8),
+  entered by the user with its source recorded like a part's mass. Not set = the
+  CoM is incomplete. It is spread over a uniform-density model of the frame (plate,
+  plus each arm outside the plate), so the frame has its own CoM and inertia.
+- **`src/domain/mass.ts`** (pure, documented at the top of the file):
+  - CoM = Σ mᵢ rᵢ / Σ mᵢ, positions taken through the attachment chain;
+  - part inertia: uniform box or cylinder, propellers as thin blades averaged over
+    a turn (mR²/3 about the shaft), imported models by their bounding box;
+  - totals about the CoM by the parallel axis theorem, rotated into body axes;
+  - products of inertia with the tensor sign convention;
+  - parts without a mass are left out and listed;
+  - `vehicleDefinition()` builds the engine's input (the shared interface in
+    `plans/phase-4-physics.md`); the frame goes in as `frame:plate` and
+    `frame:arm-n`.
+- **Hover balance**: the least-squares thrust split that carries m·g with no roll or
+  pitch moment about the CoM. If a motor would need negative thrust, the drone
+  cannot hover level (error); a share above your margin (default +10 %, editable)
+  is a warning. Both appear in Checks under the new `hover-balance` rule. Yaw is
+  left out until each prop's drag torque is modelled (4.5).
+- **Workshop**:
+  - **Mass section**: total mass and weight; CoM X/Y/Z, horizontal offset and
+    distance from the frame reference; the inertia tensor in g·m²; hover thrust and
+    share per motor; a Method block.
+  - **Viewport**: a constant-size CoM marker with a drop line to the ground. It
+    can be toggled in the view panel or with C, and is dimmed while incomplete.
+  - **Live dragging**: everything follows a gizmo drag before release.
+- The ESLint config now ignores `.claude/**`. The parallel sessions' worktrees live
+  there and broke `eslint .`.
+
+**Verified** (`npm run test:all`, exit 0)
+- Rust: 11 tests. Typecheck and lint clean.
+- vitest: 205 tests, 20 of them new, against hand calculations written out in the
+  tests:
+  - box, cylinder and propeller inertia;
+  - a rotated part, including the 45° product of inertia;
+  - a battery moved 30 mm (exact CoM shift, ΔIzz and Ixz);
+  - a mass change;
+  - missing masses;
+  - quad hover shares 1 ± d/a and the infeasible case;
+  - the frame mass split;
+  - thrust points (with a prop and with a tilted mount);
+  - detaching leaves the mass properties unchanged.
+- Playwright: 35 tests, 1 new. With a 300 g frame and a 500 g battery, moving the
+  battery 40 mm forward puts the CoM at 25.0 mm and gives hover shares of
+  1 ± 25/a. A warning appears and clears with the margin, undo restores the CoM,
+  C toggles the marker, and the frame mass survives a restart. No console errors.
+  Performance: 59.3 fps at 1080p and 38.1 fps at 4K, with 50 parts.
+
 ## 2026-11-21 — Workshop realism: frame, parts, materials, lighting
 
 Display only. Sizes, masses and every check still use the part envelopes and the

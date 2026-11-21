@@ -185,8 +185,19 @@ export interface Wire {
   color: WireColor | null
 }
 
+/** A mass the user entered (null = not set). */
+export interface UserMass {
+  valueKg: number
+  source: 'user'
+}
+
 export interface AssemblyDocument {
   frame: FrameParams
+  /**
+   * The frame's own mass (plates and arms, with their hardware). Absent or null = not
+   * set: the centre of mass is then incomplete. Used by src/domain/mass.ts.
+   */
+  frameMass?: UserMass | null
   /** Keyed by mount id (`motor-1` …); motors not listed use PX4 defaults. */
   motors: Record<string, MotorMount>
   parts: AssemblyPart[]

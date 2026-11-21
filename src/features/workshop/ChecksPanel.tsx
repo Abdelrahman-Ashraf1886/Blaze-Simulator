@@ -11,6 +11,8 @@ import type { ComponentIndex } from './links'
 import { wiringParts } from './wiring-input'
 import { escOfMotor, wiringFindings } from '@/domain/wiring'
 import { useWorkshopView } from './view-store'
+import { massFindings } from '@/domain/mass'
+import { massState } from './mass-input'
 
 export const SEVERITY: Record<Severity, { icon: LucideIcon; tone: string; label: string }> = {
   error: { icon: CircleX, tone: 'text-fault', label: 'Error' },
@@ -21,16 +23,32 @@ export const SEVERITY: Record<Severity, { icon: LucideIcon; tone: string; label:
 /** Findings for the current assembly, wiring included (recomputed when the document or the library changes). */
 export function useFindings(doc: AssemblyDocument, geo: FrameGeometry): Finding[] {
   const components = useComponentIndex()
-  return useMemo(() => allFindings(doc, geo, components), [doc, geo, components])
+  const tolerance = useWorkshopView((s) => s.balanceTolerance)
+  return useMemo(() => allFindings(doc, geo, components, tolerance), [doc, geo, components, tolerance])
 }
 
 const ORDER = { error: 0, warning: 1, 'cannot-check': 2 } as const
 
-export function allFindings(doc: AssemblyDocument, geo: FrameGeometry, components: ComponentIndex): Finding[] {
+/**
+ * Every finding: the assembly checks, the wiring rules and the hover balance.
+ * `balanceTolerance` is the user's hover-share margin in percent (view settings).
+ */
+export function allFindings(
+  doc: AssemblyDocument,
+  geo: FrameGeometry,
+  components: ComponentIndex,
+  balanceTolerance = useWorkshopView.getState().balanceTolerance,
+): Finding[] {
   const parts = wiringParts(doc, geo, components)
   const wires = doc.wires ?? []
   const assembly = runChecks({ ...checkInput(doc, geo, components), escOfMotor: escOfMotor(parts, wires) })
-  return [...assembly, ...wiringFindings(parts, wires)].sort((a, b) => ORDER[a.severity] - ORDER[b.severity])
+  // The CoM depends only on positions and masses, so model bounds are not needed here.
+  // A bare frame has nothing to balance yet, so the hover check starts with the first part.
+  const { mp, motors, hover } = massState(doc, geo, components)
+  const mass = doc.parts.length > 0 ? massFindings(mp, motors, hover, balanceTolerance) : []
+  return [...assembly, ...wiringFindings(parts, wires), ...mass].sort(
+    (a, b) => ORDER[a.severity] - ORDER[b.severity],
+  )
 }
 
 const select = (f: Finding) => {

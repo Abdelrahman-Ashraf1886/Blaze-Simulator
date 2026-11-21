@@ -33,6 +33,7 @@ import { MotorInspector, MotorList } from './MotorPanels'
 import { AssemblyTree, PartInspector, PartLibrary, deleteSelected, useComponentIndex } from './PartPanels'
 import { effectiveMass, resolveLinks } from './links'
 import { useComponents } from '@/stores/components'
+import { ComDropLine, ComMarker, MassPanel } from './MassPanel'
 import { ChecksPanel, ChecksStatus } from './ChecksPanel'
 import { PartsModel } from './PartsModel'
 import { duplicatePart, subtreeIds, updatePart } from './assembly-ops'
@@ -229,6 +230,7 @@ function Workshop({ project }: { project: Project }) {
       else if (e.key === 'g' || e.key === 'G') s.setShowGrid(!s.showGrid)
       else if (e.key === 'x' || e.key === 'X') s.setExploded(!s.exploded)
       else if (e.key === 'm' || e.key === 'M') s.setMeasuring(!s.measuring)
+      else if (e.key === 'c' || e.key === 'C') s.setShowCom(!s.showCom)
       // Esc in measure mode: clear the measurement, then leave the tool.
       else if (e.key === 'Escape' && s.measuring && s.measure.length > 0) s.clearMeasure()
       else if (e.key === 'Escape' && s.measuring) s.setMeasuring(false)
@@ -411,6 +413,7 @@ function Workshop({ project }: { project: Project }) {
                   <MountMarkers doc={doc} geo={geo} />
                   <DimensionLabels doc={display} geo={geo} />
                   <MeasureLabel />
+                  <ComMarker doc={doc} geo={geo} />
                 </>
               ) : null
             }
@@ -420,6 +423,7 @@ function Workshop({ project }: { project: Project }) {
               {geo && display && <PartsModel doc={display} geo={geo} editable={!view.exploded && !view.measuring} />}
             </MeasureCapture>
             <MeasureLine />
+            {geo && doc && <ComDropLine doc={doc} geo={geo} />}
           </Viewport>
         </Panel>
         <Separator className="w-px bg-line outline-none hover:bg-accent/70 focus-visible:bg-accent" />
@@ -559,6 +563,9 @@ function ProjectPanel({
           <Section title="Checks">
             <ChecksPanel doc={doc} geo={geo} projectName={project.name} />
           </Section>
+          <Section title="Mass">
+            <MassPanel doc={doc} geo={geo} />
+          </Section>
         </>
       )}
       <Section title="Frame">
@@ -582,6 +589,7 @@ function ProjectPanel({
 function ViewPanel() {
   const projection = useWorkshopView((s) => s.projection)
   const detail = useWorkshopView((s) => s.detail)
+  const showCom = useWorkshopView((s) => s.showCom)
   return (
     <>
       <Section title="View">
@@ -598,6 +606,21 @@ function ViewPanel() {
                 title={d ? 'Detailed models' : 'Plain shapes (size only)'}
               >
                 {d ? 'Detailed' : 'Simple'}
+              </SegmentButton>
+            ))}
+          </Segmented>
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-line py-1.5">
+          <span className="text-[12.5px] text-fg-muted">Centre of mass</span>
+          <Segmented label="Centre of mass marker">
+            {([true, false] as const).map((on) => (
+              <SegmentButton
+                key={String(on)}
+                pressed={showCom === on}
+                onClick={() => useWorkshopView.getState().setShowCom(on)}
+                title={on ? 'Show the centre-of-mass marker (C)' : 'Hide the centre-of-mass marker (C)'}
+              >
+                {on ? 'Show' : 'Hide'}
               </SegmentButton>
             ))}
           </Segmented>
@@ -632,6 +655,7 @@ function ViewPanel() {
             ['Grid', 'G'],
             ['Exploded view', 'X'],
             ['Measure', 'M'],
+            ['Centre of mass', 'C'],
           ].map(([action, key]) => (
             <div key={action} className="flex justify-between border-b border-line/60 py-1.5">
               <dt className="text-fg-muted">{action}</dt>

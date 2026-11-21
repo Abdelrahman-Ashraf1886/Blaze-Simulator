@@ -81,7 +81,7 @@ interface MotorBody {
 
 interface VehicleDefinition {
   version: 1
-  parts: PartBody[]   // only parts with a mass; the frame is one PartBody with partId 'frame'
+  parts: PartBody[]   // only parts with a mass; the frame is 'frame:plate' + 'frame:arm-1…n'; ids are opaque and unique
   motors: MotorBody[]
   totalMassKg: number
   com: Vec3

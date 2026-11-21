@@ -49,6 +49,18 @@ interface ViewState {
   /** Mount a part being dragged would attach to if released now. */
   snapTarget: string | null
   setSnapTarget(id: string | null): void
+  /** Show the centre-of-mass marker in the viewport. */
+  showCom: boolean
+  setShowCom(on: boolean): void
+  /**
+   * Warn when a motor's hover share exceeds the mean by more than this many percent.
+   * The user's own margin; 10 % is only the starting value.
+   */
+  balanceTolerance: number
+  setBalanceTolerance(pct: number): void
+  /** Pose of the part being dragged with the gizmo (not yet saved), so mass properties follow live. */
+  dragPose: { id: string; position: [number, number, number]; rotation: [number, number, number, number] } | null
+  setDragPose(pose: ViewState['dragPose']): void
 }
 
 export type Selection = { kind: 'mount'; id: string } | { kind: 'part'; id: string } | null
@@ -125,6 +137,20 @@ export const useWorkshopView = create<ViewState>((set) => ({
   snapTarget: null,
   setSnapTarget(snapTarget) {
     set((s) => (s.snapTarget === snapTarget ? s : { snapTarget }))
+  },
+  showCom: readPref('workshop.showCom', true),
+  setShowCom(showCom) {
+    writePref('workshop.showCom', showCom)
+    set({ showCom })
+  },
+  balanceTolerance: readPref('workshop.balanceTolerance', 10),
+  setBalanceTolerance(balanceTolerance) {
+    writePref('workshop.balanceTolerance', balanceTolerance)
+    set({ balanceTolerance })
+  },
+  dragPose: null,
+  setDragPose(dragPose) {
+    set({ dragPose })
   },
   setSpread(spread) {
     set({ spread: Math.min(1, Math.max(0, spread)) })

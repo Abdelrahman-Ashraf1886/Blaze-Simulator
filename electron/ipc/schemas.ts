@@ -106,6 +106,11 @@ export const saveAssemblySchema = z
     projectId: z.uuid(),
     baseRevision: z.int().min(0),
     frame: frameParamsSchema,
+    frameMass: z
+      .object({ valueKg: z.number().positive('Frame mass must be more than 0').max(100, 'Frame mass must be at most 100 kg'), source: z.literal('user') })
+      .strict()
+      .nullable()
+      .optional(),
     motors: z.record(z.string(), motorMountSchema).superRefine((motors, ctx) => {
       for (const key of Object.keys(motors)) {
         if (!/^motor-[1-8]$/.test(key)) ctx.addIssue({ code: 'custom', message: `Unknown motor mount "${key}"` })

@@ -125,6 +125,12 @@ export function PartsModel({
           rotationSnap={snap ? (SNAP_DEG * Math.PI) / 180 : null}
           // Moving with snapping on: a mount under the part lights up, and releasing attaches there.
           onObjectChange={() => {
+            const q = target.quaternion.clone().normalize()
+            useWorkshopView.getState().setDragPose({
+              id: selectedPart.id,
+              position: [target.position.x, target.position.y, target.position.z],
+              rotation: [q.x, q.y, q.z, q.w],
+            })
             if (gizmo !== 'translate' || !snap) return
             const c = target.getWorldPosition(new Vector3())
             const h = halfHeight(selectedPart.shape, useAssets.getState().assets)
@@ -132,6 +138,7 @@ export function PartsModel({
             useWorkshopView.getState().setSnapTarget(snapMount(geo, [c.x, c.y, c.z], h, current))
           }}
           onMouseUp={() => {
+            useWorkshopView.getState().setDragPose(null)
             const mountId = useWorkshopView.getState().snapTarget
             useWorkshopView.getState().setSnapTarget(null)
             if (mountId) {

@@ -48,6 +48,68 @@ code yet.
   images. Its Table 2 prints R* as "8.31432 × 10⁻³"; the body text (p. 3) gives
   10³, which is the value used.
 
+## 2026-11-21 — Phase 4, milestone 4.3: engine foundation
+
+**Built**
+- **rapier3d-f64 0.36.1** (Apache-2.0), pinned exactly, with
+  `enhanced-determinism` (ADR 0005). rapier integrates and (from 4.4) resolves
+  contacts; our code applies every force and torque.
+- **`engine-core/src/vehicle.rs`**: reads the pinned `VehicleDefinition` and trusts
+  nothing:
+  - finite numbers, positive masses, unit quaternions and thrust axes (1e-9),
+    unique non-empty part ids (opaque: the frame arrives as several parts),
+    real shape volumes, version 1;
+  - every inertia positive definite, with principal moments satisfying the
+    triangle inequality;
+  - totals recomputed from the parts (Σm, Σmr/m, parallel axis theorem) and
+    compared with the sent ones to 1e-9 relative; a mismatch is listed back,
+    never corrected;
+  - one rapier body, one collider per part carrying the part's explicit mass
+    properties; the load checks rapier's body mass, CoM and inertia against the
+    recomputation to 1e-9.
+- **`engine-core/src/sim.rs`**: fixed step (1 ms default), body-frame force and
+  torque per step, gravity 9.80665 m/s² (CGPM 1901 / ISO 80000-3), FNV-1a 64
+  state hash.
+- **Protocol v2** (`engine-host`): `vehicle.load` (totals or a list of errors) and
+  batch `sim.run` (duration, dt, constant body-frame force and torque → final
+  state and hash; at most 120 000 steps). hello/ping/shutdown unchanged.
+- **Electron main**: `EngineSupervisor.loadVehicle` and `runSim`, with zod
+  schemas for the definition, the parameters and both results
+  (`electron/main/engine/protocol.ts`).
+- ADR 0005 (rapier and its limits) and ADR 0006 (mass properties in TypeScript,
+  simulation in Rust, cross-checked). ARCHITECTURE protocol table updated.
+
+**Findings**
+- **Gyroscopic term**: rapier includes −ω×(Iω) (default on). Torque-free tumble of
+  an asymmetric body, 10 s at 1 ms: |ΔL|/|L| ≤ 4.5e-4, |ΔE|/E ≤ 2.1e-3. With
+  rapier's term switched off, L drifts 54 %. We do not add it again.
+- **Determinism**: identical inputs give the identical hash over 10 s, in one
+  process and across two engine processes; a 1e-12 N change at one step changes it.
+- **Substeps**: rapier runs 4 substeps per step, so free fall matches the
+  discrete symplectic-Euler solution with h = 0.25 ms exactly; the error against
+  ½gt² is ½·g·t·h = 1.23 mm after 1 s. Spin-up under constant torque: ω = αt to
+  1e-12, θ within ½·α·t·h.
+- **glamx 0.3.1 eigen solver** (used by rapier to diagonalize inertia, also when
+  it sums colliders) returns a wrong frame for a repeated smallest moment (13 %
+  error) and for tensors around 1e-6 kg·m² (29 % error). Found by the 1e-9
+  cross-check on a tilted motor. The engine now diagonalizes each part tensor
+  itself (cyclic Jacobi), sums heaviest first, and refuses the rare vehicle whose
+  rapier sum still disagrees, saying why. Follow-up: report upstream.
+- One 120 s `sim.run` (120 000 steps) takes 0.88 s in release, inside the
+  supervisor's 3 s request timeout.
+
+**Verified**
+- Cross-check with 4.1 (`src/domain/mass.ts` at 5e2f015, run in a temporary test,
+  not committed here because mass.ts is not on this branch): its
+  `VehicleDefinition` type and the engine's zod type are assignable both ways,
+  and five quad builds from `massProperties` (tilted motors, rod-model
+  propellers, offset battery, hull GPS, frame as plate plus arms) load in the real
+  engine; totals agree to ~1e-18 kg·m². The hardest part, a tilted propeller, is
+  now a Rust test.
+- `npm run test:all` green: 45 Rust tests (34 engine-core, 5 protocol, 6 sidecar),
+  189 unit tests (4 new against the real engine binary) and 34 e2e tests; typecheck
+  and lint clean.
+
 ## 2026-11-21 — Phase 4, milestone 4.2: editor additions
 
 **Built**
@@ -267,68 +329,6 @@ That is the inspector and 3D view, not the checks. The first 3D canvas once took
   performance test). In that run: designer selection 38–62 ms, undo 149 ms, pan and
   zoom 16.7 ms median, workshop checks listed in 201 ms. Phase 2 orbit: 59.3 fps at
   1080p and 40.7 fps at 4K.
-## 2026-11-21 — Phase 4, milestone 4.3: engine foundation
-
-**Built**
-- **rapier3d-f64 0.36.1** (Apache-2.0), pinned exactly, with
-  `enhanced-determinism` (ADR 0005). rapier integrates and (from 4.4) resolves
-  contacts; our code applies every force and torque.
-- **`engine-core/src/vehicle.rs`**: reads the pinned `VehicleDefinition` and trusts
-  nothing:
-  - finite numbers, positive masses, unit quaternions and thrust axes (1e-9),
-    unique non-empty part ids (opaque: the frame arrives as several parts),
-    real shape volumes, version 1;
-  - every inertia positive definite, with principal moments satisfying the
-    triangle inequality;
-  - totals recomputed from the parts (Σm, Σmr/m, parallel axis theorem) and
-    compared with the sent ones to 1e-9 relative; a mismatch is listed back,
-    never corrected;
-  - one rapier body, one collider per part carrying the part's explicit mass
-    properties; the load checks rapier's body mass, CoM and inertia against the
-    recomputation to 1e-9.
-- **`engine-core/src/sim.rs`**: fixed step (1 ms default), body-frame force and
-  torque per step, gravity 9.80665 m/s² (CGPM 1901 / ISO 80000-3), FNV-1a 64
-  state hash.
-- **Protocol v2** (`engine-host`): `vehicle.load` (totals or a list of errors) and
-  batch `sim.run` (duration, dt, constant body-frame force and torque → final
-  state and hash; at most 120 000 steps). hello/ping/shutdown unchanged.
-- **Electron main**: `EngineSupervisor.loadVehicle` and `runSim`, with zod
-  schemas for the definition, the parameters and both results
-  (`electron/main/engine/protocol.ts`).
-- ADR 0005 (rapier and its limits) and ADR 0006 (mass properties in TypeScript,
-  simulation in Rust, cross-checked). ARCHITECTURE protocol table updated.
-
-**Findings**
-- **Gyroscopic term**: rapier includes −ω×(Iω) (default on). Torque-free tumble of
-  an asymmetric body, 10 s at 1 ms: |ΔL|/|L| ≤ 4.5e-4, |ΔE|/E ≤ 2.1e-3. With
-  rapier's term switched off, L drifts 54 %. We do not add it again.
-- **Determinism**: identical inputs give the identical hash over 10 s, in one
-  process and across two engine processes; a 1e-12 N change at one step changes it.
-- **Substeps**: rapier runs 4 substeps per step, so free fall matches the
-  discrete symplectic-Euler solution with h = 0.25 ms exactly; the error against
-  ½gt² is ½·g·t·h = 1.23 mm after 1 s. Spin-up under constant torque: ω = αt to
-  1e-12, θ within ½·α·t·h.
-- **glamx 0.3.1 eigen solver** (used by rapier to diagonalize inertia, also when
-  it sums colliders) returns a wrong frame for a repeated smallest moment (13 %
-  error) and for tensors around 1e-6 kg·m² (29 % error). Found by the 1e-9
-  cross-check on a tilted motor. The engine now diagonalizes each part tensor
-  itself (cyclic Jacobi), sums heaviest first, and refuses the rare vehicle whose
-  rapier sum still disagrees, saying why. Follow-up: report upstream.
-- One 120 s `sim.run` (120 000 steps) takes 0.88 s in release, inside the
-  supervisor's 3 s request timeout.
-
-**Verified**
-- Cross-check with 4.1 (`src/domain/mass.ts` at 5e2f015, run in a temporary test,
-  not committed here because mass.ts is not on this branch): its
-  `VehicleDefinition` type and the engine's zod type are assignable both ways,
-  and five quad builds from `massProperties` (tilted motors, rod-model
-  propellers, offset battery, hull GPS, frame as plate plus arms) load in the real
-  engine; totals agree to ~1e-18 kg·m². The hardest part, a tilted propeller, is
-  now a Rust test.
-- `npm run test:all` green: 45 Rust tests (34 engine-core, 5 protocol, 6 sidecar),
-  189 unit tests (4 new against the real engine binary) and 34 e2e tests; typecheck
-  and lint clean.
-
 ## 2026-11-21 — Workshop realism: frame, parts, materials, lighting
 
 Display only. Sizes, masses and every check still use the part envelopes and the

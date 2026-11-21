@@ -5,10 +5,24 @@ Source: <https://github.com/Abdelrahman-Ashraf1886/Blaze-Simulator> (inspected 2
 ## Licensing
 
 The repository has **no LICENSE file**, so by default all rights are reserved by
-its author. This project uses it **only as functional inspiration**. No code, data
-(e.g. `dist/component-data.mjs`), meshes or text are copied. All component data in
-this project must come from cited manufacturer documents, user input, or clearly
-labelled estimates.
+its author. Until 2026-11-21 this project used it **only as functional inspiration**.
+
+**Update 2026-11-21:** the user, who has write access to the repository (this
+project's branch `phase-1-foundation` is pushed there), said its `main` branch may
+be used. Applied as follows:
+- **Used:** the visual design of its procedural part models (outrunner motor with
+  base, windings, bell, accent band, vents and shaft; bladed propellers with a hub;
+  Pixhawk-style case with lip, screws, LEDs and port sockets). These were rebuilt
+  from scratch in `src/three/part-models.tsx` for this Z-up, metre renderer. No
+  source lines were copied. `main` contains no model files (no glTF/STL/OBJ/STEP),
+  only geometry built in code.
+- **Not used:** its component catalogue (`dist/model.mjs`, `dist/component-data.mjs`).
+  Its values (e.g. motor masses and thrust factors) carry no sources, and this
+  project's rule is that every specification cites its source. All component data
+  still comes from cited manufacturer documents, user input, or clearly labelled
+  estimates.
+- If the repository owner is someone other than the user, the owner's permission
+  should be confirmed before any further reuse.
 
 ## What it is
 

@@ -43,6 +43,9 @@ interface ViewState {
   setMeasuring(on: boolean): void
   addMeasurePoint(p: Vec3): void
   clearMeasure(): void
+  /** Detailed part models (true) or plain envelope shapes (false). Display only. */
+  detail: boolean
+  setDetail(on: boolean): void
   /** Mount a part being dragged would attach to if released now. */
   snapTarget: string | null
   setSnapTarget(id: string | null): void
@@ -101,6 +104,11 @@ export const useWorkshopView = create<ViewState>((set) => ({
   spread: 0.5,
   setExploded(exploded) {
     set({ exploded })
+  },
+  detail: readPref('workshop.detail', true),
+  setDetail(detail) {
+    writePref('workshop.detail', detail)
+    set({ detail })
   },
   measuring: false,
   measure: [],

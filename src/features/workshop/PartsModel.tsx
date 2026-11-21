@@ -13,6 +13,16 @@ import { useAssembly } from './assembly-store'
 import { useAssets } from './asset-store'
 import { NO_CAPTURE } from './capture'
 import { mountPoints, snapMount } from './inspection'
+import { useComponentIndex } from './component-index'
+import { linkedComponent, type ComponentIndex } from './links'
+import {
+  BatteryModel,
+  EscModel,
+  FlightControllerModel,
+  ModuleModel,
+  MotorModel,
+  PropellerModel,
+} from '@/three/part-models'
 import { SNAP_DEG, SNAP_MM, useWorkshopView } from './view-store'
 
 // sRGB hex; three.js materials do not read CSS variables.
@@ -45,6 +55,8 @@ export function PartsModel({
   editable?: boolean
 }) {
   const selection = useWorkshopView((s) => s.selection)
+  const detail = useWorkshopView((s) => s.detail)
+  const components = useComponentIndex()
   const gizmo = useWorkshopView((s) => s.gizmo)
   const snap = useWorkshopView((s) => s.snap)
   const frames = useMemo(() => mountFrames(geo), [geo])
@@ -69,8 +81,15 @@ export function PartsModel({
     return byParent
   }, [doc.parts, frames])
 
+  const byId = useMemo(() => new Map(doc.parts.map((p) => [p.id, p])), [doc.parts])
   const node = (p: AssemblyPart) => (
-    <PartNode key={p.id} part={p} selected={selection?.kind === 'part' && selection.id === p.id} onObject={onObject}>
+    <PartNode
+      key={p.id}
+      part={p}
+      selected={selection?.kind === 'part' && selection.id === p.id}
+      onObject={onObject}
+      look={detail ? lookOf(p, byId, geo, components) : null}
+    >
       {(children.get(p.id) ?? []).map(node)}
     </PartNode>
   )
@@ -143,15 +162,52 @@ export function PartsModel({
   )
 }
 
+/** What a detailed model needs beyond the part's shape. */
+interface Look {
+  spin: 'cw' | 'ccw'
+  blades: number
+  ports: number
+}
+
+/** Spin from the motor mount the part (or its root) sits on; blades and ports from a linked component. */
+function lookOf(part: AssemblyPart, byId: ReadonlyMap<string, AssemblyPart>, geo: FrameGeometry, components: ComponentIndex): Look {
+  let root = part
+  for (let i = 0; root.parentId && byId.has(root.parentId) && i < 64; i++) root = byId.get(root.parentId)!
+  const spin = geo.motors.find((m) => m.id === root.mountId)?.spin ?? 'ccw'
+  const c = linkedComponent(part, components)
+  const blades = typeof c?.specs.blades?.value === 'number' ? (c.specs.blades.value as number) : 2
+  const ports = Array.isArray(c?.specs.ports?.value) ? (c.specs.ports.value as unknown[]).length : 6
+  return { spin, blades, ports }
+}
+
+/** A detailed model for the part's kind and envelope, or null to draw the plain shape. */
+function detailedModel(part: AssemblyPart, look: Look): ReactNode {
+  const s = part.shape
+  if (s.type === 'cylinder') {
+    if (part.kind === 'motor') return <MotorModel radius={s.radius} height={s.height} />
+    if (part.kind === 'propeller') return <PropellerModel radius={s.radius} height={s.height} blades={look.blades} spin={look.spin} />
+    return null
+  }
+  if (s.type !== 'box') return null
+  if (part.kind === 'battery') return <BatteryModel size={s.size} />
+  if (part.kind === 'esc') return <EscModel size={s.size} />
+  if (part.kind === 'flight-controller') return <FlightControllerModel size={s.size} ports={look.ports} />
+  if (part.kind === 'payload') return <ModuleModel size={s.size} />
+  return null
+}
+
 function PartNode({
   part,
   selected,
   onObject,
+  look,
   children,
 }: {
   part: AssemblyPart
   selected: boolean
   onObject: (id: string, obj: Object3D | null) => void
+  /** Null: plain shapes. */
+  look: Look | null
   children: ReactNode
 }) {
   const ref = useCallback((obj: Object3D | null) => onObject(part.id, obj), [onObject, part.id])
@@ -162,6 +218,18 @@ function PartNode({
   }
   const color = KIND_COLOR[part.kind]
   const shape = part.shape
+  const model = look ? detailedModel(part, look) : null
+  if (model) {
+    return (
+      <group ref={ref} position={part.position} quaternion={part.rotation} name={part.name}>
+        {selected && <DimensionLines shape={shape} />}
+        {/* The envelope takes the clicks (thin blades are hard to hit) and shows the selection. */}
+        <Envelope shape={shape} selected={selected} onClick={select} />
+        {model}
+        {children}
+      </group>
+    )
+  }
   return (
     <group ref={ref} position={part.position} quaternion={part.rotation} name={part.name}>
       {shape.type === 'box' && (
@@ -263,6 +331,29 @@ class ModelErrorBoundary extends Component<{ assetId: string; fallback: ReactNod
   render() {
     return this.state.failed ? this.props.fallback : this.props.children
   }
+}
+
+/** Invisible envelope of a detailed part: click target, and its outline when selected. */
+function Envelope({ shape, selected, onClick }: { shape: PartShape; selected: boolean; onClick: (e: ThreeEvent<MouseEvent>) => void }) {
+  if (shape.type === 'box') {
+    return (
+      <mesh onClick={onClick}>
+        <boxGeometry args={shape.size} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        {selected && <Edges color={SELECTED} />}
+      </mesh>
+    )
+  }
+  if (shape.type === 'cylinder') {
+    return (
+      <mesh onClick={onClick} rotation-x={Math.PI / 2}>
+        <cylinderGeometry args={[shape.radius, shape.radius, shape.height, 48]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        {selected && <Edges color={SELECTED} threshold={30} />}
+      </mesh>
+    )
+  }
+  return null
 }
 
 /**

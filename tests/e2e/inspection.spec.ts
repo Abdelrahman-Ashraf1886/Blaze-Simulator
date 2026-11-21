@@ -204,3 +204,28 @@ test('measure tool: two clicks snap to the motor pad centres and read the motor-
   await expect(page.getByTestId('measure-status')).toHaveCount(0)
   expect(errors).toEqual([])
 })
+
+test('part display switch: detailed models by default, simple shapes on request, remembered after a restart', async () => {
+  const first = await launchApp(userData)
+  running.push(first.app)
+  let page = first.page
+  await createProject(page, 'Detail quad')
+  await page.getByTestId('recent-projects').getByRole('link', { name: 'Detail quad' }).click()
+  await expect(viewport(page).locator('canvas')).toBeVisible()
+  const display = page.getByRole('group', { name: 'Part display' })
+  await expect(display.getByRole('button', { name: 'Detailed' })).toHaveAttribute('aria-pressed', 'true')
+  // A motor on a mount still selects and measures by its true size in either mode.
+  await page.getByTestId('mount-motor-1').click()
+  await library(page).getByRole('button', { name: 'Motor' }).click()
+  await expect(page.getByTestId('dim-z')).toHaveText('Z 30 mm')
+  await display.getByRole('button', { name: 'Simple' }).click()
+  await expect(display.getByRole('button', { name: 'Simple' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('dim-z')).toHaveText('Z 30 mm')
+  await first.app.close()
+
+  const second = await launchApp(userData)
+  running.push(second.app)
+  page = second.page
+  await page.getByTestId('recent-projects').getByRole('link', { name: 'Detail quad' }).click()
+  await expect(page.getByRole('group', { name: 'Part display' }).getByRole('button', { name: 'Simple' })).toHaveAttribute('aria-pressed', 'true')
+})

@@ -32,6 +32,7 @@ import { MotorInspector, MotorList } from './MotorPanels'
 import { AssemblyTree, PartInspector, PartLibrary, deleteSelected, useComponentIndex } from './PartPanels'
 import { effectiveMass, resolveLinks } from './links'
 import { useComponents } from '@/stores/components'
+import { ChecksPanel, ChecksStatus } from './ChecksPanel'
 import { PartsModel } from './PartsModel'
 import { duplicatePart, subtreeIds, updatePart } from './assembly-ops'
 import { SNAP_MM } from './view-store'
@@ -463,6 +464,7 @@ function Workshop({ project }: { project: Project }) {
           </span>
         )}
         {doc && geo && <AssemblyStatusStrip doc={doc} geo={geo} />}
+        {doc && geo && <ChecksStatus doc={doc} geo={geo} />}
         <span className="ml-auto text-fg-subtle">Z-up · millimetres</span>
       </div>
     </div>
@@ -596,6 +598,9 @@ function ProjectPanel({
           <Section title="Assembly" count={doc.parts.length}>
             <AssemblyTree doc={doc} geo={geo} />
           </Section>
+          <Section title="Checks">
+            <ChecksPanel doc={doc} geo={geo} projectName={project.name} />
+          </Section>
         </>
       )}
       <Section title="Frame">
@@ -618,9 +623,27 @@ function ProjectPanel({
 
 function ViewPanel() {
   const projection = useWorkshopView((s) => s.projection)
+  const detail = useWorkshopView((s) => s.detail)
   return (
     <>
       <Section title="View">
+        <div className="flex items-center justify-between gap-3 border-t border-line py-1.5">
+          <span className="text-[12.5px] text-fg-muted" title="Detailed models fill each part's true size; plain shapes show the size alone">
+            Parts
+          </span>
+          <Segmented label="Part display">
+            {([true, false] as const).map((d) => (
+              <SegmentButton
+                key={String(d)}
+                pressed={detail === d}
+                onClick={() => useWorkshopView.getState().setDetail(d)}
+                title={d ? 'Detailed models' : 'Plain shapes (size only)'}
+              >
+                {d ? 'Detailed' : 'Simple'}
+              </SegmentButton>
+            ))}
+          </Segmented>
+        </div>
         <Readouts>
           <Readout label="Projection" value={projection === 'perspective' ? 'Perspective' : 'Orthographic'} mono={false} />
           <Readout

@@ -47,17 +47,8 @@ import {
   type ComponentIndex,
 } from './links'
 
-const indexCache = new WeakMap<object, ComponentIndex>()
-/** Library components by id (cached per list), for link resolution. */
-export function componentIndex(list: readonly Component[]): ComponentIndex {
-  let idx = indexCache.get(list)
-  if (!idx) {
-    idx = Object.fromEntries(list.map((c) => [c.id, c])) as ComponentIndex
-    indexCache.set(list, idx)
-  }
-  return idx
-}
-export const useComponentIndex = (): ComponentIndex => componentIndex(useComponents((s) => s.components))
+import { componentIndex, useComponentIndex } from './component-index'
+export { useComponentIndex }
 const shapeOfFor = (components: ComponentIndex) => (p: AssemblyPart) => effectiveShape(p, components)
 import { useWorkshopView, type Selection } from './view-store'
 

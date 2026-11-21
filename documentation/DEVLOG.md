@@ -1,5 +1,114 @@
 # Development log
 
+## 2026-11-21 — Phase 3, milestone 3.5: compatibility checks and diagnostics
+
+**Built**
+- `src/domain/checks.ts` (pure; documented in the file). Nine rules, each with a
+  one-sentence reason shown in the report:
+  - **motor-count**: empty motor mounts (warning), two motors on one mount (error);
+  - **battery-cells**: the battery's S against every motor's and ESC's cell range;
+  - **esc-outputs**: ESC outputs (4-in-1 = 4, single = 1) against the motor count;
+  - **esc-current**: ESC continuous current per motor against motor maximum current;
+  - **battery-current**: C rating × capacity, labelled "calculated", against the
+    sum of motor maximum currents;
+  - **prop-bore**: bore against motor shaft. Smaller is an error, larger a warning
+    ("adapter needed").
+  - **prop-hand**: a CW/CCW propeller against its motor mount's spin ("pair" passes);
+  - **prop-clearance**: swept discs at about the same height that overlap (error) or
+    are less than 10 mm apart (warning). Tilted discs are compared approximately,
+    and the message says so.
+  - **prop-frame**: a disc reaching below the top of the frame.
+- Behaviour common to all rules:
+  - Only stated values are compared, in SI. Messages quote values as stated, with
+    their conditions, e.g. "rated 20 A per motor, below MN3110 KV700's maximum
+    21 A (Max continuous current (180 s))", or "a 0.25 in bore on the 4 mm shaft".
+  - Missing data gives **cannot-check** with the reason, never a guess. Examples:
+    an unlinked part; two batteries, where series or parallel is decided by the
+    wiring; differing ESCs, where pairing is decided by the wiring.
+  - Identical parts are grouped, so four identical motors give one message
+    ("4 × 10x4.5MR … 4 × MN3110 KV700").
+- `check-input.ts` builds the check input from the stored assembly (linked
+  components, sizes as drawn, world positions and axes, the motor mount each part
+  sits on). The exploded view is never used.
+- **Checks panel** (left panel):
+  - findings by severity with icons;
+  - clicking a finding selects the parts involved;
+  - "Copy report" copies a Markdown report with counts, findings by severity, and
+    every rule with its reason.
+- **Status strip**: "N errors · M warnings"; a click selects the first finding's
+  parts.
+
+**Found by the checks themselves**: 13-inch props on the default 450 mm quad
+overlap by 12 mm (adjacent motors are 318 mm apart; two discs need 330 mm). My
+first "clean build" test had exactly that mistake; the test now uses a 550 mm
+frame for the clean case and keeps the 450 mm case as a failing one.
+
+**Moved to later milestones (as planned)**: flight-controller port conflicts and
+wire/connector ratings need the wiring graph (3.6, 3.7). The report is copied as
+Markdown; there is no file export.
+
+**Verified**
+- `cargo test`: 11 passed.
+- `vitest`: 169 passed, 12 new. Every rule has passing and failing cases, plus
+  cannot-check cases; the report format is covered too.
+- `playwright`: 31 passed, 2 new:
+  - a 6S test battery with a 4S test ESC gives the exact error naming both; "1
+    error" in the status strip; clicking it selects the battery; the report is on
+    the clipboard; swapping in the Tattu 4S clears all errors;
+  - 13" T-Motor props on a 450 mm quad give four "overlap by 12 mm" errors;
+    switching to APC 10" props clears them, and the bore warning remains.
+- Performance with 50 parts is unchanged (59.6 fps at 1080p). Typecheck and lint
+  clean.
+
+## 2026-11-21 — Detailed part models
+
+Asked by the user ("where are the models of the components", then "you can use
+from repo main").
+
+**Found**: the Blaze-Simulator repository's `main` has no model files. Its parts
+are built in code (`dist/scene.mjs`, `dist/pixhawk-3d.mjs`) from three.js
+primitives. Its catalogue values have no sources, so they were not taken. The
+permission and how it was applied are recorded in `reference-analysis.md`.
+
+**Built**
+- `src/three/part-models.tsx`: detailed procedural models after that design,
+  written for this renderer (Z-up, metres):
+  - motor: base flange, copper windings in the gap, bell with an accent band, vented
+    cap, shaft;
+  - propeller: extruded blades with coloured tips, the blade count from a linked
+    component (default 2), mirrored for CW/CCW from the motor mount the prop
+    sits on, a prop-adapter hub and a faint swept disc;
+  - battery: pack with wrap label and end caps;
+  - ESC: PCB, MOSFETs, solder pads;
+  - flight controller: Pixhawk-style case with lip, forward arrow, screws, LEDs,
+    and one port socket per port of a linked component;
+  - payload: an electronics module.
+
+  Custom parts and imported models are unchanged.
+- **Every model fills its part's envelope exactly**: the motor's sections add up
+  to its height, the blades stay inside the disc, the boxes stay inside L × W × H.
+  A linked MN3110 is still exactly Φ37.7 × 28.5 mm. Sizes, bounds, snapping and
+  the size readout still use the envelope.
+- An invisible envelope takes the clicks (thin blades are hard to hit) and shows
+  the selection outline. The measure tool skips it and measures the visible
+  surfaces.
+- View panel "Parts: Detailed | Simple" (remembered); Simple draws the plain
+  envelope shapes as before.
+
+**Found in screenshots and fixed**:
+- one blade colour vanished against the dark background (both blades are now one
+  light colour with orange tips);
+- the hub was as wide as the motor top (now about a prop-adapter size);
+- the motor band z-fought with the bell (now 0.6 % proud of it).
+
+**Verified**
+- `cargo test`: 11 passed.
+- `vitest`: 157 passed.
+- `playwright`: 29 passed, 1 new: Detailed by default, Simple on request,
+  dimensions unchanged in both, remembered after a restart.
+- Performance with 50 parts is unchanged: 59.2 fps at 1080p, 46.0 fps at 4K.
+- Typecheck and lint clean; no console errors in the screenshot runs.
+
 ## 2026-11-21 — Phase 3, milestone 3.4: linking parts to components
 
 **Built**

@@ -71,6 +71,11 @@ test('hex from library parts: auto-wire, zero errors; an 8S battery on 6S ESCs i
   }, TEST_8S)
   await createProject(page, NAME, 'Hex X')
   await openWorkshop(page)
+  // These parts are stacked at shared spots (a real overlap, reported by the 4.4 interference
+  // check); this test is about other rules, so a 50 mm overlap tolerance keeps those findings out.
+  // Interference itself is tested in collisions.spec.ts.
+  await page.getByTestId('interference-tolerance').fill('50')
+  await page.getByTestId('interference-tolerance').press('Enter')
 
   // 1. Build: a linked motor and propeller on every mount, then the electrical parts.
   await page.getByTestId('mount-motor-1').click()

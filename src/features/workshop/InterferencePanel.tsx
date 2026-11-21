@@ -86,11 +86,12 @@ export function InterferencePanel({ doc, geo }: { doc: AssemblyDocument; geo: Fr
           {s.allowedPairs.map(([a, b]) => {
             const depth = depthOf(a, b)
             const o = { a, b, aName: names.get(a) ?? a, bName: names.get(b) ?? b }
+            const [first, second] = [o.aName, o.bName].sort((x, y) => x.localeCompare(y, undefined, { numeric: true }))
             return (
               <li key={`${a},${b}`} className="flex items-center justify-between gap-2 border-b border-line/60 py-1.5 text-[12.5px]" data-testid="allowed-pair">
                 <span className="min-w-0 truncate text-fg-muted">
-                  {o.aName} · {o.bName}
-                  <span className="num ml-2 text-fg-subtle">{depth === undefined ? 'no overlap now' : `${mm(depth)} mm`}</span>
+                  {first} · {second}{' '}
+                  <span className="num ml-1 text-fg-subtle">{depth === undefined ? 'no overlap now' : `${mm(depth)} mm`}</span>
                 </span>
                 <button type="button" className="shrink-0 text-[12px] text-fg-subtle underline hover:text-fg" onClick={() => allowOverlap(o, false)}>
                   Remove

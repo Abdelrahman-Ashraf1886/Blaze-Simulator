@@ -54,6 +54,11 @@ test('a 6S battery with a 4S-rated ESC is an error that points at both; fixing t
   await page.getByTestId('recent-projects').getByRole('link', { name: 'Checks quad' }).click()
   await expect(page.getByTestId('viewport-3d').locator('canvas')).toBeVisible()
   await expect(page.getByTestId('checks-ok')).toHaveText('Add parts to check them.')
+  // These parts are stacked at shared spots (a real overlap, reported by the 4.4 interference
+  // check); this test is about other rules, so a 50 mm overlap tolerance keeps those findings out.
+  // Interference itself is tested in collisions.spec.ts.
+  await page.getByTestId('interference-tolerance').fill('50')
+  await page.getByTestId('interference-tolerance').press('Enter')
 
   await library(page).getByRole('button', { name: 'Battery' }).click()
   await page.getByTestId('part-component').selectOption({ label: 'Test Test 6S pack' })

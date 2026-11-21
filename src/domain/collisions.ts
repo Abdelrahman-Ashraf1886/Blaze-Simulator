@@ -403,11 +403,12 @@ const mm = (m: number) => String(Math.round(m * 10_000) / 10)
 export function interferenceFindings(overlaps: readonly Overlap[], toleranceM: number, frameId = 'frame'): Finding[] {
   return overlaps
     .filter((o) => o.status === 'error')
-    .map((o) => ({
+    .map((o) => [o, [o.aName, o.bName].sort((x, y) => x.localeCompare(y, undefined, { numeric: true }))] as const)
+    .map(([o, [first, second]]) => ({
       id: `interference:${o.a},${o.b}`,
       rule: 'interference' as const,
       severity: 'error' as const,
-      message: `${o.aName} and ${o.bName} overlap by ${mm(o.depthM)} mm (your tolerance: ${mm(toleranceM)} mm). Move one of them, or allow this pair if the overlap is intended.`,
+      message: `${first} and ${second} overlap by ${mm(o.depthM)} mm (your tolerance: ${mm(toleranceM)} mm). Move one of them, or allow this pair if the overlap is intended.`,
       partIds: [o.a, o.b].filter((id) => id !== frameId),
     }))
 }

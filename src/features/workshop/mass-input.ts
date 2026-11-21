@@ -48,7 +48,7 @@ const quatZ = (angle: number): Quat => [0, 0, Math.sin(angle / 2), Math.cos(angl
 export function collisionShape(shape: PartShape, assets: AssetBounds): CollisionShape {
   if (shape.type === 'box') return { type: 'box', halfExtents: shape.size.map((v) => v / 2) as Vec3 }
   if (shape.type === 'cylinder') return { type: 'cylinder', radius: shape.radius, halfHeight: shape.height / 2 }
-  // An imported model is taken as its bounding box until its hull is computed (4.4).
+  // An imported model is taken as its bounding box until its hull is computed at import (open after 4.4).
   const extent = shapeExtent(shape, assets) ?? [0, 0, 0]
   return { type: 'box', halfExtents: extent.map((v) => v / 2) as Vec3 }
 }

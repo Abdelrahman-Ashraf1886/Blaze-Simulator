@@ -79,6 +79,9 @@ async function buildHex(page: Page, projectName: string) {
         frame: asm.frame,
         motors: asm.motors,
         parts,
+        // The parts share positions (a real overlap, reported by the 4.4 interference check); this
+        // file tests wiring, so a 50 mm overlap tolerance keeps those findings out (collisions.spec.ts).
+        interference: { toleranceM: 0.05, allowedPairs: [] },
       }),
     )
   }, projectName)

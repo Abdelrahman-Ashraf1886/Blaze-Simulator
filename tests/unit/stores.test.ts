@@ -28,7 +28,7 @@ function fakeApi(overrides: Partial<DesktopApi['projects']> = {}): DesktopApi {
     },
     assets: { list: vi.fn(), import: vi.fn() },
     viewport: { savePng: vi.fn() },
-    components: { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn(), duplicate: vi.fn(), exportPack: vi.fn(), importPack: vi.fn() },
+    components: { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn(), duplicate: vi.fn(), setFill: vi.fn(), exportPack: vi.fn(), importPack: vi.fn() },
     system: {
       status: vi.fn(async () => ({
         ok: true as const,

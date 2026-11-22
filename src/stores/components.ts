@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Component, ComponentInput, DesktopApi } from '../../electron/ipc/contract'
+import type { Component, ComponentInput, DesktopApi, SpecValue } from '../../electron/ipc/contract'
 import { getApi, unwrap } from '../services/api'
 
 interface ComponentsState {
@@ -11,6 +11,8 @@ interface ComponentsState {
   update(id: string, baseRevision: number, input: ComponentInput): Promise<Component>
   remove(id: string): Promise<void>
   duplicate(id: string): Promise<Component>
+  /** Fills (or, with null, clears) an empty field of a built-in component. */
+  setFill(id: string, key: string, spec: SpecValue | null): Promise<Component>
   /** Null when the user cancels the save dialog. */
   exportPack(ids: string[], name: string): Promise<{ path: string; count: number } | null>
   /** Null when the user cancels; reloads the list after an import. */
@@ -52,6 +54,11 @@ export function createComponentsStore(api: () => DesktopApi = getApi) {
       },
       async duplicate(id) {
         const c = unwrap(await api().components.duplicate(id))
+        put(c)
+        return c
+      },
+      async setFill(id, key, spec) {
+        const c = unwrap(await api().components.setFill(id, key, spec))
         put(c)
         return c
       },

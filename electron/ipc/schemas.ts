@@ -1,5 +1,7 @@
 /** zod validation for IPC request payloads. Main process only. */
 import { z } from 'zod'
+import { overridableField, type SpecValue } from './component-fields'
+import { userSpecSchema } from './component-schemas'
 import { inertiaProblem } from './inertia'
 import {
   FRAME_PARAM_LIMITS,
@@ -89,6 +91,21 @@ const partSchema = z.object({
       if (problem) ctx.addIssue({ code: 'custom', message: problem, path: ['inertia'] })
     })
     .nullable()
+    .optional(),
+  overrides: z
+    // Each value is checked against its field below (userSpecSchema).
+    .record(z.string(), z.custom<SpecValue>(() => true))
+    .superRefine((o, ctx) => {
+      for (const [key, v] of Object.entries(o)) {
+        const f = overridableField(key)
+        if (!f) {
+          ctx.addIssue({ code: 'custom', message: `"${key}" cannot be overridden on a part`, path: [key] })
+          continue
+        }
+        const r = userSpecSchema(f).safeParse(v)
+        if (!r.success) ctx.addIssue({ code: 'custom', message: `${f.label}: ${r.error.issues.map((x) => x.message).join('; ')}`, path: [key] })
+      }
+    })
     .optional(),
 })
 

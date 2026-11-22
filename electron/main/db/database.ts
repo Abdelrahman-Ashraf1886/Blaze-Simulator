@@ -9,7 +9,7 @@ import m0007 from '../../../database/migrations/0007_wiring.sql?raw'
 import m0008 from '../../../database/migrations/0008_frame_mass.sql?raw'
 import m0009 from '../../../database/migrations/0009_part_kinds_inertia.sql?raw'
 // 0010 is Phase 4.4's (collisions); keep m0010 before m0011 when the branches merge.
-import m0011 from '../../../database/migrations/0011_body_drag.sql?raw'
+import m0011 from '../../../database/migrations/0011_physics_inputs.sql?raw'
 
 export type Db = Database.Database
 

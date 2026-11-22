@@ -7,7 +7,7 @@
  * error instead of Electron's stringified exception.
  */
 
-import type { Component, ComponentCategory, ComponentInput } from './component-fields'
+import type { Component, ComponentCategory, ComponentInput, SpecValue } from './component-fields'
 export type * from './component-fields'
 
 // ---- Domain types -----------------------------------------------------------
@@ -165,6 +165,12 @@ export interface AssemblyPart {
    * src/domain/mass.ts). About the part's own CoM, in the part's axes.
    */
   inertia?: PartInertia | null
+  /**
+   * This part's own values for fields of its linked component (quantity and integer
+   * fields only; source 'measured' or 'user'). They win over the library's catalog
+   * fill and the manufacturer value for this part only. Absent = none.
+   */
+  overrides?: Record<string, SpecValue>
 }
 
 /** A measured or calculated inertia the user entered for one part. */
@@ -303,6 +309,8 @@ export const Channels = {
   componentsUpdate: 'components:update',
   componentsDelete: 'components:delete',
   componentsDuplicate: 'components:duplicate',
+  /** Sets or removes a catalog gap-fill on a built-in component (schema v11). */
+  componentsSetFill: 'components:setFill',
   /** Save / open dialogs in main; JSON component packs. */
   componentsExportPack: 'components:exportPack',
   componentsImportPack: 'components:importPack',
@@ -342,6 +350,8 @@ export interface DesktopApi {
     delete(id: string): Promise<IpcResult<null>>
     /** A user-owned copy (the way to change a built-in component). */
     duplicate(id: string): Promise<IpcResult<Component>>
+    /** Fills (or, with null, clears) an empty field of a built-in component; returns the updated record. */
+    setFill(id: string, key: string, spec: SpecValue | null): Promise<IpcResult<Component>>
     /** Writes the given components to a JSON pack the user picks; null when cancelled. */
     exportPack(ids: string[], name: string): Promise<IpcResult<{ path: string; count: number } | null>>
     /** Reads a pack the user picks; all or nothing. Null when cancelled. */

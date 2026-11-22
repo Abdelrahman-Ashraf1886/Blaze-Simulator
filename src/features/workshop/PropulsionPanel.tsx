@@ -52,7 +52,7 @@ export function ReadyPanel({ doc, geo }: { doc: AssemblyDocument; geo: FrameGeom
   return (
     <div data-testid="ready-panel">
       <p className="border-t border-line py-2 text-[12px] leading-relaxed text-fg-subtle">
-        No source states these for this build. Flight stays blocked until each is entered.
+        No source states these for this build. The flight simulation (4.6) will refuse to start until each is entered.
       </p>
       <ul className="border-t border-line">
         {ready.map((item) => (
@@ -74,15 +74,33 @@ function ReadyRow({ item, follow }: { item: ReadyItem; follow: (l: ReadyLink) =>
       {item.link?.to === 'component' && <ExternalLink className="ml-auto mt-0.5 size-3 shrink-0 text-fg-subtle" aria-label="Opens the component library" />}
     </>
   )
-  const cls = 'flex w-full gap-2 border-b border-line/60 py-1.5 text-left text-[12.5px] leading-snug'
+  const cls = 'flex w-full gap-2 py-1.5 text-left text-[12.5px] leading-snug'
   return (
-    <li data-testid="ready-item" data-item={item.id}>
+    <li data-testid="ready-item" data-item={item.id} className="border-b border-line/60">
       {item.link ? (
-        <button type="button" className={cn(cls, 'hover:bg-hover/50')} onClick={() => follow(item.link!)} title="Go to the field">
+        <button
+          type="button"
+          className={cn(cls, 'hover:bg-hover/50')}
+          onClick={() => follow(item.link!)}
+          title={item.link.to === 'component' ? 'Enter it in the library (every part using this component)' : 'Go to the field'}
+        >
           {body}
         </button>
       ) : (
         <div className={cls}>{body}</div>
+      )}
+      {item.link?.to === 'component' && item.parts && item.parts.length > 0 && (
+        <p className="pb-1.5 pl-5.5 text-[11.5px] text-fg-subtle" data-testid="ready-override">
+          or override on one part:{' '}
+          {item.parts.map((p, i) => (
+            <span key={p.id}>
+              {i > 0 && ', '}
+              <button type="button" className="underline hover:text-fg" onClick={() => useWorkshopView.getState().selectPart(p.id)}>
+                {p.name}
+              </button>
+            </span>
+          ))}
+        </p>
       )}
     </li>
   )
@@ -250,7 +268,7 @@ function PairDetails({
         {m.electrical && (
           <div className="border-b border-line/60 py-1.5 text-[12px] leading-relaxed" data-testid="pair-i0">
             <span className="text-fg-muted">No-load current I₀ </span>
-            <span className="num text-fg">{m.electrical.noLoadCurrent} A</span>
+            <span className="num ml-1 text-fg">{m.electrical.noLoadCurrent} A</span>
             <span className="block text-[11.5px] text-fg-subtle">
               Stated once{m.electrical.noLoadCondition ? ` (${m.electrical.noLoadCondition})` : ''} and held constant.
               {v ? ` ${i0Outside} of ${v.rows.length} rows use it away from that voltage (unvalidated there).` : ''}

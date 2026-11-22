@@ -736,6 +736,11 @@ export interface ReadyItem {
   /** Which component or part, and why. */
   detail: string
   link: ReadyLink | null
+  /**
+   * For a component value: the parts it is missing on. The value can be entered once
+   * in the library (catalog fill, every project) or on one of these parts (override).
+   */
+  parts?: { id: string; name: string }[]
 }
 
 export interface ReadyInput {
@@ -771,7 +776,9 @@ export function readyToFly(input: ReadyInput): ReadyItem[] {
   const add = (item: ReadyItem) => {
     const had = items.get(item.id)
     if (!had) items.set(item.id, item)
+    else if (item.parts) had.parts = [...(had.parts ?? []), ...item.parts.filter((p) => !had.parts?.some((q) => q.id === p.id))]
   }
+
 
   if (!input.frameMassSet) {
     add({
@@ -807,6 +814,7 @@ export function readyToFly(input: ReadyInput): ReadyItem[] {
             label: `Motor ${FIELD_LABELS[key] ?? key}`,
             detail: `${mc.name} states no ${FIELD_LABELS[key] ?? key}.`,
             link: { to: 'component', componentId: mc.id, field: key },
+            parts: [{ id: slot.motor.partId, name: slot.motor.name }],
           })
         }
       }
@@ -817,6 +825,7 @@ export function readyToFly(input: ReadyInput): ReadyItem[] {
           label: 'Motor rotor inertia',
           detail: `${mc.name} states no rotor inertia or mechanical time constant; enter one (measured or from the maker).`,
           link: { to: 'component', componentId: mc.id, field: 'rotorInertia' },
+          parts: [{ id: slot.motor.partId, name: slot.motor.name }],
         })
       }
     }
@@ -835,10 +844,10 @@ export function readyToFly(input: ReadyInput): ReadyItem[] {
       continue
     }
     if (si(pc, 'mass') === null) {
-      add({ id: `component:${pc.id}:mass`, label: 'Propeller mass', detail: `${pc.name} states no mass (needed for its inertia).`, link: { to: 'component', componentId: pc.id, field: 'mass' } })
+      add({ id: `component:${pc.id}:mass`, label: 'Propeller mass', detail: `${pc.name} states no mass (needed for its inertia).`, link: { to: 'component', componentId: pc.id, field: 'mass' }, parts: [{ id: slot.prop.partId, name: slot.prop.name }] })
     }
     if (si(pc, 'diameter') === null) {
-      add({ id: `component:${pc.id}:diameter`, label: 'Propeller diameter', detail: `${pc.name} states no diameter.`, link: { to: 'component', componentId: pc.id, field: 'diameter' } })
+      add({ id: `component:${pc.id}:diameter`, label: 'Propeller diameter', detail: `${pc.name} states no diameter.`, link: { to: 'component', componentId: pc.id, field: 'diameter' }, parts: [{ id: slot.prop.partId, name: slot.prop.name }] })
     }
     if (mc) {
       const fit = fitPair(mc, pc)
@@ -882,6 +891,7 @@ export function readyToFly(input: ReadyInput): ReadyItem[] {
           label: `Battery ${FIELD_LABELS[key] ?? key}`,
           detail: `${bc.name} states no ${FIELD_LABELS[key] ?? key}${key === 'internalResistance' ? ' (needed for the voltage sag V = V_oc − I·R_int)' : ''}.`,
           link: { to: 'component', componentId: bc.id, field: key },
+          parts: [{ id: input.battery.partId, name: input.battery.name }],
         })
       }
     }

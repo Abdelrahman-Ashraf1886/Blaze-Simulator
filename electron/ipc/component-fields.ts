@@ -319,6 +319,13 @@ export interface ComponentInput {
 
 export interface Component extends ComponentInput {
   id: string
+  /**
+   * Catalog gap-fills (built-in records only): values the user entered for fields the
+   * record leaves empty, with their own provenance (source 'measured' or 'user').
+   * `specs` keeps the record's own values. Resolution: a part's override > fill >
+   * `specs` (src/domain/spec-resolution.ts). Absent when there are none.
+   */
+  fills?: Record<string, SpecValue>
   origin: ComponentOrigin
   /** Version of the field definitions the record was written with. */
   schemaVersion: number
@@ -329,3 +336,29 @@ export interface Component extends ComponentInput {
 }
 
 export const COMPONENT_SCHEMA_VERSION = 1
+
+/** Sources a user-entered value (catalog fill or part override) may carry. */
+export const USER_SPEC_SOURCES = ['measured', 'user'] as const
+export type UserSpecSource = (typeof USER_SPEC_SOURCES)[number]
+
+/** Field kinds a fill or override may set: single physical values. */
+export const OVERRIDABLE_KINDS = ['quantity', 'integer'] as const
+
+export const fieldDef = (category: ComponentCategory, key: string): FieldDef | undefined =>
+  COMPONENT_FIELDS[category].find((f) => f.key === key)
+
+export const isOverridable = (f: FieldDef | undefined): f is FieldDef & { kind: 'quantity' | 'integer' } =>
+  !!f && (OVERRIDABLE_KINDS as readonly string[]).includes(f.kind)
+
+/**
+ * The overridable field of this key in any category (a part override is validated
+ * before the part's component is known). Keys shared by categories have the same
+ * kind and dimension (unit-tested), so the first match is the definition.
+ */
+export function overridableField(key: string): (FieldDef & { kind: 'quantity' | 'integer' }) | undefined {
+  for (const c of COMPONENT_CATEGORIES) {
+    const f = fieldDef(c, key)
+    if (isOverridable(f)) return f
+  }
+  return undefined
+}

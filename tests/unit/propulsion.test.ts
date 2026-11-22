@@ -418,8 +418,9 @@ describe('ready-to-fly checklist', () => {
     const partial = readyToFly({ ...base, bodyCd: [1.1, null, 1.3] }).find((i) => i.id === 'body-cd')!
     expect(partial.label).toBe('Body drag coefficient C_d (y)')
     expect(partial.link).toEqual({ to: 'body-drag', axis: 'y' })
-    // Ground settings come with 4.4: listed, without a link until they exist.
-    expect(items[3]!.link).toBeNull()
+    // A project without environment settings: both ground values, linked to their fields.
+    expect(items[3]!.link).toEqual({ to: 'environment', elementId: 'ground-friction' })
+    expect(items[4]!.link).toEqual({ to: 'environment', elementId: 'ground-restitution' })
   })
 
   it('adds frame mass, unlinked parts and pairs without data', () => {
@@ -441,7 +442,10 @@ describe('ready-to-fly checklist', () => {
     const motor = withSpec(KV470, 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured' })
     const battery = withSpec(TATTU, 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured' })
     const motors = quad(motor, P13)
-    expect(readyToFly({ ...base, motors, battery: { partId: 'b', name: 'Battery 1', component: battery }, bodyCd: [1.1, 1.1, 1.2], ground: { friction: 0.6, restitution: 0.1 } })).toEqual([])
+    expect(readyToFly({ ...base, motors, battery: { partId: 'b', name: 'Battery 1', component: battery }, bodyCd: [1.1, 1.1, 1.2], environmentMissing: [] })).toEqual([])
+    // Missing obstacle values (from simEnvironment) are listed with their field's element id.
+    const env = readyToFly({ ...base, motors, battery: { partId: 'b', name: 'Battery 1', component: battery }, bodyCd: [1.1, 1.1, 1.2], environmentMissing: [{ field: 'obstacles[1].restitution', message: '' }] })
+    expect(env.map((i) => [i.id, i.label, i.link])).toEqual([['obstacle-2-restitution', 'Obstacle 2 restitution coefficient', { to: 'environment', elementId: 'obstacle-2-restitution' }]])
     const def = propulsionDefinition(motors.map((s) => analyseMotor(s)), battery)!
     expect(def.motors).toHaveLength(4)
     const m = def.motors[0]!

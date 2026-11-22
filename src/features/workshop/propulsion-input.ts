@@ -4,6 +4,7 @@
  * the battery, and the inputs the Ready-to-fly checklist needs. Pure.
  */
 import type { AssemblyDocument } from '../../../electron/ipc/contract'
+import { simEnvironment } from '../../domain/environment'
 import { analyseMotor, batteryModel, readyToFly, type MotorPropulsion, type MotorSlot, type ReadyInput, type ReadyItem } from '../../domain/propulsion'
 import type { FrameGeometry } from '../../three/frame-geometry'
 import { linkedComponent, type ComponentIndex } from './links'
@@ -28,11 +29,16 @@ export interface PropulsionState {
   ready: ReadyItem[]
 }
 
+/** The environment values the engine would refuse to run without (none when complete). */
+function environmentMissing(env: AssemblyDocument['environment']) {
+  const r = simEnvironment(env)
+  return r.ok ? [] : r.missing
+}
+
 export function propulsionState(
   doc: AssemblyDocument,
   geo: FrameGeometry,
   components: ComponentIndex,
-  ground?: ReadyInput['ground'],
 ): PropulsionState {
   const slots = motorSlots(doc, geo, components)
   const battery = doc.parts.find((p) => p.kind === 'battery')
@@ -43,7 +49,7 @@ export function propulsionState(
     motors: slots,
     battery: battery ? { partId: battery.id, name: battery.name, component: linkedComponent(battery, components) } : null,
     bodyCd: doc.bodyDrag?.cd ?? [null, null, null],
-    ...(ground ? { ground } : {}),
+    environmentMissing: environmentMissing(doc.environment),
   }
   const pack = input.battery?.component ? batteryModel(input.battery.component) : null
   const supply = pack?.ok ? pack.value.openCircuitVoltage : null

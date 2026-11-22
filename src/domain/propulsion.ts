@@ -725,8 +725,8 @@ export type ReadyLink =
   | { to: 'body-drag'; axis: 'x' | 'y' | 'z' }
   | { to: 'part'; partId: string }
   | { to: 'component'; componentId: string; field: string }
-  /** The environment settings (ground contact); null target until they exist in this build. */
-  | { to: 'environment' }
+  /** A field of the workshop's Environment section, by its element id (e.g. `ground-friction`, `obstacle-2-restitution`). */
+  | { to: 'environment'; elementId: string }
 
 export interface ReadyItem {
   /** Stable, unique: the same missing value on four motors is one item. */
@@ -753,10 +753,11 @@ export interface ReadyInput {
   /** Body C_d per axis [x, y, z]; null = that axis not entered. */
   bodyCd: readonly [number | null, number | null, number | null]
   /**
-   * Ground contact settings. `undefined`: this build has no environment settings yet
-   * (they come with 4.4), so they are listed as missing without a link.
+   * Environment values still missing (`simEnvironment(doc.environment).missing`, from
+   * `src/domain/environment.ts`): ground and obstacle friction and restitution.
+   * `undefined` is a project without environment settings, so both ground values are missing.
    */
-  ground?: { friction: number | null; restitution: number | null }
+  environmentMissing?: readonly { field: string; message: string }[]
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -906,21 +907,21 @@ export function readyToFly(input: ReadyInput): ReadyItem[] {
       link: { to: 'body-drag', axis: axes[0]! },
     })
   }
-  const g = input.ground
-  if (!g || g.friction === null) {
+  const envMissing = input.environmentMissing ?? [
+    { field: 'ground.friction', message: 'Ground friction is not set.' },
+    { field: 'ground.restitution', message: 'Ground restitution is not set.' },
+  ]
+  for (const m of envMissing) {
+    // `ground.friction` → `ground-friction`; `obstacles[1].restitution` → `obstacle-2-restitution`
+    // (the element ids of the Environment section's fields).
+    const obstacle = m.field.match(/^obstacles\[(\d+)\]\.(\w+)$/)
+    const elementId = obstacle ? `obstacle-${Number(obstacle[1]) + 1}-${obstacle[2]}` : m.field.replace('.', '-')
+    const what = m.field.endsWith('friction') ? 'friction' : 'restitution'
     add({
-      id: 'ground-friction',
-      label: 'Ground friction coefficient',
-      detail: g ? 'Enter it in the environment settings.' : 'Set in the environment settings, which arrive with collisions (4.4).',
-      link: g ? { to: 'environment' } : null,
-    })
-  }
-  if (!g || g.restitution === null) {
-    add({
-      id: 'ground-restitution',
-      label: 'Ground restitution coefficient',
-      detail: g ? 'Enter it in the environment settings.' : 'Set in the environment settings, which arrive with collisions (4.4).',
-      link: g ? { to: 'environment' } : null,
+      id: elementId,
+      label: obstacle ? `Obstacle ${Number(obstacle[1]) + 1} ${what} coefficient` : `Ground ${what} coefficient`,
+      detail: 'No source states it for a given surface; enter it under Environment.',
+      link: { to: 'environment', elementId },
     })
   }
   return [...items.values()]

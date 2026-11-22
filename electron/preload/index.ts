@@ -23,6 +23,7 @@ const api: DesktopApi = {
     update: (id, baseRevision, input) => ipcRenderer.invoke('components:update', { id, baseRevision, input }),
     delete: (id) => ipcRenderer.invoke('components:delete', { id }),
     duplicate: (id) => ipcRenderer.invoke('components:duplicate', { id }),
+    setFill: (id, key, spec) => ipcRenderer.invoke('components:setFill', { id, key, spec }),
     exportPack: (ids, name) => ipcRenderer.invoke('components:exportPack', { ids, name }),
     importPack: () => ipcRenderer.invoke('components:importPack'),
   },

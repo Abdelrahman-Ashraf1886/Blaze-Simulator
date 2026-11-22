@@ -40,7 +40,8 @@ export function buildPack(components: readonly Component[], exportedAt: Date = n
       name: c.name,
       manufacturer: c.manufacturer,
       notes: c.notes,
-      specs: c.specs,
+      // Gap-fills travel as values, with their provenance.
+      specs: { ...c.specs, ...c.fills },
     })),
   }
   return `${JSON.stringify(pack, null, 2)}\n`

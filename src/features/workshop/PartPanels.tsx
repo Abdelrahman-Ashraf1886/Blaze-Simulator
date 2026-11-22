@@ -51,8 +51,8 @@ import { toMm } from './frame-values'
 import { ModelImport, Segmented, formatSize } from './ModelImport'
 import { UNIT_LABELS } from '@/three/model-units'
 import { useComponents } from '@/stores/components'
-import { CATEGORY_LABELS, type Component, type SpecReference, type SpecSource } from '../../../electron/ipc/component-fields'
-import { SOURCE_LABELS, formatNumber, formatReference } from '../components/spec-format'
+import { CATEGORY_LABELS, COMPONENT_FIELDS, isOverridable, type Component, type SpecReference, type SpecSource, type SpecValue } from '../../../electron/ipc/component-fields'
+import { SOURCE_LABELS, formatNumber, formatReference, formatValue } from '../components/spec-format'
 import {
   KIND_CATEGORIES,
   effectiveMass,
@@ -62,6 +62,8 @@ import {
   linkedShape,
   type ComponentIndex,
 } from './links'
+import { resolveSpec, type SpecLayer } from '@/domain/spec-resolution'
+import { UserValueEditor } from '../components/UserValueEditor'
 
 import { componentIndex, useComponentIndex } from './component-index'
 import { addPlaced, attachPlaced, editSize } from './place-actions'
@@ -448,6 +450,10 @@ export function PartInspector({ doc, geo }: { doc: AssemblyDocument; geo: FrameG
         )}
       </div>
 
+      {part.componentId && components[part.componentId] && (
+        <LinkedSpecs part={part} component={components[part.componentId]!} set={set} />
+      )}
+
       <SubHeading>Inertia</SubHeading>
       <InertiaEditor part={part} components={components} />
 
@@ -821,4 +827,96 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 
 function SubHeading({ children }: { children: ReactNode }) {
   return <h3 className="mt-4 truncate pb-1 text-[12px] font-medium text-fg-subtle">{children}</h3>
+}
+
+const LAYER_LABELS: Record<SpecLayer, string> = {
+  instance: 'Override on this part',
+  catalog: 'Library gap-fill',
+  manufacturer: 'Component',
+}
+
+/**
+ * The linked component's single values as this part uses them, with the layer each
+ * comes from (part override > library gap-fill > component's own value), and an
+ * override for this part only (src/domain/spec-resolution.ts).
+ */
+function LinkedSpecs({
+  part,
+  component,
+  set,
+}: {
+  part: AssemblyPart
+  component: Component
+  set: (label: string, patch: Partial<AssemblyPart>) => void
+}) {
+  const [editing, setEditing] = useState<string | null>(null)
+  const fields = COMPONENT_FIELDS[component.category].filter(isOverridable)
+  const resolved = fields.map((f) => ({ f, r: resolveSpec(component, part.overrides, f.key) }))
+  const overridden = resolved.filter((x) => x.r.layer === 'instance').length
+  const missing = resolved.filter((x) => x.r.layer === 'missing').length
+  const write = (key: string, v: SpecValue | null) => {
+    const next = { ...part.overrides }
+    if (v === null) delete next[key]
+    else next[key] = v
+    const label = fields.find((f) => f.key === key)!.label
+    set(v === null ? `Clear ${label} override on ${part.name}` : `Override ${label} on ${part.name}`, {
+      overrides: Object.keys(next).length > 0 ? next : undefined,
+    })
+  }
+  return (
+    <details className="mt-4" open={overridden + missing > 0} data-testid="part-specs">
+      <summary className="cursor-pointer truncate pb-1 text-[12px] font-medium text-fg-subtle">
+        Specifications{overridden > 0 ? ` · ${overridden} overridden` : ''}
+        {missing > 0 ? ` · ${missing} not stated` : ''}
+      </summary>
+      <div className="border-t border-line">
+        {resolved.map(({ f, r }) => (
+          <div key={f.key} className="border-b border-line/60 py-1.5" data-testid={`part-spec-${f.key}`} data-layer={r.layer}>
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="min-w-0 truncate text-[12.5px] text-fg-muted">{f.label}</span>
+              <span className={cn('text-[12.5px]', r.value ? 'num text-fg' : 'text-fg-subtle')}>{r.value ? formatValue(f, r.value) : 'not stated'}</span>
+            </div>
+            <div className="flex flex-wrap items-baseline justify-end gap-x-2 text-right text-[11.5px]">
+              {r.value && (
+                <span className={r.layer === 'instance' ? 'text-accent' : 'text-fg-subtle'} data-testid="part-spec-layer">
+                  {LAYER_LABELS[r.layer as SpecLayer]} · {SOURCE_LABELS[r.value.source]}
+                </span>
+              )}
+              {r.layer === 'instance' && (r.layers.catalog ?? r.layers.manufacturer) && (
+                <span className="text-fg-subtle">
+                  hides {formatValue(f, (r.layers.catalog ?? r.layers.manufacturer)!)}
+                </span>
+              )}
+              {r.layer === 'instance' ? (
+                <button type="button" className="text-fg-subtle underline hover:text-fault" onClick={() => write(f.key, null)} data-testid="override-clear">
+                  Clear
+                </button>
+              ) : (
+                editing !== f.key && (
+                  <button type="button" className="text-accent hover:underline" onClick={() => setEditing(f.key)} data-testid="override-start">
+                    Override
+                  </button>
+                )
+              )}
+            </div>
+            {editing === f.key && (
+              <UserValueEditor
+                field={f}
+                idPrefix="override"
+                onCancel={() => setEditing(null)}
+                onSave={(v) => {
+                  write(f.key, v)
+                  setEditing(null)
+                }}
+              />
+            )}
+          </div>
+        ))}
+        <p className="py-1.5 text-[11.5px] leading-relaxed text-fg-subtle">
+          An override applies to this part only and wins over the library value. To fill a gap for every part using{' '}
+          {component.name}, enter it in the Components library.
+        </p>
+      </div>
+    </details>
+  )
 }

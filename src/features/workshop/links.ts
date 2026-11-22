@@ -23,6 +23,7 @@ import {
   type SpecValue,
 } from '../../../electron/ipc/component-fields'
 import type { AssemblyDocument, AssemblyPart, PartKind, PartShape } from '../../../electron/ipc/contract'
+import { effectiveComponent } from '../../domain/spec-resolution'
 import { toSI } from '../../domain/units'
 
 export type ComponentIndex = Readonly<Record<string, Component>>
@@ -46,8 +47,18 @@ export const KIND_CATEGORIES: Record<PartKind, readonly ComponentCategory[]> = {
 export const linkableComponents = (kind: PartKind, all: readonly Component[]) =>
   all.filter((c) => KIND_CATEGORIES[kind].includes(c.category))
 
-export function linkedComponent(part: AssemblyPart, components: ComponentIndex): Component | null {
+/** The library record as stored (its own values and gap-fills, without this part's overrides). */
+export function libraryComponent(part: AssemblyPart, components: ComponentIndex): Component | null {
   return part.componentId ? (components[part.componentId] ?? null) : null
+}
+
+/**
+ * The linked component as calculations see it: part override > catalog gap-fill >
+ * stated value (src/domain/spec-resolution.ts). Every consumer reads through this.
+ */
+export function linkedComponent(part: AssemblyPart, components: ComponentIndex): Component | null {
+  const c = libraryComponent(part, components)
+  return c ? effectiveComponent(c, part.overrides) : null
 }
 
 const quantity = (spec: SpecValue | undefined): QuantityValue | null =>

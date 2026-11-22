@@ -1,7 +1,7 @@
 {
   "format": "blaze-uav.components",
   "version": 1,
-  "seedVersion": 3,
+  "seedVersion": 4,
   "note": "Built-in components. Every value was read on the manufacturer's page given in its reference on the date shown.",
   "components": [
     {
@@ -2340,7 +2340,7 @@
             "retrieved": "2026-11-21",
             "locator": "Specifications tab"
           },
-          "condition": "Stated as \"Weight (Single Blade)\""
+          "condition": "Stated as \"Weight (Single Blade)\"; taken as the whole propeller (one of the pair), as mass.ts does; the wording is ambiguous and unverified"
         },
         "material": {
           "value": "CF+Epoxy",
@@ -2411,7 +2411,7 @@
             "retrieved": "2026-11-21",
             "locator": "Specifications tab"
           },
-          "condition": "±1.5 g; stated as \"Weight (Single Blade)\""
+          "condition": "±1.5 g; stated as \"Weight (Single Blade)\"; taken as the whole propeller (one of the pair); the wording is ambiguous and unverified"
         },
         "material": {
           "value": "CF+Epoxy",
@@ -2900,7 +2900,7 @@
             "retrieved": "2026-11-21",
             "locator": "PER3_10x45MR.dat (v2022-0915, simulation date 09/22/2022): V = 0 row of each PROP RPM block"
           },
-          "condition": "Computed by APC (vortex-theory analysis of the blade geometry), not measured; static rows only; air density not stated in the file"
+          "condition": "Computed by APC (vortex-theory analysis), not measured; sea-level Standard Atmosphere, 1.225 kg/m³ (APC FAQ, www.apcprop.com/faq, read 2026-11-22); static rows only"
         }
       }
     },
@@ -3344,7 +3344,7 @@
             "retrieved": "2026-11-21",
             "locator": "PER3_11x45MR.dat (v2022-0915, simulation date 09/22/2022): V = 0 row of each PROP RPM block"
           },
-          "condition": "Computed by APC (vortex-theory analysis of the blade geometry), not measured; static rows only; air density not stated in the file"
+          "condition": "Computed by APC (vortex-theory analysis), not measured; sea-level Standard Atmosphere, 1.225 kg/m³ (APC FAQ, www.apcprop.com/faq, read 2026-11-22); static rows only"
         }
       }
     },
@@ -3770,7 +3770,7 @@
             "retrieved": "2026-11-21",
             "locator": "PER3_12x45MR.dat (v2022-0915, simulation date 09/22/2022): V = 0 row of each PROP RPM block"
           },
-          "condition": "Computed by APC (vortex-theory analysis of the blade geometry), not measured; static rows only; air density not stated in the file"
+          "condition": "Computed by APC (vortex-theory analysis), not measured; sea-level Standard Atmosphere, 1.225 kg/m³ (APC FAQ, www.apcprop.com/faq, read 2026-11-22); static rows only"
         }
       }
     },

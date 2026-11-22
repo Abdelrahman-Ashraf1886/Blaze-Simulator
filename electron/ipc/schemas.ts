@@ -1,5 +1,7 @@
 /** zod validation for IPC request payloads. Main process only. */
 import { z } from 'zod'
+import { overridableField, type SpecValue } from './component-fields'
+import { userSpecSchema } from './component-schemas'
 import { inertiaProblem } from './inertia'
 import {
   FRAME_PARAM_LIMITS,
@@ -93,6 +95,21 @@ const partSchema = z.object({
     })
     .nullable()
     .optional(),
+  overrides: z
+    // Each value is checked against its field below (userSpecSchema).
+    .record(z.string(), z.custom<SpecValue>(() => true))
+    .superRefine((o, ctx) => {
+      for (const [key, v] of Object.entries(o)) {
+        const f = overridableField(key)
+        if (!f) {
+          ctx.addIssue({ code: 'custom', message: `"${key}" cannot be overridden on a part`, path: [key] })
+          continue
+        }
+        const r = userSpecSchema(f).safeParse(v)
+        if (!r.success) ctx.addIssue({ code: 'custom', message: `${f.label}: ${r.error.issues.map((x) => x.message).join('; ')}`, path: [key] })
+      }
+    })
+    .optional(),
 })
 
 const motorMountSchema = z.object({
@@ -148,6 +165,8 @@ export const environmentDocSchema = z
       }),
   })
   .strict()
+/** One axis of the body drag coefficient; null = not entered. */
+const bodyCd = z.number().positive('C_d must be more than 0').max(10, 'C_d must be at most 10').nullable()
 
 export const saveAssemblySchema = z
   .object({
@@ -156,6 +175,14 @@ export const saveAssemblySchema = z
     frame: frameParamsSchema,
     frameMass: z
       .object({ valueKg: z.number().positive('Frame mass must be more than 0').max(100, 'Frame mass must be at most 100 kg'), source: z.literal('user') })
+      .strict()
+      .nullable()
+      .optional(),
+    bodyDrag: z
+      .object({
+        cd: z.tuple([bodyCd, bodyCd, bodyCd]),
+        source: z.literal('user'),
+      })
       .strict()
       .nullable()
       .optional(),

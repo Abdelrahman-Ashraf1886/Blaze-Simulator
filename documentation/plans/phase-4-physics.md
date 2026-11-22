@@ -132,6 +132,18 @@ sent totals beyond 1e-9 relative is an error, not a silent correction.
   - K_t (I − I₀) = k_Q ω².
   - The solved RPM and thrust are compared with the cited table and the error is
     reported. That comparison is the model's validation.
+  - Done in 4.5 (follow-up), as implemented:
+    - "throttle" is mapped to an effective duty through the motor table's bench
+      throttle map. This is an empirical effective control ratio, derived per
+      row from d·V = ω/K_v + R·I/d and taken as the median per step; it is
+      monotone and bounded, and extrapolation is flagged. It is not an ESC
+      efficiency.
+    - The ideal lossless converter is kept as an assumption.
+    - k_Q uses each row's effective duty.
+    - Validation is leave-one-prop-out; k_T and k_Q are in-sample fits.
+    - Every fit states its speed domain.
+    - The status is "coherent and bounded", with the remaining uncertainty
+      listed in the DEVLOG; it is not "validated".
 - **Response**: J dω/dt = K_t (I − I₀) − k_Q ω².
   - Prop inertia is derived from mass and radius (blade-as-rod assumption,
     labelled).
@@ -150,7 +162,9 @@ sent totals beyond 1e-9 relative is an error, not a silent correction.
 
 **Aerodynamics**
 
-- Body drag per axis: F = ½ ρ C_d A v².
+- Body drag per axis: F = ½ ρ C_d A v² (as built: C_d,i and A_i per body axis,
+  F_b,i = −½ρ C_d,i A_i v_b,i|v_b,i| with v_b = Rᵀv; A_i is the union of the
+  non-propeller collision shapes projected on each body plane, `src/domain/aero.ts`).
   - A is the projected area of the collision shapes, which is derived.
   - C_d is entered by the user.
   - ρ comes from the ISA standard atmosphere (ISO 2533, cited) at the altitude and
@@ -200,6 +214,10 @@ Frame mass (or a cited density), battery internal resistance (Tattu), body C_d,
 motor rotor inertia (or time constant), ground friction and restitution, and k_T
 for any motor and prop pair without data. A "Ready to fly" checklist lists exactly
 what is missing for the current build, with a link to each field.
+- Body C_d is per axis (x, y, z).
+- A value a built-in component leaves empty can be entered once in the library
+  (catalog gap-fill, every project) or on one part (override). Resolution order:
+  part override > gap-fill > stated value > missing.
 
 ## Data sources found / not found
 
@@ -214,8 +232,10 @@ Searched on 2026-11-21. The found values are in the seed (APC) and in
   - stored: the static (V = 0) row of every RPM block, with all 15 columns in the
     file's units;
   - caveat: APC states this data is **computed** by vortex-theory analysis of the
-    blade geometry, not measured, and the file does not state the air density.
-    A k_T fitted to it (4.5) must say it comes from computed data.
+    blade geometry, not measured. The file does not state the air density;
+    APC's FAQ (https://www.apcprop.com/faq/, read 2026-11-22) states the
+    sea-level Standard Atmosphere, 1.225 kg/m³, which is cited in the seed
+    condition. A k_T fitted to it (4.5) says it comes from computed data.
 - **Carbon-fibre plate density**: 1.6 g/cm³ from two datasheets:
   - Elevated Materials EM-CF Sheet: 0/90 layup, toughened epoxy, fibre fraction
     not stated;
@@ -256,7 +276,7 @@ Each milestone ends with `npm run test:all` green, a DEVLOG entry and screenshot
 | 4.2 Editor additions ✅ | New part kinds: GPS, camera, sensor, landing gear (parametric legs/skids); drag a component from the library into the viewport or onto a mount; scale tool for envelope parts only (linked components keep their stated size); per-part inertia and CoM-offset override; collision-shape choice |
 | 4.3 Engine foundation ✅ | rapier3d-f64 with enhanced determinism; protocol v2; `vehicle.load` from the assembly; cross-check against `mass.ts`; spikes: gyroscopic term and determinism hash; ADR 0005 (rapier) and ADR 0006 (mass properties in TS, simulation in Rust) |
 | 4.4 Collisions | Interference check in the workshop (live while dragging, debounced); tolerance and allowed pairs; collision-boundary debug view; ground and obstacle contact in the engine |
-| 4.5 Motor, prop and battery models | k_T and k_Q fits and the steady-state solver; validation against the cited thrust tables (error shown); APC performance data sourced into the seed (done, with the cited reference data); Ready-to-fly checklist |
+| 4.5 Motor, prop and battery models ✅ | k_T and k_Q fits and the steady-state solver; validation against the cited thrust tables (error shown); APC performance data sourced into the seed (done, with the cited reference data); Ready-to-fly checklist. Follow-up: bench throttle map, leave-one-prop-out validation, fit domains, catalog gap-fills and part overrides, per-axis body drag. Status: coherent and bounded, not validated (see the DEVLOG) |
 | 4.6 Flight dynamics | Per-motor forces at their true pose, reaction torque, gravity, drag, battery sag and consumption; analytical tests |
 | 4.7 Controller | Angle/rate cascade, allocation, altitude hold, PX4 default gains (cited) |
 | 4.8 Flight test view and physics debug | Engine → renderer state stream; flight view with ground and obstacles; keyboard sticks; a debug panel showing every value the spec lists (mass, CoM, inertia, thrust per motor and total, torque per axis, angular and linear velocity, collisions, battery use); indicators for unbalanced mass, motor layout, collisions, T/W below the limit and instability |

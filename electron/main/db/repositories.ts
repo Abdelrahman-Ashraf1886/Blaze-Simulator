@@ -2,10 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { TRIANGLE_WARNING } from '../../ipc/contract'
 import {
   COMPONENT_SCHEMA_VERSION,
+  fieldDef,
+  isOverridable,
   type Component,
   type ComponentCategory,
   type ComponentInput,
   type ComponentOrigin,
+  type SpecValue,
 } from '../../ipc/component-fields'
 import type {
   AssetInfo,
@@ -58,6 +61,7 @@ interface PartRow {
   mass_source: 'user' | null
   component_id: string | null
   inertia_json: string | null
+  overrides_json?: string | null
 }
 
 const toPart = (r: PartRow): AssemblyPart => ({
@@ -74,6 +78,8 @@ const toPart = (r: PartRow): AssemblyPart => ({
   ...(r.component_id ? { componentId: r.component_id } : {}),
   // Omitted when not set, so documents without an override round-trip unchanged.
   ...(r.inertia_json ? { inertia: JSON.parse(r.inertia_json) as AssemblyPart['inertia'] } : {}),
+  // Omitted when there are none (schema v11).
+  ...(r.overrides_json ? { overrides: JSON.parse(r.overrides_json) as AssemblyPart['overrides'] } : {}),
 })
 
 const wiringFields = (w: Pick<Assembly, 'wires' | 'schematic'>) => ({
@@ -171,8 +177,23 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
   const getComponent = (id: string): Component => {
     const row = db.prepare('SELECT * FROM components WHERE id = ?').get(id) as ComponentRow | undefined
     if (!row) throw new NotFoundError(`Component ${id} not found`)
-    return toComponent(row)
+    return withFills(toComponent(row), fillsOf(id))
   }
+
+  /** Catalog gap-fills (schema v11) of one component, or of all when `id` is omitted. */
+  function fillsOf(id: string): Record<string, SpecValue> | undefined
+  function fillsOf(): Map<string, Record<string, SpecValue>>
+  function fillsOf(id?: string) {
+    const rows = (
+      id === undefined
+        ? db.prepare('SELECT component_id, field_key, spec_json FROM component_fills ORDER BY field_key').all()
+        : db.prepare('SELECT component_id, field_key, spec_json FROM component_fills WHERE component_id = ? ORDER BY field_key').all(id)
+    ) as { component_id: string; field_key: string; spec_json: string }[]
+    const all = new Map<string, Record<string, SpecValue>>()
+    for (const r of rows) all.set(r.component_id, { ...all.get(r.component_id), [r.field_key]: JSON.parse(r.spec_json) as SpecValue })
+    return id === undefined ? all : all.get(id)
+  }
+  const withFills = (c: Component, fills: Record<string, SpecValue> | undefined): Component => (fills ? { ...c, fills } : c)
 
   /** Inserts a validated record. `origin` is 'user' unless an import or the seed loader says otherwise. */
   const createComponent = (input: ComponentInput, origin: ComponentOrigin = 'user', id: string = randomUUID()): Component => {
@@ -253,8 +274,31 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
             ? db.prepare('SELECT * FROM components WHERE category = ? ORDER BY name COLLATE NOCASE, id').all(category)
             : db.prepare('SELECT * FROM components ORDER BY category, name COLLATE NOCASE, id').all()
         ) as ComponentRow[]
-        return rows.map(toComponent)
+        const fills = fillsOf()
+        return rows.map((r) => withFills(toComponent(r), fills.get(r.id)))
       },
+      /**
+       * Sets (or, with null, removes) a catalog gap-fill on a built-in component: only a
+       * quantity or integer field the record leaves empty, with source 'measured' or
+       * 'user'. The seed record itself is never changed. `spec` is validated by the caller
+       * (`userSpecSchema`); the rules that need the record are checked here.
+       */
+      setFill: db.transaction((id: string, key: string, spec: SpecValue | null): Component => {
+        const c = getComponent(id)
+        if (c.origin !== 'built-in') throw new ValidationError('Edit your own components directly; gap-fills are for built-in records.')
+        const f = fieldDef(c.category, key)
+        if (!isOverridable(f)) throw new ValidationError(`"${key}" is not a single value of a ${c.category}.`)
+        if (spec === null) {
+          db.prepare('DELETE FROM component_fills WHERE component_id = ? AND field_key = ?').run(id, key)
+          return getComponent(id)
+        }
+        if (c.specs[key] && !c.fills?.[key]) throw new ValidationError(`${c.name} already states ${f.label.toLowerCase()}; override it on a part instead.`)
+        db.prepare(
+          `INSERT INTO component_fills (component_id, field_key, spec_json, updated_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT (component_id, field_key) DO UPDATE SET spec_json = excluded.spec_json, updated_at = excluded.updated_at`,
+        ).run(id, key, JSON.stringify(spec), now().toISOString())
+        return getComponent(id)
+      }),
       get: getComponent,
       create: createComponent,
       exists(id: string): boolean {
@@ -302,7 +346,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
       duplicate(id: string): Component {
         const c = getComponent(id)
         return createComponent(
-          { category: c.category, name: `${c.name} (copy)`.slice(0, 120), manufacturer: c.manufacturer, notes: c.notes, specs: c.specs },
+          // Gap-fills become the copy's own values, keeping their provenance.
+          { category: c.category, name: `${c.name} (copy)`.slice(0, 120), manufacturer: c.manufacturer, notes: c.notes, specs: { ...c.specs, ...c.fills } },
           'user',
         )
       },
@@ -321,6 +366,10 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
               frame_mass_source: 'user' | null
               interference_json: string | null
               environment_json: string | null
+              body_cd_x?: number | null
+              body_cd_y?: number | null
+              body_cd_z?: number | null
+              body_cd_source?: 'user' | null
               updated_at: string
             }
           | undefined
@@ -360,6 +409,10 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           // Omitted when not set, so documents saved before schema v10 round-trip unchanged.
           ...(row.interference_json !== null ? { interference: JSON.parse(row.interference_json) as InterferenceSettingsDoc } : {}),
           ...(row.environment_json !== null ? { environment: JSON.parse(row.environment_json) as EnvironmentDoc } : {}),
+          // Omitted when not set (schema v11), like the frame mass.
+          ...(row.body_cd_source != null
+            ? { bodyDrag: { cd: [row.body_cd_x ?? null, row.body_cd_y ?? null, row.body_cd_z ?? null], source: row.body_cd_source } }
+            : {}),
           // Omitted when empty, so documents without wiring round-trip unchanged.
           ...wiringFields(JSON.parse(row.wiring_json) as Pick<Assembly, 'wires' | 'schematic'>),
         }
@@ -413,6 +466,15 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           input.environment ? JSON.stringify(input.environment) : null,
           ts,
         )
+        // Separate statement so the columns of schema v11 stay apart from the upsert above.
+        const cd = input.bodyDrag?.cd ?? [null, null, null]
+        db.prepare('UPDATE assemblies SET body_cd_x = ?, body_cd_y = ?, body_cd_z = ?, body_cd_source = ? WHERE project_id = ?').run(
+          cd[0],
+          cd[1],
+          cd[2],
+          input.bodyDrag?.source ?? null,
+          input.projectId,
+        )
         db.prepare('DELETE FROM assembly_parts WHERE project_id = ?').run(input.projectId)
         const insert = db.prepare(
           `INSERT INTO assembly_parts (id, project_id, sort_index, parent_id, mount_id, kind, name, shape_json,
@@ -437,6 +499,11 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
             p.inertia ? JSON.stringify(p.inertia) : null,
           ),
         )
+        // Separate statement so the schema v11 column stays apart from the insert above.
+        const setOverrides = db.prepare('UPDATE assembly_parts SET overrides_json = ? WHERE id = ? AND project_id = ?')
+        for (const p of input.parts) {
+          if (p.overrides && Object.keys(p.overrides).length > 0) setOverrides.run(JSON.stringify(p.overrides), p.id, input.projectId)
+        }
         db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(ts, input.projectId)
         return { revision, updatedAt: ts }
       }),

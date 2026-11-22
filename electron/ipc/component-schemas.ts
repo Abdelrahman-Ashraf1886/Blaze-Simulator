@@ -12,6 +12,7 @@ import {
   COMPONENT_FIELDS,
   PORT_TYPES,
   SPEC_SOURCES,
+  USER_SPEC_SOURCES,
   type ComponentCategory,
   type ComponentInput,
   type FieldDef,
@@ -189,6 +190,19 @@ export const componentInputSchema: z.ZodType<ComponentInput> = z.discriminatedUn
       .strict(),
   ) as unknown as [z.ZodObject, ...z.ZodObject[]],
 ) as unknown as z.ZodType<ComponentInput>
+
+/**
+ * A user-entered value for one quantity or integer field (catalog fill or part
+ * override): the field's own value schema, with source 'measured' or 'user' only.
+ */
+export function userSpecSchema(field: FieldDef): z.ZodType {
+  return valueSchema(field).refine(
+    (v) => (USER_SPEC_SOURCES as readonly string[]).includes((v as { source: string }).source),
+    'A value you enter is "measured" or "user", never "manufacturer"',
+  )
+}
+
+export const setFillSchema = z.object({ id: z.uuid(), key: z.string().min(1).max(64), spec: z.unknown().nullable() })
 
 export const componentIdSchema = z.object({ id: z.uuid() })
 export const updateComponentSchema = z.object({ id: z.uuid(), baseRevision: z.int().min(0), input: componentInputSchema })

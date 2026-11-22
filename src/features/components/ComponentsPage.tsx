@@ -1,11 +1,13 @@
 import { Copy, Download, ExternalLink, FileUp, Pencil, Plus, Search, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import {
   CATEGORY_LABELS,
   COMPONENT_CATEGORIES,
   COMPONENT_FIELDS,
   type Component,
   type ComponentCategory,
+  isOverridable,
   type FieldDef,
   type SpecValue,
 } from '../../../electron/ipc/component-fields'
@@ -18,6 +20,7 @@ import { Input } from '@/components/ui/field'
 import { cn, formatTimestamp } from '@/lib/utils'
 import { useComponents } from '@/stores/components'
 import { ComponentEditor } from './ComponentEditor'
+import { UserValueEditor } from './UserValueEditor'
 import { SOURCE_LABELS, formatNumber, formatReference, formatValue, matches, provenanceSummary } from './spec-format'
 
 type Filter = ComponentCategory | 'all'
@@ -27,7 +30,11 @@ export function ComponentsPage() {
   const { components, loading, error } = useComponents()
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // `#/components?id=…&field=…` (e.g. from the workshop's Ready-to-fly checklist) selects a
+  // component and highlights one of its fields.
+  const [params] = useSearchParams()
+  const [selectedId, setSelectedId] = useState<string | null>(params.get('id'))
+  const highlight = selectedId !== null && selectedId === params.get('id') ? params.get('field') : null
   const [editing, setEditing] = useState<{ component: Component | null } | null>(null)
   const [deleting, setDeleting] = useState<Component | null>(null)
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null)
@@ -189,6 +196,7 @@ export function ComponentsPage() {
               <ComponentDetail
                 key={selected.id}
                 component={selected}
+                highlight={highlight}
                 onEdit={() => setEditing({ component: selected })}
                 onDuplicate={() =>
                   void act(async () => {
@@ -251,12 +259,15 @@ export function ComponentsPage() {
 
 function ComponentDetail({
   component: c,
+  highlight,
   onEdit,
   onDuplicate,
   onDelete,
   onExport,
 }: {
   component: Component
+  /** Field to scroll to and mark (a value the workshop asks for). */
+  highlight?: string | null
   onEdit: () => void
   onDuplicate: () => void
   onDelete: () => void
@@ -294,9 +305,24 @@ function ComponentDetail({
       <h3 className="mt-4 pb-1 text-[12px] font-medium text-fg-subtle">Specifications</h3>
       <dl className="border-t border-line" data-testid="spec-list">
         {COMPONENT_FIELDS[c.category].map((f) => (
-          <SpecRow key={f.key} field={f} spec={c.specs[f.key]} />
+          <SpecRow
+            key={f.key}
+            field={f}
+            spec={c.specs[f.key]}
+            fill={c.fills?.[f.key]}
+            fillable={builtIn && isOverridable(f)}
+            componentId={c.id}
+            highlight={f.key === highlight}
+          />
         ))}
       </dl>
+      {highlight && builtIn && (
+        <p className="mt-2 text-[12px] leading-relaxed text-fg-subtle" data-testid="highlight-note">
+          {isOverridable(COMPONENT_FIELDS[c.category].find((f) => f.key === highlight))
+            ? 'Enter the value above: it fills this gap wherever the component is linked, in every project, and stays apart from the manufacturer data. For one part only, override it in the workshop inspector.'
+            : `${lockedNote} Then enter the value in the copy and link the copy in the workshop.`}
+        </p>
+      )}
     </Section>
   )
 }
@@ -312,16 +338,71 @@ function Meta({ label, value, muted }: { label: string; value: string; muted?: b
 
 const SOURCE_TONE = { manufacturer: 'text-accent', measured: 'text-ok', user: 'text-fg-muted' } as const
 
-function SpecRow({ field, spec }: { field: FieldDef; spec: SpecValue | undefined }) {
+function SpecRow({
+  field,
+  spec: stated,
+  fill,
+  fillable = false,
+  componentId,
+  highlight = false,
+}: {
+  field: FieldDef
+  spec: SpecValue | undefined
+  /** Catalog gap-fill (wins over the stated value, src/domain/spec-resolution.ts). */
+  fill?: SpecValue
+  /** A built-in record's single-value field: the user may fill it when empty. */
+  fillable?: boolean
+  componentId?: string
+  highlight?: boolean
+}) {
+  const spec = fill ?? stated
   const ref = formatReference(spec?.reference)
+  const row = useRef<HTMLDivElement>(null)
+  const [editing, setEditing] = useState(highlight && fillable && !spec)
+  useEffect(() => {
+    if (highlight) row.current?.scrollIntoView({ block: 'center' })
+  }, [highlight])
+  const setFill = (v: SpecValue | null) => useComponents.getState().setFill(componentId!, field.key, v)
   return (
-    <div className="border-b border-line/60 py-1.5" data-testid={`spec-${field.key}`}>
+    <div
+      ref={row}
+      className={cn('border-b border-line/60 py-1.5', highlight && '-mx-2 rounded-[var(--radius-sm)] bg-warn/10 px-2 ring-1 ring-warn/60')}
+      data-testid={`spec-${field.key}`}
+      data-highlight={highlight || undefined}
+    >
       <div className="flex items-baseline justify-between gap-4">
         <dt className="shrink-0 text-[12.5px] text-fg-muted">{field.label}</dt>
         <dd className={cn('min-w-0 text-right', spec ? 'num text-fg' : 'text-[12.5px] text-fg-subtle')}>
           {spec ? formatValue(field, spec) : 'not specified'}
         </dd>
       </div>
+      {fill && (
+        <div className="mt-0.5 flex flex-wrap items-baseline justify-end gap-x-2 text-right text-[11.5px]" data-testid="spec-fill">
+          <span className="text-fg-subtle">Gap-fill in your library (not from the manufacturer)</span>
+          <button type="button" className="text-fg-subtle underline hover:text-fault" onClick={() => void setFill(null)} data-testid="fill-remove">
+            Remove
+          </button>
+          {stated && <span className="w-full text-warn">Manufacturer now states {formatValue(field, stated)}; your value is still used.</span>}
+        </div>
+      )}
+      {!spec && fillable && !editing && (
+        <div className="text-right">
+          <button type="button" className="text-[11.5px] text-accent hover:underline" onClick={() => setEditing(true)} data-testid="fill-enter">
+            Enter value
+          </button>
+        </div>
+      )}
+      {editing && isOverridable(field) && (
+        <UserValueEditor
+          field={field}
+          idPrefix="fill"
+          onCancel={() => setEditing(false)}
+          onSave={async (v) => {
+            await setFill(v)
+            setEditing(false)
+          }}
+        />
+      )}
       {spec && (
         <div className="mt-0.5 flex flex-wrap items-baseline justify-end gap-x-2 text-right text-[11.5px]">
           {spec.condition && <span className="text-fg-subtle">{spec.condition}</span>}

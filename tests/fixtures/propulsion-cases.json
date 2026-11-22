@@ -1,0 +1,1307 @@
+{
+ "note": "Generated from src/domain/propulsion.ts (steadyState, benchThrottleMap). TS and Rust must both reproduce these to 1e-12 (tests/unit/propulsion.test.ts, engine-core propulsion tests). Regenerate only for a deliberate model change.",
+ "cases": [
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0,
+    "omega": 0,
+    "supplyCurrent": 0,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0,
+    "omega": 0,
+    "supplyCurrent": 0,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.3,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.2958313707628523,
+    "omega": 208.2516323095145,
+    "supplyCurrent": 0.3223905176346008,
+    "extrapolated": true
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.3,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.2958313707628523,
+    "omega": 208.19802533882054,
+    "supplyCurrent": 0.32227024794188186,
+    "extrapolated": true
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.5,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.49305228460475387,
+    "omega": 342.93112583020763,
+    "supplyCurrent": 1.203845338113287,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.5,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.49305228460475387,
+    "omega": 342.6079458731979,
+    "supplyCurrent": 1.2018560494558388,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.6,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.5734764240989577,
+    "omega": 396.70221916110296,
+    "supplyCurrent": 1.815555491034247,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.6,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.5734764240989577,
+    "omega": 396.14254130774833,
+    "supplyCurrent": 1.8109213414185985,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.75,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.7064888135791717,
+    "omega": 484.259197323379,
+    "supplyCurrent": 3.2290434518326885,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.75,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.7064888135791717,
+    "omega": 483.05858873062834,
+    "supplyCurrent": 3.214101610849843,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.92,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.8113230747310333,
+    "omega": 552.1144867898688,
+    "supplyCurrent": 4.7472095382483035,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.92,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.8113230747310333,
+    "omega": 550.1211179642652,
+    "supplyCurrent": 4.714746876579206,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 1,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.8394958740236953,
+    "omega": 570.1827637048486,
+    "supplyCurrent": 5.2220610117012916,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV470",
+   "kvRadPerSV": 49.21828490624009,
+   "resistanceOhm": 0.135,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 1,
+   "throttleMap": [
+    [
+     0.5,
+     0.49305228460475387
+    ],
+    [
+     0.65,
+     0.6136884938460597
+    ],
+    [
+     0.75,
+     0.7064888135791717
+    ],
+    [
+     0.85,
+     0.7866718753499539
+    ],
+    [
+     1,
+     0.8394958740236953
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.8394958740236953,
+    "omega": 567.9240810007382,
+    "supplyCurrent": 5.182761692454238,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0,
+    "omega": 0,
+    "supplyCurrent": 0,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0,
+    "omega": 0,
+    "supplyCurrent": 0,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.3,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.30235658315038033,
+    "omega": 308.58472582753245,
+    "supplyCurrent": 0.8716092038878498,
+    "extrapolated": true
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.3,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.30235658315038033,
+    "omega": 308.3766662307853,
+    "supplyCurrent": 0.8705565307248234,
+    "extrapolated": true
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.5,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.5039276385839673,
+    "omega": 499.1191362766995,
+    "supplyCurrent": 3.5560833188754746,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.5,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.5039276385839673,
+    "omega": 497.7926889640627,
+    "supplyCurrent": 3.5380097752262176,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.6,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.5877709267672842,
+    "omega": 575.1422354571754,
+    "supplyCurrent": 5.449686228770883,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.6,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.5877709267672842,
+    "omega": 572.8316242816999,
+    "supplyCurrent": 5.407400350909185,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.75,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.7191880302555325,
+    "omega": 690.9076997852056,
+    "supplyCurrent": 9.527068816299701,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.75,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.7191880302555325,
+    "omega": 686.157731848694,
+    "supplyCurrent": 9.399478977980097,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.92,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.8366155594571686,
+    "omega": 791.1345624149595,
+    "supplyCurrent": 14.453165413911908,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.92,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.8366155594571686,
+    "omega": 783.0412237129341,
+    "supplyCurrent": 14.164073953528442,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0,
+   "throttle": 1,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.8696541504481924,
+    "omega": 818.8240006824875,
+    "supplyCurrent": 16.075418755297964,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "MN3110 KV700",
+   "kvRadPerSV": 73.30382858376184,
+   "resistanceOhm": 0.092,
+   "noLoadCurrentA": 0.3,
+   "torqueCoefNms2": 3.7e-7,
+   "supplyV": 14.8,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 1,
+   "throttleMap": [
+    [
+     0.5,
+     0.5039276385839673
+    ],
+    [
+     0.65,
+     0.6296925708589426
+    ],
+    [
+     0.75,
+     0.7191880302555325
+    ],
+    [
+     0.85,
+     0.8077067923400226
+    ],
+    [
+     1,
+     0.8696541504481924
+    ]
+   ],
+   "expected": {
+    "effectiveDuty": 0.8696541504481924,
+    "omega": 809.5584880903446,
+    "supplyCurrent": 15.71954101024387,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0,
+   "throttle": 0,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0,
+    "omega": 0,
+    "supplyCurrent": 0,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0,
+    "omega": 0,
+    "supplyCurrent": 0,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.3,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0.3,
+    "omega": 286.7759551545212,
+    "supplyCurrent": 0.39672134536436393,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.3,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0.3,
+    "omega": 286.6409599261609,
+    "supplyCurrent": 0.39648911972217293,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.5,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0.5,
+    "omega": 472.6593170048508,
+    "supplyCurrent": 1.36703414975746,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.5,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0.5,
+    "omega": 471.91182101790696,
+    "supplyCurrent": 1.3635038340821852,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.6,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0.6,
+    "omega": 563.2724182804494,
+    "supplyCurrent": 2.203654903173033,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.6,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0.6,
+    "omega": 561.8524524385717,
+    "supplyCurrent": 2.194069069867425,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.75,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0.75,
+    "omega": 696.4901474504455,
+    "supplyCurrent": 4.013238941216575,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.75,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0.75,
+    "omega": 693.3448797039088,
+    "supplyCurrent": 3.980453416587207,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0,
+   "throttle": 0.92,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0.92,
+    "omega": 843.8001334747922,
+    "supplyCurrent": 7.010387720319111,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 0.92,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 0.92,
+    "omega": 837.2699359033071,
+    "supplyCurrent": 6.909392699221256,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0,
+   "throttle": 1,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 1,
+    "omega": 911.8525015429808,
+    "supplyCurrent": 8.814749845701916,
+    "extrapolated": false
+   }
+  },
+  {
+   "name": "hand",
+   "kvRadPerSV": 100,
+   "resistanceOhm": 0.1,
+   "noLoadCurrentA": 0.5,
+   "torqueCoefNms2": 1e-7,
+   "supplyV": 10,
+   "sourceResistanceOhm": 0.012,
+   "throttle": 1,
+   "throttleMap": [],
+   "expected": {
+    "effectiveDuty": 1,
+    "omega": 903.0617094746424,
+    "supplyCurrent": 8.655204511192633,
+    "extrapolated": false
+   }
+  }
+ ]
+}

@@ -7,7 +7,7 @@
  * error instead of Electron's stringified exception.
  */
 
-import type { Component, ComponentCategory, ComponentInput } from './component-fields'
+import type { Component, ComponentCategory, ComponentInput, SpecValue } from './component-fields'
 export type * from './component-fields'
 
 // ---- Domain types -----------------------------------------------------------
@@ -176,6 +176,12 @@ export interface AssemblyPart {
    * src/domain/mass.ts). About the part's own CoM, in the part's axes.
    */
   inertia?: PartInertia | null
+  /**
+   * This part's own values for fields of its linked component (quantity and integer
+   * fields only; source 'measured' or 'user'). They win over the library's catalog
+   * fill and the manufacturer value for this part only. Absent = none.
+   */
+  overrides?: Record<string, SpecValue>
 }
 
 /** A measured or calculated inertia the user entered for one part. */
@@ -228,6 +234,13 @@ export interface UserMass {
   source: 'user'
 }
 
+/** Body drag coefficients the user entered, per body axis (no source states them). */
+export interface BodyDragInput {
+  /** C_d along body x (forward), y (left), z (up); null = that axis not entered yet. */
+  cd: [number | null, number | null, number | null]
+  source: 'user'
+}
+
 export interface AssemblyDocument {
   frame: FrameParams
   /**
@@ -235,6 +248,12 @@ export interface AssemblyDocument {
    * set: the centre of mass is then incomplete. Used by src/domain/mass.ts.
    */
   frameMass?: UserMass | null
+  /**
+   * Body drag coefficients per axis (F_i = ½ ρ C_d,i A_i v_i|v_i|, A_i derived from the
+   * collision shapes, src/domain/aero.ts). Absent, null, or a null axis = not set:
+   * listed in the Ready-to-fly checklist.
+   */
+  bodyDrag?: BodyDragInput | null
   /** Keyed by mount id (`motor-1` …); motors not listed use PX4 defaults. */
   motors: Record<string, MotorMount>
   parts: AssemblyPart[]
@@ -381,6 +400,8 @@ export const Channels = {
   componentsUpdate: 'components:update',
   componentsDelete: 'components:delete',
   componentsDuplicate: 'components:duplicate',
+  /** Sets or removes a catalog gap-fill on a built-in component (schema v11). */
+  componentsSetFill: 'components:setFill',
   /** Save / open dialogs in main; JSON component packs. */
   componentsExportPack: 'components:exportPack',
   componentsImportPack: 'components:importPack',
@@ -422,6 +443,8 @@ export interface DesktopApi {
     delete(id: string): Promise<IpcResult<null>>
     /** A user-owned copy (the way to change a built-in component). */
     duplicate(id: string): Promise<IpcResult<Component>>
+    /** Fills (or, with null, clears) an empty field of a built-in component; returns the updated record. */
+    setFill(id: string, key: string, spec: SpecValue | null): Promise<IpcResult<Component>>
     /** Writes the given components to a JSON pack the user picks; null when cancelled. */
     exportPack(ids: string[], name: string): Promise<IpcResult<{ path: string; count: number } | null>>
     /** Reads a pack the user picks; all or nothing. Null when cancelled. */

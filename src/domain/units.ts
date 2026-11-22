@@ -19,6 +19,7 @@
  * - mile per hour = 1609.344 m / 3600 s = 0.44704 m/s (exact);
  * - "1" is the unit of a dimensionless number (coefficients, ratios, Mach, Reynolds);
  * - kmol = 1000 mol, so kg/kmol and N·m/(kmol·K) carry a factor 10⁻³ to SI;
+ * - g·cm² = 10⁻³ kg × 10⁻⁴ m² = 10⁻⁷ kg·m² (moment of inertia);
  * - AWG → cross-section (ASTM B258): d = 0.127 mm × 92^((36 − n)/39), A = π·d²/4.
  */
 
@@ -48,6 +49,8 @@ export type Dimension =
   | 'molarMass'
   | 'molarGasConstant'
   | 'specificGasConstant'
+  | 'inertia'
+  | 'time'
 
 interface UnitDef {
   dimension: Dimension
@@ -110,6 +113,10 @@ export const UNITS = {
   rpm: { dimension: 'angularSpeed', factor: (2 * Math.PI) / 60 },
   'deg/s': { dimension: 'angularSpeed', factor: Math.PI / 180 },
   'mm²': { dimension: 'area', factor: 1e-6 },
+  'kg·m²': { dimension: 'inertia', factor: 1 },
+  'g·cm²': { dimension: 'inertia', factor: 1e-7 },
+  s: { dimension: 'time', factor: 1 },
+  ms: { dimension: 'time', factor: 0.001 },
   AWG: {
     dimension: 'area',
     toSI: (n) => (Math.PI * awgDiameterM(n) ** 2) / 4,

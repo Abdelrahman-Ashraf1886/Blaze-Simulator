@@ -12,8 +12,11 @@ import {
   componentInputSchema,
   describeIssues,
   listComponentsSchema,
+  setFillSchema,
   updateComponentSchema,
+  userSpecSchema,
 } from './component-schemas'
+import { fieldDef, isOverridable, type SpecValue } from './component-fields'
 import { ConflictError, NotFoundError, ValidationError, type Repositories } from '../main/db/repositories'
 
 /**
@@ -52,6 +55,15 @@ export function createHandlers(
         return null
       }),
     [Channels.componentsDuplicate]: (p) => componentValidated(componentIdSchema, p, (i) => repos.components.duplicate(i.id)),
+    [Channels.componentsSetFill]: (p) =>
+      componentValidated(setFillSchema, p, (i) => {
+        if (i.spec === null) return repos.components.setFill(i.id, i.key, null)
+        const f = fieldDef(repos.components.get(i.id).category, i.key)
+        if (!isOverridable(f)) return repos.components.setFill(i.id, i.key, i.spec as SpecValue) // refused there, with the reason
+        const parsed = userSpecSchema(f).safeParse(i.spec)
+        if (!parsed.success) throw new ValidationError(`${f.label}: ${parsed.error.issues.map((x) => x.message).join('; ')}`)
+        return repos.components.setFill(i.id, i.key, parsed.data as SpecValue)
+      }),
   }
 }
 

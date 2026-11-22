@@ -81,7 +81,7 @@ describe('built-in components', () => {
         expect(near(toSI(r.powerImperial!, 'hp'), r.power!, 0.0005 * 745.7 + 0.0005), where).toBe(true)
         expect(near(toSI(r.thrustImperial!, 'lbf'), r.thrust!, 0.0005 * 4.45 + 0.0005), where).toBe(true)
         expect(near(toSI(r.torqueImperial!, 'in·lbf'), r.torque!, 0.0005 * 0.113 + 0.0005), where).toBe(true)
-        // Ct/Cp definitions (file header): P = T·n·D·Cp/Ct, independent of the unstated air density.
+        // Ct/Cp definitions (file header): P = T·n·D·Cp/Ct, independent of the air density (sea-level ISA per APC's FAQ).
         const n = r.rpm! / 60
         expect(Math.abs((r.thrust! * n * D * r.cp!) / r.ct! / r.power! - 1), where).toBeLessThan(0.01)
       }

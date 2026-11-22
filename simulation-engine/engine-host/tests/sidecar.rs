@@ -282,3 +282,46 @@ fn sim_run_with_ground_reports_contacts_and_needs_the_surface_values() {
     let v = &r["result"]["state"]["linearVelocityMps"];
     assert!((0..3).all(|i| v[i].as_f64().unwrap().abs() < 1e-5), "{v}");
 }
+
+#[test]
+fn vehicle_load_accepts_propulsion_and_refuses_a_mismatch() {
+    let mut e = Engine::start();
+    let mut v = two_part_vehicle();
+    v["motors"] = serde_json::json!([{ "partId": "m1", "position": [0.1, 0.1, 0.05], "thrustAxis": [0, 0, 1], "spin": "cw" }]);
+    let motor = |id: &str| {
+        serde_json::json!({ "partId": id, "kvRadPerSV": 49.22, "resistanceOhm": 0.135, "noLoadCurrentA": 0.3,
+            "thrustCoefNs2": 2.294e-5, "torqueCoefNms2": 3.7e-7, "inertiaKgM2": 4e-5 })
+    };
+    let battery = serde_json::json!({ "openCircuitVoltageV": 14.8, "internalResistanceOhm": 0.012, "capacityC": 18720.0 });
+
+    // Without propulsion the result has no propulsion field (protocol unchanged for 4.3 callers).
+    let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": v}));
+    assert_eq!(r["result"]["valid"], true);
+    assert!(r["result"].get("propulsion").is_none(), "{r}");
+
+    let p = serde_json::json!({ "version": 1, "motors": [motor("m1")], "battery": battery });
+    let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": v, "propulsion": p}));
+    assert_eq!(r["result"]["valid"], true, "{r}");
+    assert_eq!(r["result"]["propulsion"]["motorCount"], 1);
+
+    // A motor the vehicle does not have: refused, and the loaded vehicle is cleared.
+    let p = serde_json::json!({ "version": 1, "motors": [motor("m9")], "battery": battery });
+    let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": v, "propulsion": p}));
+    assert_eq!(r["result"]["valid"], false);
+    let paths: Vec<&str> = r["result"]["errors"].as_array().unwrap().iter().map(|e| e["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["propulsion.motors[0].partId", "propulsion.motors"]);
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.01, "environment": {"ground": null, "obstacles": []}}));
+    assert_eq!(r["error"]["code"], "NO_VEHICLE");
+}
+
+#[test]
+fn vehicle_load_accepts_aero_and_lists_its_errors() {
+    let mut e = Engine::start();
+    let aero = serde_json::json!({ "cdBody": [1.1, 1.1, 1.2], "areaM2": [0.012, 0.012, 0.03] });
+    let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": two_part_vehicle(), "aero": aero}));
+    assert_eq!(r["result"]["valid"], true, "{r}");
+    let bad = serde_json::json!({ "cdBody": [1.1, 0.0, 1.2], "areaM2": [0.012, 0.012, 0.03] });
+    let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": two_part_vehicle(), "aero": bad}));
+    assert_eq!(r["result"]["valid"], false);
+    assert_eq!(r["result"]["errors"][0]["path"], "aero.cdBody[1]");
+}

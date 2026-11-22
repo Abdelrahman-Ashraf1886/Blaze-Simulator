@@ -62,6 +62,7 @@ import { InterferencePanel } from './InterferencePanel'
 import { addPlaced } from './place-actions'
 import { EnvironmentPanel } from './EnvironmentPanel'
 import { ChecksPanel, ChecksStatus } from './ChecksPanel'
+import { PropulsionPanel, ReadyPanel } from './PropulsionPanel'
 import { PartsModel } from './PartsModel'
 import { duplicatePart, subtreeIds, updatePart } from './assembly-ops'
 import { SNAP_MM } from './view-store'
@@ -637,10 +638,16 @@ function ProjectPanel({
           <Section title="Environment">
             <EnvironmentPanel doc={doc} geo={geo} />
           </Section>
+          <Section title="Ready to fly" testId="ready-section">
+            <ReadyPanel doc={doc} geo={geo} />
+          </Section>
+          <Section title="Propulsion" testId="propulsion-section">
+            <PropulsionPanel doc={doc} geo={geo} />
+          </Section>
         </>
       )}
       <Section title="Frame">
-        <FrameEditor />
+        <FrameEditor geo={geo} />
         <p className="mt-2 text-[12px] leading-relaxed text-fg-subtle">
           New projects start with typical values for a {frame.name}; set them to match your frame.
         </p>

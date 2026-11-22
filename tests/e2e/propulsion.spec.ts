@@ -34,6 +34,10 @@ test('propulsion: fit and validation per pair, Ready-to-fly checklist with links
   await expect(page.getByTestId('viewport-3d').locator('canvas')).toBeVisible()
   await expect(page.getByTestId('propulsion-empty')).toBeVisible()
 
+  // A frame that fits 13-inch props: 550 mm motor diagonal puts neighbouring motors 389 mm
+  // apart (> 330 mm prop), and leaves the plate clear for the pack (overlaps are errors, and a
+  // part with no free spot is refused).
+  await commit(page, 'frame-motorDiagonal', '550')
   // Four MN3110 KV470 with T-Motor P13*4.4, and the Tattu pack.
   for (let n = 1; n <= 4; n++) {
     await page.getByTestId(`mount-motor-${n}`).click()

@@ -5,7 +5,7 @@ use engine_core::environment::{ContactEvent, Environment};
 use engine_core::sim::{hash_hex, BodyInput, SimConfig, SimState, Simulation, DEFAULT_DT_S};
 use engine_core::vehicle::{vec, MassTotals, Vehicle, VehicleError};
 use serde::Serialize;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Upper bound on the steps of one `sim.run`. The sidecar is single-threaded,
 /// so a run delays the health ping, and the supervisor kills an engine that
@@ -13,6 +13,15 @@ use std::time::Instant;
 /// (120 s at 1 ms) took 0.88 s in a release build on the development machine
 /// (≈7 µs per step; sidecar test `sim_run_at_the_step_limit`, DEVLOG 4.3).
 pub const MAX_STEPS: u64 = 120_000;
+
+/// Compute time one `sim.run` may take before it is stopped with `RUN_TOO_LONG`.
+/// MAX_STEPS was sized for free flight (≈7 µs per step); with ground contact a step
+/// costs far more (a 20-box vehicle resting on the ground: ≈0.2 ms per step, so
+/// 120 000 steps take ≈25 s; DEVLOG 4.4 follow-ups). The supervisor kills an engine
+/// that does not answer its health ping within 3 s, so a run stops itself well before
+/// that. Stopping depends on the machine's speed, so a stopped run returns no state:
+/// a completed run stays deterministic.
+pub const RUN_TIME_BUDGET: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
@@ -170,8 +179,21 @@ impl Engine {
         };
         let input = BodyInput { force_body_n: vec(f), torque_body_nm: vec(t) };
         let steps = n as u64;
-        for _ in 0..steps {
+        let started = Instant::now();
+        for k in 0..steps {
             sim.step(&input);
+            if k % 256 == 255 && started.elapsed() > RUN_TIME_BUDGET {
+                return Response::err(
+                    Some(id),
+                    ErrorCode::RunTooLong,
+                    format!(
+                        "the run needs more than {} s of computing (stopped after {} of {steps} steps, {:.3} s simulated); run a shorter durationS",
+                        RUN_TIME_BUDGET.as_secs_f64(),
+                        k + 1,
+                        (k + 1) as f64 * dt
+                    ),
+                );
+            }
         }
         let (contacts, contacts_dropped) = sim.contacts();
         Response::ok(

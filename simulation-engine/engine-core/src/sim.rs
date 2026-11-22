@@ -222,6 +222,12 @@ impl Simulation {
         rb.set_angvel(r * angular_body, true);
     }
 
+    /// The rapier world, for measurements in tests.
+    #[cfg(test)]
+    pub(crate) fn world_mut(&mut self) -> &mut PhysicsWorld {
+        &mut self.world
+    }
+
     #[cfg(test)]
     pub(crate) fn enable_rapier_gyroscopic_term(&mut self, enabled: bool) {
         self.world.bodies[self.body].enable_gyroscopic_forces(enabled);

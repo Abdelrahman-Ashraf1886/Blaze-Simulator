@@ -90,6 +90,9 @@ pub enum ErrorCode {
     /// `sim.run` without a complete environment (ground and obstacle friction
     /// and restitution are the user's inputs; there are no defaults).
     EnvironmentIncomplete,
+    /// `sim.run` needed more compute time than the engine allows one request
+    /// (it would stop answering health pings); no state is returned.
+    RunTooLong,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

@@ -155,7 +155,7 @@ export const SimRunResultSchema = z.strictObject({
 export type SimRunResult = z.infer<typeof SimRunResultSchema>
 
 export interface EngineErrorBody {
-  code: 'INVALID_JSON' | 'INVALID_REQUEST' | 'INVALID_PARAMS' | 'NO_VEHICLE' | 'VEHICLE_INCOMPLETE' | 'ENVIRONMENT_INCOMPLETE'
+  code: 'INVALID_JSON' | 'INVALID_REQUEST' | 'INVALID_PARAMS' | 'NO_VEHICLE' | 'VEHICLE_INCOMPLETE' | 'ENVIRONMENT_INCOMPLETE' | 'RUN_TOO_LONG'
   message: string
 }
 

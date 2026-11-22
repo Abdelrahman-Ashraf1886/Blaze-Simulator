@@ -34,6 +34,18 @@
 //!   narrow phase saw it), so within one step after the true instant.
 //! - At most [`MAX_CONTACT_EVENTS`] events are kept per run; later ones are
 //!   counted as dropped.
+//!
+//! Known limitation (measured, `environment/spin_study.rs`; rapier 0.36.1)
+//! - A flat box landing on four corners gets unequal corner impulses (the two
+//!   pairs differ by 1.30×) and a brief spin, peaking at 12.8 rad/s with
+//!   restitution 0. It lands back flat and comes to rest (tested).
+//! - With restitution 0.5 the spin takes energy from the bounce: the box rises
+//!   65.7 mm, not e²·h = 120 mm. A single contact point (a pyramid on its apex)
+//!   rises 119.1 mm, so restitution itself is right.
+//! - Four or eight contact-stabilization iterations make the corners equal
+//!   (1.01×) and cut the dead-landing spin to 1.2 rad/s, but do not fix the
+//!   bounce (64.7 mm), and they make a contact step 1.6× to 2.9× slower (a
+//!   120 000-step resting run: 2.7 s and 4.8 s against 1.7 s). Not applied.
 
 use crate::sim::ALLOWED_LINEAR_ERROR_M;
 use rapier3d_f64::math::{Pose, Rotation, Vector};
@@ -374,3 +386,6 @@ impl Placed {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod spin_study;

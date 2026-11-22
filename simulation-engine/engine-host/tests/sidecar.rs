@@ -209,6 +209,44 @@ fn sim_run_at_the_step_limit() {
     }
 }
 
+/// A run that would block the engine past the supervisor's ping timeout stops itself
+/// with RUN_TOO_LONG, and the engine keeps answering.
+#[test]
+fn a_long_run_with_many_contacts_stops_within_the_time_budget() {
+    let mut e = Engine::start();
+    // 20 boxes resting on the ground: ≈0.2 ms per step in release, so 120 s would take ≈25 s.
+    let parts: Vec<serde_json::Value> = (0..20)
+        .map(|i| {
+            let (x, y) = ((i % 5) as f64 * 0.03 - 0.06, (i / 5) as f64 * 0.03 - 0.045);
+            serde_json::json!({
+                "partId": format!("p{i}"), "massKg": 0.05, "com": [x, y, 0.0],
+                "inertia": [1e-5, 1e-5, 1e-5, 0.0, 0.0, 0.0],
+                "pose": { "position": [x, y, 0.0], "quaternion": [0.0, 0.0, 0.0, 1.0] },
+                "shape": { "type": "box", "halfExtents": [0.0125, 0.0125, 0.01] }
+            })
+        })
+        .collect();
+    let totals = engine_core::vehicle::recompute_totals(
+        &serde_json::from_value::<Vec<engine_core::vehicle::PartBody>>(serde_json::json!(parts)).unwrap(),
+    );
+    let vehicle = serde_json::json!({
+        "version": 1, "parts": parts, "motors": [], "totalMassKg": totals.mass_kg,
+        "com": totals.com, "inertia": totals.inertia, "missingMass": []
+    });
+    let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": vehicle}));
+    assert_eq!(r["result"]["valid"], true, "{r}");
+    let t0 = std::time::Instant::now();
+    let r = e.call(serde_json::json!({
+        "type": "sim.run", "durationS": 120.0, "startPositionM": [0.0, 0.0, 0.01],
+        "environment": {"ground": {"friction": 0.5, "restitution": 0.0}, "obstacles": []}
+    }));
+    let elapsed = t0.elapsed();
+    assert_eq!(r["error"]["code"], "RUN_TOO_LONG", "{r}");
+    assert!(elapsed.as_secs_f64() < 2.8, "stopped after {elapsed:?}");
+    // Still answering.
+    assert_eq!(e.call(serde_json::json!({"type": "ping"}))["ok"], true);
+}
+
 /// Contacts through the protocol (the resting height itself is checked in
 /// engine-core `environment/tests.rs`): the two-part vehicle dropped from
 /// 0.5 m lands, tips onto both parts and comes to rest, with the contacts

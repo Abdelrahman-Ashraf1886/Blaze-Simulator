@@ -1,0 +1,56 @@
+/** Renderer boundary for Part B. SI units; right-handed +X forward, +Y left, +Z up. */
+export type Vec3 = [number, number, number]
+export type Quat = [number, number, number, number]
+export interface AxisVector { x: number; y: number; z: number }
+export interface FlightFrame {
+  timeS: number
+  /** World position of the assembly/frame origin (not the CoM). */
+  positionM: Vec3
+  /** Body to world, x/y/z/w, with no renderer axis conversion. */
+  quaternion: Quat
+  /** World CoM, already transformed by the source. */
+  comM: Vec3
+  linearVelocityMps: Vec3
+  angularVelocityBodyRadps: Vec3
+  /** Same stable order as the vehicle definition's motors. */
+  motors: { throttle: number; omegaRadps: number; thrustN: number; shaftTorqueNm: number }[]
+  totalThrustN: number
+  thrustBodyN: AxisVector
+  dragBodyN: AxisVector
+  armTorqueNm: AxisVector
+  reactionTorqueNm: AxisVector
+  rotorGyroTorqueNm: AxisVector
+  totalTorqueNm: AxisVector
+  packVoltageV: number
+  packCurrentA: number
+  chargeUsedMah: number
+  densityKgM3: number
+  control: {
+    torqueDemand: Vec3
+    rateIntegral: Vec3
+    saturation: { positive: [boolean, boolean, boolean, boolean]; negative: [boolean, boolean, boolean, boolean] }
+  } | null
+  ended: 'voltageCutoff' | 'chargeCutoff' | null
+  contacts: { part: string; object: string; startS: number; endS: number | null }[]
+}
+
+export interface FlightSetpoint {
+  attitude: Quat
+  yawRateRadps: number
+  verticalVelocityMps: number
+}
+export type SetpointProvider = () => FlightSetpoint
+/** start begins a fresh run; subscribe returns cleanup. stop is idempotent and preserves the last frame.
+ * Sources stop themselves after publishing an ended frame. No callbacks after stop/unsubscribe.
+ * Part B owns transport errors/readiness outside this per-sample interface.
+ */
+export interface FlightSource {
+  start(setpoint: SetpointProvider): void
+  stop(): void
+  subscribe(listener: (frame: FlightFrame) => void): () => void
+}
+
+/** Direct three.js props. comM belongs outside the posed assembly group. */
+export function frameToPose(frame: FlightFrame): { position: Vec3; quaternion: Quat; comWorld: Vec3 } {
+  return { position: [...frame.positionM], quaternion: [...frame.quaternion], comWorld: [...frame.comM] }
+}

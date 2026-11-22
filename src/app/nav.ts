@@ -18,9 +18,9 @@ export interface NavItem {
   label: string
   icon: LucideIcon
   group: NavGroup
-  /** Roadmap phase that delivers this section. Items above the current phase are disabled. */
+  /** Roadmap phase that delivers this section. Later sections are disabled unless marked ready. */
   phase: number
-  /** For sections of the phase in progress: true once the section is built. */
+  /** True once a section is available, including previews ahead of the phase in progress. */
   ready?: boolean
 }
 
@@ -34,6 +34,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: '/components', label: 'Components', icon: Cpu, group: 'engineering', phase: 3, ready: true },
   { path: '/electrical', label: 'Electrical Designer', icon: Cable, group: 'engineering', phase: 3, ready: true },
   { path: '/analysis', label: 'Engineering Analysis', icon: Gauge, group: 'engineering', phase: 4 },
+  { path: '/flight', label: 'Flight test', icon: Plane, group: 'flight', phase: 4, ready: true },
   { path: '/simulator', label: 'Flight Simulator', icon: Plane, group: 'flight', phase: 6 },
   { path: '/telemetry', label: 'Telemetry', icon: Activity, group: 'flight', phase: 7 },
   { path: '/projects', label: 'Projects', icon: FolderKanban, group: 'workspace', phase: 1 },
@@ -46,4 +47,4 @@ export const GROUP_LABELS: Partial<Record<NavGroup, string>> = {
 }
 
 export const isAvailable = (item: NavItem) =>
-  item.phase < CURRENT_PHASE || (item.phase === CURRENT_PHASE && item.ready === true)
+  item.phase < CURRENT_PHASE || item.ready === true

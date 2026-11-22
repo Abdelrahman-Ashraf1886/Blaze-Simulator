@@ -7,6 +7,12 @@ import { AppShell } from './AppShell'
 
 // The workshop pulls in three.js; load it only when the workshop is opened.
 const WorkshopPage = lazy(() => import('@/features/workshop/WorkshopPage'))
+const FlightPage = lazy(() => import('@/features/flight/FlightPage'))
+const flight = (
+  <Suspense fallback={<p className="px-6 pt-5 text-[12.5px] text-fg-subtle">Loading flight test…</p>}>
+    <FlightPage />
+  </Suspense>
+)
 
 // The Electrical Designer pulls in React Flow; load it only when opened.
 const ElectricalPage = lazy(() => import('@/features/electrical/ElectricalPage'))
@@ -30,6 +36,8 @@ export function App() {
           <Route index element={<DashboardPage />} />
           <Route path="workshop" element={workshop} />
           <Route path="workshop/:projectId" element={workshop} />
+          <Route path="flight" element={flight} />
+          <Route path="flight/:projectId" element={flight} />
           <Route path="components" element={<ComponentsPage />} />
           <Route path="electrical" element={electrical} />
           <Route path="electrical/:projectId" element={electrical} />

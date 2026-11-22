@@ -136,10 +136,13 @@ test('undo and redo restore every edit kind, back to the empty assembly and forw
   await commit('part-mass', '48')
   await page.getByTestId('part-name').fill('Front-left motor')
   await page.getByTestId('part-name').press('Enter')
-  // Copy to the other mounts, duplicate, attach, detach, delete.
+  // Copy to the other mounts; then a free battery: duplicate, attach, detach, delete. (A motor
+  // cannot be duplicated onto its own mount: placement refuses it, see parts.spec.ts.)
   await page.getByTestId('copy-to-mounts').click()
-  await row(page, 'Front-left motor').click()
+  await page.keyboard.press('Escape')
+  await library(page).getByRole('button', { name: 'Battery' }).click()
   await page.keyboard.press('Control+d')
+  await expect(page.getByTestId('part-inspector')).toContainText('Battery 2')
   await page.getByLabel('Attached to').selectOption('mount:plate-top')
   await page.getByLabel('Attached to').selectOption('none')
   await page.keyboard.press('Delete')

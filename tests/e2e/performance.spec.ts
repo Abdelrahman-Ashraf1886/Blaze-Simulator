@@ -70,6 +70,32 @@ test('50-part assembly: orbit frame rate at 1080p and 4K; idle renders nothing',
   const visible = await page.evaluate(() => document.visibilityState)
   console.log(`[perf] window ${visible}`)
   await createProject(page, 'Perf quad')
+  // 41 boxes (80 × 60 × 50 mm, the payload's starting size), saved through the API in a
+  // 7 × 6 grid 100 mm apart, 200 mm above the frame: free parts, none inside another (a
+  // build the interference check accepts; 41 payloads do not fit on the frame's plate).
+  await page.evaluate(async () => {
+    type R<T> = { ok: true; data: T } | { ok: false; error: { message: string } }
+    const api = (window as unknown as { api: Record<string, Record<string, (...a: unknown[]) => Promise<R<unknown>>>> }).api
+    const unwrap = async <T,>(p: Promise<R<unknown>>) => {
+      const r = await p
+      if (!r.ok) throw new Error(r.error.message)
+      return r.data as T
+    }
+    const project = (await unwrap<{ id: string; name: string }[]>(api.projects!.list!())).find((p) => p.name === 'Perf quad')!
+    const asm = await unwrap<{ revision: number; frame: unknown; motors: unknown }>(api.assembly!.load!(project.id))
+    const parts = Array.from({ length: 41 }, (_, i) => ({
+      id: crypto.randomUUID(),
+      name: `Payload ${i + 1}`,
+      kind: 'payload',
+      shape: { type: 'box', size: [0.08, 0.06, 0.05] },
+      parentId: null,
+      mountId: null,
+      position: [-0.3 + (i % 7) * 0.1, -0.25 + Math.floor(i / 7) * 0.1, 0.2],
+      rotation: [0, 0, 0, 1],
+      mass: null,
+    }))
+    await unwrap(api.assembly!.save!({ projectId: project.id, baseRevision: asm.revision, frame: asm.frame, motors: asm.motors, parts }))
+  })
   await page.getByTestId('recent-projects').getByRole('link', { name: 'Perf quad' }).click()
   await expect(page.getByTestId('viewport-3d').locator('canvas')).toBeVisible()
 
@@ -79,16 +105,13 @@ test('50-part assembly: orbit frame rate at 1080p and 4K; idle renders nothing',
   await page.getByTestId('part-library').getByRole('button', { name: 'Propeller' }).click()
   await page.locator('[data-testid=part-row][data-name="Motor 1"]').click()
   await page.getByTestId('copy-to-mounts').click()
-  // + 1 imported model (Blender export) + 41 boxes = 50.
+  // + 1 imported model (Blender export) + the 41 boxes = 50.
   await page.keyboard.press('Escape')
   await app.evaluate(({ dialog }, p) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [p] })) as typeof dialog.showOpenDialog
   }, join(root, 'tests/fixtures/blender/pod.glb'))
   await page.getByTestId('import-model').click()
   await page.getByRole('button', { name: 'Add to assembly' }).click()
-  await page.keyboard.press('Escape')
-  await page.getByTestId('part-library').getByRole('button', { name: 'Payload' }).click()
-  for (let i = 0; i < 40; i++) await page.keyboard.press('Control+d')
   await expect(page.getByTestId('status-parts')).toHaveText('50 parts')
   await page.keyboard.press('Escape')
   await page.waitForTimeout(1500)

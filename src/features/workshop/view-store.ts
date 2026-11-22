@@ -88,14 +88,15 @@ export const useWorkshopView = create<ViewState>((set) => ({
   request: null,
   selection: null,
   selectedMount: null,
+  // A placement message belongs to the action that failed; a new selection clears it.
   selectMount(id) {
-    set({ selection: id ? { kind: 'mount', id } : null, selectedMount: id })
+    set({ selection: id ? { kind: 'mount', id } : null, selectedMount: id, placementNote: null })
   },
   selectPart(id) {
-    set({ selection: id ? { kind: 'part', id } : null, selectedMount: null })
+    set({ selection: id ? { kind: 'part', id } : null, selectedMount: null, placementNote: null })
   },
   clearSelection() {
-    set({ selection: null, selectedMount: null })
+    set({ selection: null, selectedMount: null, placementNote: null })
   },
   gizmo: 'translate',
   setGizmo(gizmo) {

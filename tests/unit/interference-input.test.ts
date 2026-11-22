@@ -119,7 +119,7 @@ describe('saving the interference settings', () => {
     )
     v9.close()
     const db = openDatabase(path)
-    expect(schemaVersion(db)).toBe(10)
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length) // upgraded past 0010 to the latest
     const repos = createRepositories(db)
     const loaded = repos.assemblies.load('p1')
     expect(loaded).not.toHaveProperty('interference')

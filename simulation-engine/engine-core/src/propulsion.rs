@@ -253,6 +253,12 @@ impl Propulsion {
         Ok(Propulsion { battery: def.battery, motors, definition: def })
     }
 
+    /// Mean k_Q/k_T over the motors (m): the yaw-to-thrust ratio the control
+    /// allocation uses (`closed_loop.rs`).
+    pub fn yaw_ratio(&self) -> f64 {
+        self.motors.iter().map(|m| m.k_torque / m.k_thrust).sum::<f64>() / self.motors.len() as f64
+    }
+
     pub fn rest(&self) -> PropulsionState {
         PropulsionState { omega: vec![0.0; self.motors.len()], charge_used_c: 0.0 }
     }

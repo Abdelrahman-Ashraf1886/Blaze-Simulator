@@ -129,6 +129,20 @@ export const SimRunParamsSchema = z.strictObject({
   rotorSpeedsRadps: z.array(num.refine((v) => v >= 0, 'must not be negative')).optional(),
   /** Air density for the body drag, kg/m³ (`src/domain/atmosphere.ts`); required with body drag. */
   airDensityKgM3: num.refine((v) => v > 0, 'must be positive').optional(),
+  /**
+   * With propulsion (4.7): the PX4 v1.13.3 controller flies to this setpoint instead of fixed
+   * throttles. `altitudeM` is the CoM height (null/absent = hold `climbRateMps`); `attitude` a unit
+   * quaternion x y z w (absent = level); `gains` overrides by exact PX4 name, e.g. { MC_ROLL_P: 7 }.
+   */
+  controller: z
+    .strictObject({
+      altitudeM: num.nullable().optional(),
+      climbRateMps: num.optional(),
+      attitude: quat.optional(),
+      yawRateRadps: num.optional(),
+      gains: z.record(z.string().regex(/^[A-Z][A-Z0-9_]*$/, 'use the exact PX4 parameter name'), num).optional(),
+    })
+    .optional(),
 })
 export type SimRunParams = z.infer<typeof SimRunParamsSchema>
 
@@ -198,6 +212,10 @@ export const SimRunResultSchema = z.strictObject({
     .optional(),
   /** With propulsion: the pack at the end of the run (V = V_oc − R_int·I). */
   battery: z.strictObject({ voltageV: num, currentA: num, chargeUsedC: num, stateOfCharge: num }).optional(),
+  /** With the controller (4.7): steps with a saturated demand, rate integrators, last collective. */
+  controller: z
+    .strictObject({ saturatedSteps: z.number().int().nonnegative(), rateIntegral: vec3, collectiveThrust: num })
+    .optional(),
 })
 export type SimRunResult = z.infer<typeof SimRunResultSchema>
 

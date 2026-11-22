@@ -11,6 +11,7 @@
 //! contain real, tested models, never as empty stubs.
 
 pub mod aero;
+pub mod closed_loop;
 pub mod environment;
 pub mod flight;
 pub mod math;

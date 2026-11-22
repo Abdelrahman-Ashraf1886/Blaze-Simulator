@@ -1,5 +1,52 @@
 # Development log
 
+## 2026-11-22 — Phase 4, milestone 4.7: the controller flies the vehicle
+
+The PX4 v1.13.3 controller (`controller.rs`, merged earlier) now flies the 4.5/4.6 plant:
+the real motors, battery and drag, not the linear test actuator of its own tests.
+
+**Built**
+- **`engine-core/src/closed_loop.rs`**: each step,
+  - estimate = the true state, with no estimator, noise or delay (stated);
+  - the controller's commands are the motors' throttles. This is linear: PX4's
+    thrust-curve compensation is not modelled, and the vertical integrator absorbs it,
+    as it absorbs MPC_THR_HOVER not being this vehicle's.
+- **As the plan asks**:
+  - the allocation uses the nominal motor geometry about the frame origin and the mean
+    fitted k_Q/k_T; the controller never sees the true CoM or inertia;
+  - a CoM offset is trimmed by the rate integrators;
+  - too large an offset saturates the motors and loses attitude, an outcome of the
+    physics rather than a script.
+- **Gains**: the PX4 v1.13.3 defaults (checked against the cited reference file by
+  `defaults_match_reference`), editable by exact PX4 parameter name. An unknown or
+  lower-case name is refused.
+- **Protocol** (additive):
+  - `sim.run` takes `controller: {altitudeM?, climbRateMps?, attitude?, yawRateRadps?,
+    gains?}` instead of `throttle`;
+  - it returns `controller: {saturatedSteps, rateIntegral, collectiveThrust}`;
+  - refused: a non-unit attitude, unknown gains, and throttle together with controller.
+- `Propulsion::yaw_ratio()` (mean k_Q/k_T).
+
+**Tests** (plan areas 8, 9, 10, against the test motor)
+- Hover from rest to 1 m: the CoM within 1 cm and the tilt within 0.1° after 10 s, a
+  quarter of the weight per motor within 0.5 %.
+- CoM 20 mm off-centre: level within 0.1°. The thrusts match the moment balance
+  T₊ = W(A + d)/4A and T₋ = W(A − d)/4A within 0.5 %, held by the roll integrator.
+- CoM beyond the motors: saturation, attitude lost (> 10°).
+- Payload: the settled hover throttle equals the plant's predicted one (bisection)
+  within 0.5 % at 1.0 and 1.4 kg, and rises with the mass. At 1.2 × the maximum
+  thrust's weight it cannot climb, with the collective at its limit.
+- Determinism; gain overrides.
+- Protocol: a 0.5 m hover through the sidecar, and the refusals.
+- Supervisor: the mass.ts quad that pitched up at fixed throttle in the 4.6 test is held
+  level at 1 m, with its pitch integrator holding the trim.
+
+**Note**
+- `sim_run_at_the_step_limit` (4.4's 2 s compute budget) is near its limit on this
+  machine under load: 120 000 free-flight steps took 0.99–2.0 s, for the 4.6 and 4.7
+  builds alike, against 0.88 s measured earlier. A wall-clock test on a busy machine is
+  fragile; left as it is.
+
 ## 2026-11-22 — Phase 4, milestone 4.6: flight dynamics
 
 The 4.5 motor, battery and drag models now fly the rigid body. The throttles drive

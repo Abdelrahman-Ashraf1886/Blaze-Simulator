@@ -72,7 +72,32 @@ pub enum Command {
         /// computed by the app); required when the vehicle has body drag.
         #[serde(default)]
         air_density_kg_m3: Option<f64>,
+        /// With propulsion (4.7): the PX4 controller flies the vehicle to this
+        /// setpoint instead of fixed throttles (engine-core `closed_loop.rs`).
+        #[serde(default)]
+        controller: Option<ControllerRequest>,
     },
+}
+
+/// The controller's setpoint and gain overrides for `sim.run`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ControllerRequest {
+    /// CoM height to hold, m (world z); absent or null = hold `climbRateMps`.
+    #[serde(default)]
+    pub altitude_m: Option<f64>,
+    /// Vertical velocity setpoint (or feed-forward with an altitude), m/s, up positive.
+    #[serde(default)]
+    pub climb_rate_mps: f64,
+    /// Attitude setpoint, unit quaternion x y z w (body → world); absent = level.
+    #[serde(default)]
+    pub attitude: Option<[f64; 4]>,
+    /// Yaw-rate feed-forward about world +z, rad/s (CCW positive).
+    #[serde(default)]
+    pub yaw_rate_radps: f64,
+    /// Overrides of the PX4 v1.13.3 defaults by exact parameter name, e.g. {"MC_ROLL_P": 7}.
+    #[serde(default)]
+    pub gains: Option<serde_json::Map<String, Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -183,7 +208,8 @@ mod tests {
                 torque_body_nm: None,
                 throttle: None,
                 rotor_speeds_radps: None,
-                air_density_kg_m3: None
+                air_density_kg_m3: None,
+                controller: None
             }
         );
         assert!(matches!(

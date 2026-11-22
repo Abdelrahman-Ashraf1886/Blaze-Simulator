@@ -369,6 +369,50 @@ fn sim_run_flies_the_throttles_and_reports_motors_and_battery() {
     assert_eq!(r["ok"], true, "{r}");
 }
 
+/// 4.7 through the protocol: the PX4 controller flies a quad (the test motor
+/// of engine-core, not a catalogue part) from rest to a 0.5 m hover, and the
+/// result carries its summary; bad setpoints, unknown gains and throttle plus
+/// controller are refused.
+#[test]
+fn sim_run_with_the_controller_holds_an_altitude() {
+    let mut e = Engine::start();
+    let free = serde_json::json!({"ground": null, "obstacles": []});
+    let a = 0.15;
+    let motor = |id: &str, x: f64, y: f64, spin: &str| serde_json::json!({ "partId": id, "position": [x, y, 0.0], "thrustAxis": [0, 0, 1], "spin": spin });
+    let v = serde_json::json!({
+        "version": 1,
+        "parts": [{ "partId": "body", "massKg": 1.0, "com": [0.0, 0.0, 0.0], "inertia": [0.01, 0.01, 0.02, 0.0, 0.0, 0.0],
+            "pose": { "position": [0.0, 0.0, 0.0], "quaternion": [0.0, 0.0, 0.0, 1.0] }, "shape": { "type": "box", "halfExtents": [0.05, 0.05, 0.02] } }],
+        "motors": [motor("m1", a, -a, "ccw"), motor("m2", -a, a, "ccw"), motor("m3", a, a, "cw"), motor("m4", -a, -a, "cw")],
+        "totalMassKg": 1.0, "com": [0.0, 0.0, 0.0], "inertia": [0.01, 0.01, 0.02, 0.0, 0.0, 0.0], "missingMass": []
+    });
+    let m = |id: &str| serde_json::json!({ "partId": id, "kvRadPerSV": 100.0, "resistanceOhm": 0.1, "noLoadCurrentA": 0.5,
+        "thrustCoefNs2": 2e-5, "torqueCoefNms2": 1e-7, "inertiaKgM2": 2e-5 });
+    let p = serde_json::json!({ "version": 1, "motors": [m("m1"), m("m2"), m("m3"), m("m4")],
+        "battery": { "openCircuitVoltageV": 10.0, "internalResistanceOhm": 0.01, "capacityC": 18720.0 } });
+    let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": v, "propulsion": p}));
+    assert_eq!(r["result"]["valid"], true, "{r}");
+
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 10.0, "environment": free, "controller": {"altitudeM": 0.5}}));
+    assert_eq!(r["ok"], true, "{r}");
+    let z = r["result"]["state"]["comM"][2].as_f64().unwrap();
+    assert!((z - 0.5).abs() < 0.01, "z = {z}");
+    let c = &r["result"]["controller"];
+    assert_eq!(c["saturatedSteps"].as_u64().is_some(), true, "{c}");
+    assert!(c["collectiveThrust"].as_f64().unwrap() > 0.0);
+    assert_eq!(r["result"]["motors"].as_array().unwrap().len(), 4);
+
+    for (bad, why) in [
+        (serde_json::json!({"altitudeM": 0.5, "attitude": [0.0, 0.0, 0.0, 2.0]}), "unit quaternion"),
+        (serde_json::json!({"altitudeM": 0.5, "gains": {"MC_NOPE": 1.0}}), "unknown PX4 parameter"),
+    ] {
+        let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "controller": bad}));
+        assert!(r["error"]["message"].as_str().unwrap().contains(why), "{r}");
+    }
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "controller": {}, "throttle": [0.5, 0.5, 0.5, 0.5]}));
+    assert_eq!(r["error"]["code"], "INVALID_PARAMS", "{r}");
+}
+
 #[test]
 fn vehicle_load_accepts_aero_and_lists_its_errors() {
     let mut e = Engine::start();

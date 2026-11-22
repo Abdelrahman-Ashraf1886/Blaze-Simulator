@@ -1,8 +1,10 @@
 //! Request dispatch and the sidecar's state (the loaded vehicle).
 
-use crate::protocol::{Command, ErrorCode, HelloResult, PongResult, Request, Response, PROTOCOL_VERSION};
+use crate::protocol::{Command, ControllerRequest, ErrorCode, HelloResult, PongResult, Request, Response, PROTOCOL_VERSION};
 use engine_core::aero::BodyDrag;
 use engine_core::environment::{ContactEvent, Environment};
+use engine_core::closed_loop::{gains_with_overrides, ClosedLoop, ControllerSummary};
+use engine_core::controller::Setpoint;
 use engine_core::flight::{BatteryReading, Flight, MotorReading};
 use engine_core::propulsion::Propulsion;
 use engine_core::sim::{hash_hex, BodyInput, SimConfig, SimState, Simulation, DEFAULT_DT_S};
@@ -73,6 +75,29 @@ struct SimRunResult {
     /// With propulsion (4.6): the pack at the end of the run.
     #[serde(skip_serializing_if = "Option::is_none")]
     battery: Option<BatteryReading>,
+    /// With the controller (4.7): saturation, integrators and collective.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    controller: Option<ControllerSummary>,
+}
+
+/// What flies the vehicle in a run.
+enum Plant {
+    /// Constant body loads, no propulsion (4.3).
+    Loads(BodyInput),
+    /// Fixed throttles (4.6).
+    Throttle(Box<Flight>, Vec<f64>),
+    /// The PX4 controller (4.7).
+    Controlled(Box<ClosedLoop>, Setpoint),
+}
+
+impl Plant {
+    fn flight(&self) -> Option<&Flight> {
+        match self {
+            Plant::Loads(_) => None,
+            Plant::Throttle(f, _) => Some(f),
+            Plant::Controlled(c, _) => Some(c.flight()),
+        }
+    }
 }
 
 /// The parameters of one `sim.run` (protocol.rs).
@@ -86,6 +111,7 @@ struct RunArgs {
     throttle: Option<Vec<f64>>,
     rotor_speeds: Option<Vec<f64>>,
     air_density: Option<f64>,
+    controller: Option<ControllerRequest>,
 }
 
 
@@ -135,6 +161,7 @@ impl Engine {
                 throttle,
                 rotor_speeds_radps,
                 air_density_kg_m3,
+                controller,
             } => {
                 let args = RunArgs {
                     duration_s,
@@ -146,6 +173,7 @@ impl Engine {
                     throttle,
                     rotor_speeds: rotor_speeds_radps,
                     air_density: air_density_kg_m3,
+                    controller,
                 };
                 (self.run(id, args), false)
             }
@@ -205,7 +233,7 @@ impl Engine {
     }
 
     fn run(&self, id: u64, args: RunArgs) -> Response {
-        let RunArgs { duration_s, environment, start_position_m, dt_s, force, torque, throttle, rotor_speeds, air_density } = args;
+        let RunArgs { duration_s, environment, start_position_m, dt_s, force, torque, throttle, rotor_speeds, air_density, controller } = args;
         let bad = |m: String| Response::err(Some(id), ErrorCode::InvalidParams, m);
         let Some(vehicle) = &self.vehicle else {
             return Response::err(Some(id), ErrorCode::NoVehicle, "load a valid vehicle first (vehicle.load)");
@@ -255,11 +283,12 @@ impl Engine {
             Ok(s) => s,
             Err(e) => return bad(e),
         };
-        // With propulsion the motors, battery and body drag fly the vehicle (engine-core flight.rs).
-        let mut flight = match &self.propulsion {
+        // With propulsion the motors, battery and body drag fly the vehicle (engine-core
+        // flight.rs), at fixed throttles or under the PX4 controller (closed_loop.rs).
+        let mut plant = match &self.propulsion {
             Some(p) => {
                 if force.is_some() || torque.is_some() {
-                    return bad("forceBodyN and torqueBodyNm are for a vehicle without propulsion; give throttle instead".into());
+                    return bad("forceBodyN and torqueBodyNm are for a vehicle without propulsion; give throttle or controller instead".into());
                 }
                 let mut fl = match Flight::new(vehicle, p.clone(), self.aero, air_density) {
                     Ok(fl) => fl,
@@ -270,34 +299,53 @@ impl Engine {
                         return bad(format!("rotorSpeedsRadps: {e}"));
                     }
                 }
-                Some(fl)
+                match controller {
+                    Some(c) => {
+                        if throttle.is_some() {
+                            return bad("give either throttle or controller, not both".into());
+                        }
+                        let sp = match setpoint(&c) {
+                            Ok(sp) => sp,
+                            Err(e) => return bad(format!("controller: {e}")),
+                        };
+                        let gains = match gains_with_overrides(c.gains.as_ref()) {
+                            Ok(g) => g,
+                            Err(e) => return bad(format!("controller.gains: {e}")),
+                        };
+                        match ClosedLoop::new(vehicle, fl, p.yaw_ratio(), gains) {
+                            Ok(cl) => Plant::Controlled(Box::new(cl), sp),
+                            Err(e) => return bad(format!("controller: {e}")),
+                        }
+                    }
+                    None => {
+                        let throttle = throttle.unwrap_or_default();
+                        if !throttle.is_empty() && throttle.len() != fl.motor_count() {
+                            return bad(format!("throttle: give {} values, one per motor in the vehicle's order", fl.motor_count()));
+                        }
+                        if !throttle.iter().all(|d| d.is_finite() && (0.0..=1.0).contains(d)) {
+                            return bad("throttle values must be within 0 and 1".into());
+                        }
+                        Plant::Throttle(Box::new(fl), throttle)
+                    }
+                }
             }
             None => {
-                if throttle.is_some() || rotor_speeds.is_some() {
-                    return bad("throttle and rotorSpeedsRadps need the propulsion definition (vehicle.load with propulsion)".into());
+                if throttle.is_some() || rotor_speeds.is_some() || controller.is_some() {
+                    return bad("throttle, rotorSpeedsRadps and controller need the propulsion definition (vehicle.load with propulsion)".into());
                 }
                 if self.aero.is_some() {
                     return bad("the body drag is applied in flight: load the vehicle with its propulsion definition too".into());
                 }
-                None
+                Plant::Loads(BodyInput { force_body_n: vec(f), torque_body_nm: vec(t) })
             }
         };
-        let throttle = throttle.unwrap_or_default();
-        if let Some(fl) = &flight {
-            if !throttle.is_empty() && throttle.len() != fl.motor_count() {
-                return bad(format!("throttle: give {} values, one per motor in the vehicle's order", fl.motor_count()));
-            }
-            if !throttle.iter().all(|d| d.is_finite() && (0.0..=1.0).contains(d)) {
-                return bad("throttle values must be within 0 and 1".into());
-            }
-        }
-        let input = BodyInput { force_body_n: vec(f), torque_body_nm: vec(t) };
         let steps = n as u64;
         let started = Instant::now();
         for k in 0..steps {
-            match &mut flight {
-                Some(fl) => fl.step(&mut sim, &throttle),
-                None => sim.step(&input),
+            match &mut plant {
+                Plant::Loads(input) => sim.step(input),
+                Plant::Throttle(fl, throttle) => fl.step(&mut sim, throttle),
+                Plant::Controlled(cl, sp) => cl.step(&mut sim, sp),
             }
             if k % 256 == 255 && started.elapsed() > RUN_TIME_BUDGET {
                 return Response::err(
@@ -321,12 +369,28 @@ impl Engine {
                 duration_s: steps as f64 * dt,
                 gravity_mps2: config.gravity_mps2,
                 state: sim.state(),
-                state_hash: hash_hex(sim.state_hash_with(&flight.as_ref().map(Flight::hash_words).unwrap_or_default())),
+                state_hash: hash_hex(sim.state_hash_with(&plant.flight().map(Flight::hash_words).unwrap_or_default())),
                 contacts,
                 contacts_dropped,
-                motors: flight.as_ref().map(Flight::motors),
-                battery: flight.as_ref().map(Flight::battery),
+                motors: plant.flight().map(Flight::motors),
+                battery: plant.flight().map(Flight::battery),
+                controller: match &plant {
+                    Plant::Controlled(cl, _) => Some(cl.summary()),
+                    _ => None,
+                },
             },
         )
     }
+}
+
+/// The controller setpoint of a request, checked (finite, unit attitude).
+fn setpoint(c: &ControllerRequest) -> Result<Setpoint, String> {
+    let attitude = c.attitude.unwrap_or([0.0, 0.0, 0.0, 1.0]);
+    if !attitude.iter().all(|x| x.is_finite()) || (attitude.iter().map(|x| x * x).sum::<f64>() - 1.0).abs() > 1e-9 {
+        return Err("attitude must be a unit quaternion x y z w".into());
+    }
+    if !c.altitude_m.is_none_or(f64::is_finite) || !c.climb_rate_mps.is_finite() || !c.yaw_rate_radps.is_finite() {
+        return Err("altitudeM, climbRateMps and yawRateRadps must be finite".into());
+    }
+    Ok(Setpoint { attitude, yaw_rate: c.yaw_rate_radps, z: c.altitude_m, z_velocity: c.climb_rate_mps })
 }

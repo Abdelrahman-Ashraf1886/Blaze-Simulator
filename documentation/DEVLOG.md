@@ -1,5 +1,190 @@
 # Development log
 
+## 2026-11-22 — Phase 4.5 follow-up: throttle map, held-out validation, gap-fills and overrides, per-axis drag
+
+Fixes from the 4.5 review, with your corrections. Three commits: c9e8923, 71c38fc,
+6ffa3b6.
+
+The model is now **coherent and bounded**, not "validated":
+- every assumption is labelled;
+- every fit has a stated domain;
+- the errors below are measured on rows the throttle map did not see.
+
+What is still unknown is listed at the end.
+
+**Built**
+- **Throttle map (an empirical effective control ratio)**:
+  - Each T-Motor row implies the duty the motor actually saw:
+    d_eff = [E + √(E² + 4·V·R·I)]/(2V), from d·V = E + R·I/d and E = ω/K_v.
+  - The map takes, at each throttle step, the median of d_eff/throttle over the
+    table's rows.
+  - Rules:
+    - the effective duty is made non-decreasing (pool-adjacent-violators,
+      flagged when it changes anything) and bounded to (0, 1];
+    - it is interpolated linearly between steps;
+    - outside the steps the ratio is held, flagged "extrapolated".
+  - It is labelled as the manufacturer bench's ratio (their ESC, supply and
+    wiring together), not an ESC efficiency. The voltage deficit is not claimed
+    as ESC loss.
+  - The ideal lossless converter (I_supply = d_eff·I_motor) stays an explicit
+    assumption.
+- **k_Q** uses each row's own d_eff: Q = K_t (I/d_eff − I₀).
+- **Validation is leave-one-prop-out**: each propeller's rows are predicted
+  with a map built from the other propellers' rows of the same table.
+  - k_T and k_Q are fitted on those same rows, so they are reported as in-sample
+    fit errors, separately from the validation.
+  - The ideal-ESC prediction is kept as "before".
+- **Per row**:
+  - the table's power column against V × I: equal to its printed rounding
+    (< 0.1 %) on every T-Motor row;
+  - model power;
+  - the energy balance V_m·I_m = Qω + K_t·I₀·ω + R·I_m² (tested);
+  - I₀'s share of the current, and whether I₀ is used away from its stated
+    10 V.
+- **Fit domains**:
+  - each fit states the speed range of its rows;
+  - APC fits keep only rows up to the motor's no-load speed at the pack
+    voltage (plus the first row above it);
+  - outside the domain a result is an estimate.
+- **APC provenance corrected**: APC's FAQ
+  (https://www.apcprop.com/faq/, read 2026-11-22) states the data uses the
+  sea-level Standard Atmosphere, 1.225 kg/m³. It is now cited in the seed
+  condition (seed v4).
+- **T-Motor propeller masses unchanged**: the conditions now record that
+  "Weight (Single Blade)" is ambiguous and is taken as the whole propeller.
+  Unverified.
+- **Same propeller in other motor tables**: shown for comparison, not pooled.
+  P13*4.4: k_T is 5.2 % higher in the KV700 table.
+- **Per-axis body drag**:
+  - C_d per x, y and z; the first value entered fills the empty axes.
+  - Projected areas A_x, A_y, A_z are derived: the union of the non-propeller
+    collision shapes projected on each body plane, on a 0.5 mm grid, with the
+    error estimated as |A(h) − A(2h)|. Propeller discs are excluded.
+  - Engine `aero.rs`: v_b = Rᵀv, F_b,i = −½ρ C_d,i A_i v_b,i|v_b,i|, F = R·F_b.
+- **One resolver for every value** (`src/domain/spec-resolution.ts`), in this
+  order:
+  1. part override;
+  2. library gap-fill;
+  3. the record's own value;
+  4. missing.
+  - Every layer is kept with its provenance.
+  - It is memoized on the component and override objects, both of which are
+    replaced on change.
+  - `linkedComponent` goes through it, so mass, inertia, shapes, checks,
+    wiring/electrical, propulsion and the 3D model all read the same value.
+- **Library gap-fills**:
+  - an empty single-value field of a built-in record can be filled in place
+    (source measured or user, never manufacturer);
+  - stored in `component_fills`, apart from the seed;
+  - seed updates never touch them, and a later stated value is shown as
+    "Manufacturer now states X" (the fill still wins);
+  - duplicate and export carry fills.
+- **Per-part overrides**:
+  - in the inspector's Specifications list, each value shows its layer;
+  - Override and Clear are undoable assembly edits (`overrides_json`),
+    validated per field in main.
+- **Checklist**:
+  - a missing component value offers both the library fill and "override on one
+    part" (it lists the parts);
+  - the wording now says 4.6 will refuse to start, not that flight is blocked.
+- **Engine**: optional per-motor `throttleMap` and an optional `aero` on
+  `vehicle.load`, both additive and validated. `loadVehicle(vehicle,
+  { propulsion?, aero? })`.
+
+**Before / after** (built-in data; "after" = leave-one-prop-out map)
+
+| Pair | Full throttle speed, before → after | Full throttle thrust, before → after | Max error over all rows, after (speed / thrust / current) | k_Q max / rms, before → after |
+|---|---|---|---|---|
+| KV470 + P13*4.4 (5 rows, 14.8 V) | +16.6 % → −2.9 % | +35.3 % → −6.3 % | 3.4 / 10.0 / 18.4 % | 19.1 / 11.5 → 10.7 / 6.9 % |
+| KV470 + P15*5 (5 rows, 14.8 V) | +23.7 % → +4.7 % | +57.3 % → +12.7 % | 11.3 / 15.0 / 21.8 % | 14.6 / 9.7 → 11.1 / 5.6 % |
+| KV700 + P13*4.4 (5 rows, 11.1 V) | +14.0 % → −0.2 % | +28.9 % → −1.3 % | 3.6 / 11.1 / 3.3 % | 17.8 / 9.7 → 12.8 / 6.2 % |
+
+In-sample k_T fits are unchanged: 2.2945e-5, 4.8676e-5 and 2.4138e-5 N·s²
+(max 3.6 %, 7.2 %, 13.9 %).
+
+Bench maps over all rows (effective duty at 50/65/75/85/100 %):
+- KV470: 49.3 / 61.4 / 70.6 / 78.7 / 83.9 %.
+- The simulation uses this full map; validation uses the held-out one.
+
+APC fit domains on a 14.8 V pack:
+
+| Motor | Rows used | Speed range | k_T 10x4.5MR | k_T fit max, before → after |
+|---|---|---|---|---|
+| KV470 | 7 of 22 | ≤ 7,000 rpm | 1.3873e-5 | 9.3 % → 1.4 % |
+| KV700 | 11 of 22 | ≤ 11,000 rpm | 1.4032e-5 | 9.3 % → 2.6 % |
+| KV780 | 12 of 22 | ≤ 12,000 rpm | 1.4082e-5 | 9.3 % → 3.0 % |
+
+- APC k_Q still scatters 14–26 %: Cp rises at low speed (the 1,000 rpm rows).
+- 11x4.5MR and 12x4.5MR behave the same (1.3–3.7 %).
+
+**Tests**
+- **Unit, propulsion** (`propulsion.test.ts`):
+  - throttle map: d_eff hand case; PAV; interpolation and extrapolation flags;
+    bounds; monotone seed maps; a falling table made monotone;
+  - the held-out map excludes the validated prop;
+  - per row: model equations, ideal-converter current/power, energy balance,
+    the table's power vs V·I, I₀ share and domain flag;
+  - the before/after numbers above pinned as regressions;
+  - k_Q scatter lower on every pair;
+  - APC domain capping and `outsideDomain`;
+  - cross-table k_T.
+- **Unit, drag** (`aero.test.ts`): box, union, cylinder, a yawed box,
+  propeller exclusion, resolution error, drag hand cases.
+- **Unit, layers** (`spec-resolution.test.ts`):
+  - precedence, every layer kept, a fill over a later stated value;
+  - cache invalidation for component, fills and overrides;
+  - shared keys have the same dimension;
+  - propagation into mass, inertia, shape, checks, wiring and propulsion, and
+    back when cleared.
+- **Unit, storage** (`component-fills.test.ts`):
+  - the fill rules: refused for a manufacturer source, a stated field, a table
+    field, a user record, a wrong unit;
+  - duplicate and export carry fills;
+  - a seed update under a fill;
+  - overrides persist on save and reload, and round-trip without the field when
+    absent;
+  - the override schema.
+- **Unit, assembly**: per-axis C_d persistence.
+- **TypeScript/Rust consistency**: `tests/fixtures/propulsion-cases.json` (42
+  cases) and `aero-cases.json` (20) are produced by the TS model. Both
+  `propulsion.test.ts`/`aero.test.ts` and engine-core reproduce them to 1e-12.
+- **Rust**: 50 engine-core tests (map interpolation and validation, steady
+  sag through a map, drag hand cases and energy) and 8 sidecar tests (`aero` on
+  `vehicle.load`).
+- **e2e** `propulsion.spec.ts`:
+  - held-out table, map, other tables;
+  - per-axis C_d fill and clear;
+  - a battery R_int override with undo and redo;
+  - the rotor inertia filled in the library from the checklist;
+  - the checklist down to the two 4.4 items.
+- **Migration order with 4.4**: applying 0001–0009, 4.4's 0010 and this 0011 in
+  sequence gives every column of both, with no clash. See the hand-over for the
+  merge steps.
+
+**Screenshots** (reviewed): `documentation/screenshots/4.5-fit.png`,
+`4.5-checklist.png`, `4.5-library-field.png`, `4.5-override.png`,
+`4.5-checklist-after.png`.
+- Fixed after review: a missing space in the I₀ line.
+
+**Remaining uncertainty**
+- **The map is the manufacturer's bench, not your ESC.**
+  - With another ESC or supply the effective duty differs.
+  - Nothing here measures it; a bench test of your own setup would replace it.
+- **Held-out errors are still up to 15 % (thrust) and 22 % (current)** at
+  some rows (P15*5, 50 % throttle). The model stays an ideal BLDC with constant
+  I₀ and no temperature effects.
+- **k_T and k_Q are in-sample.** Only one table per prop exists for most
+  props, except P13*4.4, where the two tables differ by 5 %.
+- **I₀ is a single point at 10 V**, used unvalidated elsewhere (flagged per
+  row).
+- **APC data is computed, not measured**, at sea-level ISA. k_Q from it
+  scatters 14–26 %.
+- **Propeller mass reading** ("Single Blade") is unverified; it affects
+  J_prop ×2 if wrong.
+- **Projected areas use collision shapes**, not real surfaces.
+- **C_d, the rotor inertia, the Tattu R_int and the ground coefficients** stay
+  user inputs.
+
 ## 2026-11-22 — Phase 4, milestone 4.5: motor, propeller and battery models
 
 **Built**

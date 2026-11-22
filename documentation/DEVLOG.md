@@ -21,7 +21,7 @@
     have their size; without it they are "cannot check").
 - **Settings saved per project**: tolerance (starting value 0.5 mm, a check
   margin, not a physical value) and allowed pairs, in `assemblies.interference_json`
-  (migration `0010_interference.sql`, schema v10), validated in main (unknown
+  (migration 0010, now `0010_collisions.sql`, schema v10), validated in main (unknown
   parts, unsorted or repeated pairs, tolerance 0–50 mm). Deleting a part drops
   its pairs.
 - **Viewport**: overlapping parts are outlined red (both parts, or the exact

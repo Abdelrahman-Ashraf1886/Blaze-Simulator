@@ -20,8 +20,9 @@ pub const MAX_STEPS: u64 = 120_000;
 /// 120 000 steps take ≈25 s; DEVLOG 4.4 follow-ups). The supervisor kills an engine
 /// that does not answer its health ping within 3 s, so a run stops itself well before
 /// that. Stopping depends on the machine's speed, so a stopped run returns no state:
-/// a completed run stays deterministic.
-pub const RUN_TIME_BUDGET: Duration = Duration::from_secs(2);
+/// a completed run stays deterministic. Debug builds (tests only; the app runs the
+/// release engine) are many times slower per step, so they get a larger budget.
+pub const RUN_TIME_BUDGET: Duration = if cfg!(debug_assertions) { Duration::from_secs(120) } else { Duration::from_secs(2) };
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]

@@ -14,7 +14,10 @@ import type {
   AssemblyPart,
   CreateProjectInput,
   FrameParams,
+  EnvironmentDoc,
   FrameType,
+  InterferenceSettingsDoc,
+  ModelHull,
   MotorMount,
   PartKind,
   Project,
@@ -121,6 +124,7 @@ interface AssetRow {
   bytes: number
   triangles: number
   bounds_json: string
+  hull_json: string | null
   imported_at: string
 }
 
@@ -131,6 +135,7 @@ const toAsset = (r: AssetRow): AssetInfo => ({
   bytes: r.bytes,
   triangles: r.triangles,
   bounds: JSON.parse(r.bounds_json) as Bounds3,
+  hull: r.hull_json === null ? null : (JSON.parse(r.hull_json) as ModelHull),
   importedAt: r.imported_at,
   warnings:
     r.triangles > TRIANGLE_WARNING
@@ -314,6 +319,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
               wiring_json: string
               frame_mass_kg: number | null
               frame_mass_source: 'user' | null
+              interference_json: string | null
+              environment_json: string | null
               updated_at: string
             }
           | undefined
@@ -325,6 +332,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
             wiring_json: '{}',
             frame_mass_kg: null,
             frame_mass_source: null,
+            interference_json: null,
+            environment_json: null,
             updated_at: now().toISOString(),
           }
           db.prepare('INSERT INTO assemblies (project_id, revision, frame_json, updated_at) VALUES (?, ?, ?, ?)').run(
@@ -348,6 +357,9 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           ...(row.frame_mass_kg !== null && row.frame_mass_source !== null
             ? { frameMass: { valueKg: row.frame_mass_kg, source: row.frame_mass_source } }
             : {}),
+          // Omitted when not set, so documents saved before schema v10 round-trip unchanged.
+          ...(row.interference_json !== null ? { interference: JSON.parse(row.interference_json) as InterferenceSettingsDoc } : {}),
+          ...(row.environment_json !== null ? { environment: JSON.parse(row.environment_json) as EnvironmentDoc } : {}),
           // Omitted when empty, so documents without wiring round-trip unchanged.
           ...wiringFields(JSON.parse(row.wiring_json) as Pick<Assembly, 'wires' | 'schematic'>),
         }
@@ -381,11 +393,13 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
         const revision = stored + 1
         const ts = now().toISOString()
         db.prepare(
-          `INSERT INTO assemblies (project_id, revision, frame_json, motors_json, wiring_json, frame_mass_kg, frame_mass_source, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO assemblies (project_id, revision, frame_json, motors_json, wiring_json, frame_mass_kg, frame_mass_source,
+             interference_json, environment_json, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (project_id) DO UPDATE SET revision = excluded.revision, frame_json = excluded.frame_json,
              motors_json = excluded.motors_json, wiring_json = excluded.wiring_json,
              frame_mass_kg = excluded.frame_mass_kg, frame_mass_source = excluded.frame_mass_source,
+             interference_json = excluded.interference_json, environment_json = excluded.environment_json,
              updated_at = excluded.updated_at`,
         ).run(
           input.projectId,
@@ -395,6 +409,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           JSON.stringify(wiringFields(input)),
           input.frameMass?.valueKg ?? null,
           input.frameMass?.source ?? null,
+          input.interference ? JSON.stringify(input.interference) : null,
+          input.environment ? JSON.stringify(input.environment) : null,
           ts,
         )
         db.prepare('DELETE FROM assembly_parts WHERE project_id = ?').run(input.projectId)
@@ -432,10 +448,14 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
       /** Records an imported file; re-importing identical bytes keeps the first record. */
       add(a: Omit<AssetInfo, 'importedAt' | 'warnings'>): AssetInfo {
         db.prepare(
-          `INSERT INTO assets (id, filename, format, bytes, triangles, bounds_json, imported_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
-        ).run(a.id, a.filename, a.format, a.bytes, a.triangles, JSON.stringify(a.bounds), now().toISOString())
+          `INSERT INTO assets (id, filename, format, bytes, triangles, bounds_json, hull_json, imported_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+        ).run(a.id, a.filename, a.format, a.bytes, a.triangles, JSON.stringify(a.bounds), a.hull ? JSON.stringify(a.hull) : null, now().toISOString())
         return toAsset(db.prepare('SELECT * FROM assets WHERE id = ?').get(a.id) as AssetRow)
+      },
+      /** Stores the hull of an asset imported before hulls were computed (startup back-fill). */
+      setHull(id: string, hull: ModelHull): void {
+        db.prepare('UPDATE assets SET hull_json = ? WHERE id = ?').run(JSON.stringify(hull), id)
       },
       /**
        * Removes assets no part uses and returns their ids, so main can delete the

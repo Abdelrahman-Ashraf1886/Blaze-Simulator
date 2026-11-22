@@ -51,26 +51,30 @@ async function buildHex(page: Page, projectName: string) {
       frame: unknown
       motors: unknown
     }>(api.assembly!.load!(project.id))
-    const part = (name: string, kind: string, componentId: string, mountId: string | null = null) => ({
+    // 30 × 30 × 20 mm boxes, each where it would sit on a real build, none inside another:
+    // the battery under the plate, the flight controller on it, the motors on their mounts,
+    // and the free parts in two rows of five, 35 mm apart, beside the flight controller.
+    const part = (name: string, kind: string, componentId: string, mountId: string | null = null, position = [0, 0, 0.01]) => ({
       id: crypto.randomUUID(),
       name,
       kind,
       shape: { type: 'box', size: [0.03, 0.03, 0.02] },
       parentId: null,
       mountId,
-      position: [0, 0, 0.02],
+      position,
       rotation: [0, 0, 0, 1],
       mass: null,
       componentId,
     })
+    const spot = (i: number) => [-0.07 + (i % 5) * 0.035, i < 5 ? 0.06 : -0.06, 0.014] // resting on the 4 mm frame top
     const parts = [
       part('Battery 1', 'battery', c('Tattu G-Tech 5200mAh 4S 35C'), 'plate-bottom'),
-      part('Power module', 'payload', c('PM02 V3')),
+      part('Power module', 'payload', c('PM02 V3'), null, spot(0)),
       part('Flight controller 1', 'flight-controller', c('Pixhawk 6C'), 'plate-top'),
-      ...Array.from({ length: 6 }, (_, i) => part(`ESC ${i + 1}`, 'esc', c('Tekko32 F4 45A ESC (AM32)'))),
+      ...Array.from({ length: 6 }, (_, i) => part(`ESC ${i + 1}`, 'esc', c('Tekko32 F4 45A ESC (AM32)'), null, spot(i + 1))),
       ...Array.from({ length: 6 }, (_, i) => part(`Motor ${i + 1}`, 'motor', c('MN3110 KV700'), `motor-${i + 1}`)),
-      part('GPS', 'payload', c('M10 GPS')),
-      part('Radio', 'payload', c('SiK Telemetry Radio V3 100mW')),
+      part('GPS', 'payload', c('M10 GPS'), null, spot(7)),
+      part('Radio', 'payload', c('SiK Telemetry Radio V3 100mW'), null, spot(8)),
     ]
     await unwrap(
       api.assembly!.save!({

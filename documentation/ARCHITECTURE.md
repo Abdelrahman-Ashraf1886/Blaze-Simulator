@@ -41,11 +41,11 @@ Newline-delimited JSON on stdin/stdout; stderr is log only.
 | `{"id":n,"type":"ping"}` | `{engineUptimeUs}` |
 | `{"id":n,"type":"shutdown"}` | `{}` then the process exits 0 |
 | `{"id":n,"type":"vehicle.load","vehicle":VehicleDefinition}` | `{valid:true, partCount, motorCount, totals:{massKg, com, inertia}, missingMass}` or `{valid:false, errors:[{path, message}]}` (an invalid one clears the loaded vehicle) |
-| `{"id":n,"type":"sim.run","durationS",dtS?,forceBodyN?,torqueBodyNm?}` | `{steps, dtS, durationS, gravityMps2, state, stateHash}`: the loaded vehicle from rest, constant body-frame inputs, at most 120 000 steps |
+| `{"id":n,"type":"sim.run","durationS",environment,startPositionM?,dtS?,forceBodyN?,torqueBodyNm?}` | `{steps, dtS, durationS, gravityMps2, state, stateHash, contacts:[{partId, with, startS, endS}], contactsDropped}`: the loaded vehicle from rest at `startPositionM`, constant body-frame inputs, at most 120 000 steps. `environment` is required: `{ground:{friction,restitution}\|null, obstacles:[{id,center,halfExtents,quaternion,friction,restitution}]}`, every coefficient the user's (no defaults) |
 
 Errors: `{"id":n|null,"ok":false,"error":{"code","message"}}` with code
-`INVALID_JSON`, `INVALID_REQUEST`, `INVALID_PARAMS`, `NO_VEHICLE` or
-`VEHICLE_INCOMPLETE`. `VehicleDefinition` is pinned in
+`INVALID_JSON`, `INVALID_REQUEST`, `INVALID_PARAMS`, `NO_VEHICLE`,
+`VEHICLE_INCOMPLETE` or `ENVIRONMENT_INCOMPLETE` (4.4). `VehicleDefinition` is pinned in
 `documentation/plans/phase-4-physics.md`; main validates it with zod before
 sending, and the engine validates it again in full (ADR 0006).
 A malformed line never terminates the engine. Rust source of truth:

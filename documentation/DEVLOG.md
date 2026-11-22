@@ -1,5 +1,119 @@
 # Development log
 
+## 2026-11-22 — Phase 4, milestone 4.4: collisions
+
+**Built**
+- **Workshop interference check** (`src/domain/collisions.ts`, pure):
+  - finds overlaps between the parts' collision shapes (box, cylinder, convex
+    hull; a propeller is its swept disc) at their workshop poses, the same shapes
+    and poses `mass.ts` gives the engine;
+  - depth = penetration depth (the shortest move that separates the two), by
+    GJK + EPA on the shapes' support functions: exact for boxes and hulls, to
+    1e-9 m on a cylinder's round side;
+  - deeper than the tolerance is an error naming both parts (new rule
+    `interference` in Checks); a part may always touch what it is mounted on
+    (motor on its pad, prop on its motor, a part on a plate mount); the user can
+    allow a pair ("Allow" on the finding; undo restores it);
+  - the frame is checked as its plate and arms; two props are left to
+    `prop-clearance`, which already reports overlapping discs;
+  - runs live while dragging, after an 80 ms pause, through the existing checks
+    pipeline (`findings.ts` now also takes the asset bounds, so imported models
+    have their size; without it they are "cannot check").
+- **Settings saved per project**: tolerance (starting value 0.5 mm, a check
+  margin, not a physical value) and allowed pairs, in `assemblies.interference_json`
+  (migration 0010, now `0010_collisions.sql`, schema v10), validated in main (unknown
+  parts, unsorted or repeated pairs, tolerance 0–50 mm). Deleting a part drops
+  its pairs.
+- **Viewport**: overlapping parts are outlined red (both parts, or the exact
+  plate or arm); **collision-shape debug view** (View panel or **B**) draws every
+  shape the check and the engine use. The highlight is an outline, not a fill:
+  with the 50-part performance build (many overlaps) fills cost 6 rendered fps
+  at 1080p (44 against 50 without the overlay), outlines 2.
+- **Engine** (`engine-core/src/environment.rs`):
+  - ground plane z = 0 and fixed box obstacles;
+  - friction and restitution of the ground and of each obstacle are required in
+    `sim.run`'s `environment`; nothing has a default, and the error names each
+    missing value (`ENVIRONMENT_INCOMPLETE`). `"ground": null` is free space;
+  - the entered values are the contact's coefficients: vehicle colliders carry
+    0 and environment colliders the value with rapier's `Max` combine rule;
+  - `sim.run` takes `startPositionM` and refuses a start inside the ground or an
+    obstacle, naming the part and the depth;
+  - contacts are reported: which part touched what, from when to when (`endS`
+    null = still touching), at most 10 000 per run.
+
+**Findings**
+- rapier marks a contact "active" from its 20 mm prediction distance, which
+  would report a landing ~5 ms early; and with contact recycling (on by default)
+  contact distances can be up to 50 mm stale. The contact log therefore uses
+  the contact points' distances (touching = within the solver's 0.1 mm), with
+  recycling off.
+- rapier's default allowed penetration is 5 mm; the engine uses 0.1 mm. A
+  resting brick settles 0.106 mm into the ground.
+- A perfectly flat box landing gets a brief spin (up to ~13 rad/s for a few
+  steps): rapier solves the four corner contacts one after another. It still
+  lands back flat, but with restitution > 0 the spin takes energy from the
+  bounce. More solver iterations do not remove it. With a single contact point
+  restitution is accurate (rebound speed 0.28 % low, height 0.66–0.88 % low for
+  e = 0.25 to 0.8).
+- parry 0.31.1's `contact` query mis-places a half-space given as the second
+  shape; the start check passes it first.
+- EPA needs faces that are coplanar with the new point treated as visible, or
+  box faces (the usual workshop case) fold the polytope inside out. 300 random
+  box pairs, also given as hulls, now match the exact separating-axis depth to
+  1e-8 m.
+
+**Tests**
+- `collisions.test.ts` (plan test 4): overlap depth against hand values and
+  apart/touching for box–box, rotated box–box, box–cylinder, cylinder–cylinder
+  (side and stacked), hull–box, hull–cylinder and hull–hull; 300 random box
+  pairs against SAT; tolerance edges, attached and allowed pairs, one finding
+  per owner pair.
+- `interference-input.test.ts`: a quad with motors and props has no finding; a
+  sunk motor is mounted contact; a battery pushed 2 mm into the plate is an
+  error naming the frame; allow, tolerance edge, delete; unknown model size;
+  migration 0010 on a v9 database and the save schema.
+- Rust `environment/tests.rs` (plan test 5): a brick dropped from 0.5 m lands
+  within 1 ms after √(2h/g), rests flat at 20 mm − [0, 0.12] mm with
+  |v|, |ω| < 1e-6 at every step from 1.5 s to 2.5 s, and the contact is
+  reported; rebound speed and height for e = 0.25/0.5/0.8; friction μ = 0.5
+  holds a 4 N push and lets 6 N accelerate at (6 − μmg)/m within 1 %; landing
+  on an obstacle; start inside the ground refused; deterministic with contacts.
+- Sidecar and supervisor tests for the protocol; `collisions.spec.ts` (e2e):
+  two batteries 5 mm into each other give the error and the highlight, allow
+  and undo, tolerance 5.01 / 4.99 mm, debug view with 7 shapes, settings survive
+  a restart.
+
+Screenshots: `documentation/screenshots/4.4-interference-highlight.png`,
+`documentation/screenshots/4.4-collision-debug-view.png`.
+
+- **The check finds overlaps the earlier builds had all along**: parts added
+  with nothing selected, or onto the same plate mount, start at the same spot,
+  so they sit inside each other. Three e2e tests about other rules
+  (`checks.spec.ts` 6S battery, `electrical.spec.ts` port conflict,
+  `phase3-acceptance.spec.ts`) built such stacks and counted every error; they
+  now set a 50 mm overlap tolerance, with a comment saying why.
+
+**Open**
+- Imported models still collide as their bounding box; computing and saving
+  their convex hull at import is not done.
+- No UI yet sets the ground and obstacle values; the flight view (4.8) and the
+  Ready-to-fly checklist (4.5) need to ask for them.
+- New parts are still placed at a shared spot, so a typical build starts with
+  interference errors until the parts are arranged. Placing each new part
+  clear of the others would fix that; not done here.
+- The live-drag debounce is not exercised by an e2e test (Playwright cannot
+  hold a gizmo drag easily); the drag path uses the same functions as a release.
+
+**Verified** (`npm run test:all`, exit 0)
+- Rust: 53 tests (41 engine-core, 7 of them new; 5 protocol; 7 sidecar, 1 new).
+  Typecheck and lint clean.
+- vitest: 258 tests (33 new in `collisions.test.ts` and `interference-input.test.ts`,
+  1 new supervisor test against the real engine).
+- Playwright: 39 tests, 1 new (`collisions.spec.ts`). Performance with 50 parts
+  in this full run: 39.6 rendered fps (median frame 17.2 ms) at 1080p and 25.6 at
+  4K; this machine measured lower than in 4.2 (59.0) on this day even without the
+  overlay (50 fps in the A/B above), so the numbers are noisy run to run.
+
 ## 2026-11-21 — Phase 4 data sources: APC performance, reference data, gaps
 
 Data only, plus the units and the propeller field needed to hold it. No simulation

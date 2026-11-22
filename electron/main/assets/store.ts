@@ -9,6 +9,7 @@ import { basename, join } from 'node:path'
 import { ASSET_SCHEME, MAX_ASSET_BYTES, type AssetInfo, type IpcResult } from '../../ipc/contract'
 import type { Repositories } from '../db/repositories'
 import { AssetError, inspectGltf, tooLarge } from './gltf'
+import { modelHull } from './hull'
 
 export function importAssetFile(path: string, dir: string, repos: Repositories): IpcResult<AssetInfo> {
   try {
@@ -32,7 +33,8 @@ export function importAssetFile(path: string, dir: string, repos: Repositories):
       writeFileSync(tmp, bytes)
       renameSync(tmp, target)
     }
-    const info = repos.assets.add({ id, filename: filename.slice(0, 255), bytes: bytes.byteLength, ...facts })
+    const hull = modelHull(bytes, facts.format, facts.bounds)
+    const info = repos.assets.add({ id, filename: filename.slice(0, 255), bytes: bytes.byteLength, ...facts, hull })
     return { ok: true, data: info }
   } catch (e) {
     if (e instanceof AssetError) return { ok: false, error: { code: 'VALIDATION', message: e.message } }
@@ -60,6 +62,23 @@ export function resolveAssetUrl(url: string, dir: string): string | null {
     if (existsSync(file)) return file
   }
   return null
+}
+
+/**
+ * Computes the hull of every stored model imported before hulls existed (hull_json NULL),
+ * from its file in the store. Returns the ids done. A missing file is skipped (its parts
+ * keep colliding as their bounding box).
+ */
+export function backfillHulls(dir: string, repos: Repositories): string[] {
+  const done: string[] = []
+  for (const a of repos.assets.list()) {
+    if (a.hull) continue
+    const file = join(dir, `${a.id}.${a.format}`)
+    if (!existsSync(file)) continue
+    repos.assets.setHull(a.id, modelHull(readFileSync(file), a.format, a.bounds))
+    done.push(a.id)
+  }
+  return done
 }
 
 /** Deletes stored files whose asset no longer exists (after `repos.assets.collectGarbage`). */

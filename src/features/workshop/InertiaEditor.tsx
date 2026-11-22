@@ -8,7 +8,7 @@ import { updatePart } from './assembly-ops'
 import { useAssembly } from './assembly-store'
 import { useAssets } from './asset-store'
 import { effectiveMass, effectiveShape, type ComponentIndex } from './links'
-import { collisionShape } from './mass-input'
+import { massShape } from './mass-input'
 
 const LABELS = ['Ixx', 'Iyy', 'Izz', 'Ixy', 'Ixz', 'Iyz'] as const
 const AXES = ['x', 'y', 'z'] as const
@@ -34,7 +34,7 @@ export function InertiaEditor({ part, components }: { part: AssemblyPart; compon
   const assets = useAssets((s) => s.assets)
   const mass = effectiveMass(part, components)?.valueKg ?? null
   const model = part.kind === 'propeller' ? 'propeller' : 'solid'
-  const derived: Inertia6 | null = mass ? shapeInertia(collisionShape(effectiveShape(part, components), assets), mass, model) : null
+  const derived: Inertia6 | null = mass ? shapeInertia(massShape(effectiveShape(part, components), assets), mass, model) : null
   const own = part.inertia ?? null
   const set = (label: string, inertia: PartInertia | null) => edit(label, (d) => updatePart(d, part.id, { inertia }))
 

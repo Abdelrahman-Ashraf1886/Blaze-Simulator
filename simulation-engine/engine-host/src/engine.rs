@@ -1,10 +1,11 @@
 //! Request dispatch and the sidecar's state (the loaded vehicle).
 
 use crate::protocol::{Command, ErrorCode, HelloResult, PongResult, Request, Response, PROTOCOL_VERSION};
+use engine_core::environment::{ContactEvent, Environment};
 use engine_core::sim::{hash_hex, BodyInput, SimConfig, SimState, Simulation, DEFAULT_DT_S};
 use engine_core::vehicle::{vec, MassTotals, Vehicle, VehicleError};
 use serde::Serialize;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Upper bound on the steps of one `sim.run`. The sidecar is single-threaded,
 /// so a run delays the health ping, and the supervisor kills an engine that
@@ -12,6 +13,16 @@ use std::time::Instant;
 /// (120 s at 1 ms) took 0.88 s in a release build on the development machine
 /// (≈7 µs per step; sidecar test `sim_run_at_the_step_limit`, DEVLOG 4.3).
 pub const MAX_STEPS: u64 = 120_000;
+
+/// Compute time one `sim.run` may take before it is stopped with `RUN_TOO_LONG`.
+/// MAX_STEPS was sized for free flight (≈7 µs per step); with ground contact a step
+/// costs far more (a 20-box vehicle resting on the ground: ≈0.2 ms per step, so
+/// 120 000 steps take ≈25 s; DEVLOG 4.4 follow-ups). The supervisor kills an engine
+/// that does not answer its health ping within 3 s, so a run stops itself well before
+/// that. Stopping depends on the machine's speed, so a stopped run returns no state:
+/// a completed run stays deterministic. Debug builds (tests only; the app runs the
+/// release engine) are many times slower per step, so they get a larger budget.
+pub const RUN_TIME_BUDGET: Duration = if cfg!(debug_assertions) { Duration::from_secs(120) } else { Duration::from_secs(2) };
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
@@ -40,7 +51,12 @@ struct SimRunResult {
     state: SimState,
     /// 16 hex digits, see `Simulation::state_hash`.
     state_hash: String,
+    /// Which part touched the ground or an obstacle, and when (s).
+    contacts: Vec<ContactEvent>,
+    /// Events beyond `MAX_CONTACT_EVENTS`, not listed.
+    contacts_dropped: u64,
 }
+
 
 pub struct Engine {
     started: Instant,
@@ -73,8 +89,8 @@ impl Engine {
             ),
             Command::Shutdown => (Response::ok(id, serde_json::json!({})), true),
             Command::VehicleLoad { vehicle } => (self.load(id, vehicle), false),
-            Command::SimRun { duration_s, dt_s, force_body_n, torque_body_nm } => {
-                (self.run(id, duration_s, dt_s, force_body_n, torque_body_nm), false)
+            Command::SimRun { duration_s, environment, start_position_m, dt_s, force_body_n, torque_body_nm } => {
+                (self.run(id, duration_s, environment, start_position_m, dt_s, force_body_n, torque_body_nm), false)
             }
         }
     }
@@ -102,10 +118,13 @@ impl Engine {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &self,
         id: u64,
         duration_s: f64,
+        environment: Option<serde_json::Value>,
+        start_position_m: Option<[f64; 3]>,
         dt_s: Option<f64>,
         force: Option<[f64; 3]>,
         torque: Option<[f64; 3]>,
@@ -122,6 +141,20 @@ impl Engine {
                 format!("{} part(s) have no mass: {}", missing.len(), missing.join(", ")),
             );
         }
+        let Some(environment) = environment else {
+            return Response::err(
+                Some(id),
+                ErrorCode::EnvironmentIncomplete,
+                "environment is not set: give the ground's friction and restitution (or \"ground\": null for free space) and the obstacles",
+            );
+        };
+        let environment = match Environment::from_json(&environment) {
+            Ok(e) => e,
+            Err(errors) => {
+                let list: Vec<String> = errors.iter().map(|e| format!("{}: {}", e.path, e.message)).collect();
+                return Response::err(Some(id), ErrorCode::EnvironmentIncomplete, list.join("; "));
+            }
+        };
         let dt = dt_s.unwrap_or(DEFAULT_DT_S);
         if !(dt.is_finite() && dt > 0.0) {
             return bad(format!("dtS must be a positive number (got {dt})"));
@@ -141,15 +174,29 @@ impl Engine {
             return bad("forceBodyN and torqueBodyNm must be finite".into());
         }
         let config = SimConfig { dt_s: dt, ..SimConfig::default() };
-        let mut sim = match Simulation::new(vehicle, config) {
+        let mut sim = match Simulation::with_environment(vehicle, config, &environment, start_position_m.unwrap_or([0.0; 3])) {
             Ok(s) => s,
             Err(e) => return bad(e),
         };
         let input = BodyInput { force_body_n: vec(f), torque_body_nm: vec(t) };
         let steps = n as u64;
-        for _ in 0..steps {
+        let started = Instant::now();
+        for k in 0..steps {
             sim.step(&input);
+            if k % 256 == 255 && started.elapsed() > RUN_TIME_BUDGET {
+                return Response::err(
+                    Some(id),
+                    ErrorCode::RunTooLong,
+                    format!(
+                        "the run needs more than {} s of computing (stopped after {} of {steps} steps, {:.3} s simulated); run a shorter durationS",
+                        RUN_TIME_BUDGET.as_secs_f64(),
+                        k + 1,
+                        (k + 1) as f64 * dt
+                    ),
+                );
+            }
         }
+        let (contacts, contacts_dropped) = sim.contacts();
         Response::ok(
             id,
             SimRunResult {
@@ -159,6 +206,8 @@ impl Engine {
                 gravity_mps2: config.gravity_mps2,
                 state: sim.state(),
                 state_hash: hash_hex(sim.state_hash()),
+                contacts,
+                contacts_dropped,
             },
         )
     }

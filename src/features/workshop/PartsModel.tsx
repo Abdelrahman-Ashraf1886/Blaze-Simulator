@@ -10,6 +10,7 @@ import { placeModel } from '@/three/model-units'
 import type { Vec3 } from '@/three/views'
 import { attach, halfHeight, mountFrames, resizable, scaledShape, shapeExtent, updatePart } from './assembly-ops'
 import { useAssembly } from './assembly-store'
+import { attachPlaced, editSize } from './place-actions'
 import { useAssets } from './asset-store'
 import { NO_CAPTURE } from './capture'
 import { mountPoints, snapMount } from './inspection'
@@ -151,7 +152,7 @@ export function PartsModel({
               target.scale.set(1, 1, 1)
               const shape = scaledShape(selectedPart.shape, [Math.abs(s.x), Math.abs(s.y), Math.abs(s.z)])
               if (shape && JSON.stringify(shape) !== JSON.stringify(selectedPart.shape)) {
-                useAssembly.getState().edit(`Resize ${selectedPart.name}`, (d) => updatePart(d, selectedPart.id, { shape }))
+                editSize(`Resize ${selectedPart.name}`, geo, selectedPart, { shape })
               }
               return
             }
@@ -160,11 +161,10 @@ export function PartsModel({
             if (mountId) {
               const label = mountPoints(geo).find((m) => m.id === mountId)?.label ?? mountId
               const assets = useAssets.getState().assets
-              useAssembly
-                .getState()
-                .edit(`Attach ${selectedPart.name} to ${label}`, (d) =>
-                  attach(d, geo, selectedPart.id, { kind: 'mount', id: mountId }, assets),
-                )
+              // Placed clear of the parts already there; if it does not fit, it stays where it was.
+              attachPlaced(`Attach ${selectedPart.name} to ${label}`, geo, selectedPart.id, (d) =>
+                attach(d, geo, selectedPart.id, { kind: 'mount', id: mountId }, assets),
+              )
               return
             }
             const o = target

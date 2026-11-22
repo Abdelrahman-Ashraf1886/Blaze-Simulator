@@ -16,6 +16,7 @@ import type {
   AssemblyPart,
   AssetInfo,
   Bounds3,
+  ModelHull,
   ModelUnits,
   PartKind,
   PartShape,
@@ -25,8 +26,8 @@ import type { FrameGeometry } from '../../three/frame-geometry'
 import { placeModel } from '../../three/model-units'
 import type { Vec3 } from '../../three/views'
 
-/** Bounds of imported models by asset id; models whose asset is unknown have no extent. */
-export type AssetBounds = Readonly<Record<string, { bounds: Bounds3 }>>
+/** Bounds (and hulls) of imported models by asset id; models whose asset is unknown have no extent. */
+export type AssetBounds = Readonly<Record<string, { bounds: Bounds3; hull?: ModelHull | null }>>
 
 /** The shape used for placement; linked parts take their component's size (see links.ts). */
 export type ShapeOf = (p: AssemblyPart) => PartShape
@@ -200,6 +201,10 @@ export function deletePart(doc: AssemblyDocument, id: string): AssemblyDocument 
   const next: AssemblyDocument = { ...doc, parts: doc.parts.filter((p) => !ids.has(p.id)) }
   if (doc.wires) next.wires = doc.wires.filter((w) => !ids.has(w.from.partId) && !ids.has(w.to.partId))
   if (doc.schematic) next.schematic = Object.fromEntries(Object.entries(doc.schematic).filter(([k]) => !ids.has(k)))
+  // Allowed overlaps that name a removed part go with it (undo brings both back).
+  if (doc.interference) {
+    next.interference = { ...doc.interference, allowedPairs: doc.interference.allowedPairs.filter(([a, b]) => !ids.has(a) && !ids.has(b)) }
+  }
   return next
 }
 

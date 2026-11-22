@@ -2,7 +2,9 @@
  * TypeScript mirror of `simulation-engine/engine-host/src/protocol.rs`.
  * Both sides must change together; bump PROTOCOL_VERSION on breaking changes.
  *
- * v2 adds `vehicle.load` and `sim.run`. Everything crossing this boundary is
+ * v2 adds `vehicle.load` and `sim.run`; 4.4 adds the required `environment`
+ * (ground and box obstacles, each with the user's friction and restitution),
+ * `startPositionM` and the reported `contacts` to `sim.run`. Everything crossing this boundary is
  * checked with zod: what we send (so a bad request fails here, with a
  * TypeScript-side message) and what the engine answers (a separate process
  * we do not trust blindly).
@@ -58,8 +60,33 @@ export type VehicleDefinition = z.infer<typeof VehicleDefinitionSchema>
 // ---------------------------------------------------------------------------
 // Commands
 
+/**
+ * A surface's friction and restitution: the user's entries (no source states them,
+ * so there are no defaults). They are the coefficients of the contact between the
+ * vehicle and that surface (engine-core `environment.rs`).
+ */
+const SurfaceSchema = { friction: num.refine((v) => v >= 0, 'cannot be negative'), restitution: num.refine((v) => v >= 0 && v <= 1, 'must be between 0 and 1') }
+
+/** Ground plane z = 0 (or null: free space) and fixed box obstacles, world frame. */
+export const EnvironmentSchema = z.strictObject({
+  ground: z.strictObject(SurfaceSchema).nullable(),
+  obstacles: z.array(
+    z.strictObject({
+      id: z.string().min(1),
+      center: vec3,
+      halfExtents: z.tuple([num, num, num]).refine((h) => h.every((v) => v > 0), 'must all be positive'),
+      quaternion: quat,
+      ...SurfaceSchema,
+    }),
+  ),
+})
+export type Environment = z.infer<typeof EnvironmentSchema>
+
 export const SimRunParamsSchema = z.strictObject({
   durationS: num.refine((v) => v > 0, 'must be positive'),
+  environment: EnvironmentSchema,
+  /** Body origin at the start, world frame (default the origin). */
+  startPositionM: vec3.optional(),
   dtS: num.refine((v) => v > 0, 'must be positive').optional(),
   forceBodyN: vec3.optional(),
   torqueBodyNm: vec3.optional(),
@@ -121,11 +148,14 @@ export const SimRunResultSchema = z.strictObject({
   gravityMps2: num,
   state: SimStateSchema,
   stateHash: z.string().regex(/^[0-9a-f]{16}$/),
+  /** Which part touched what, and when (s); `endS` null = still touching at the end. */
+  contacts: z.array(z.strictObject({ partId: z.string(), with: z.string(), startS: num, endS: num.nullable() })),
+  contactsDropped: z.number().int().nonnegative(),
 })
 export type SimRunResult = z.infer<typeof SimRunResultSchema>
 
 export interface EngineErrorBody {
-  code: 'INVALID_JSON' | 'INVALID_REQUEST' | 'INVALID_PARAMS' | 'NO_VEHICLE' | 'VEHICLE_INCOMPLETE'
+  code: 'INVALID_JSON' | 'INVALID_REQUEST' | 'INVALID_PARAMS' | 'NO_VEHICLE' | 'VEHICLE_INCOMPLETE' | 'ENVIRONMENT_INCOMPLETE' | 'RUN_TOO_LONG'
   message: string
 }
 

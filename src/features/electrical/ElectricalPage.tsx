@@ -27,6 +27,7 @@ import { buildFrame, type FrameGeometry } from '@/three/frame-geometry'
 import { PORT_KIND_LABELS, canConnect, portsOf, type Port, type PortKind, type WiringPart } from '@/domain/wiring'
 import { useAssembly } from '../workshop/assembly-store'
 import { SEVERITY } from '../workshop/ChecksPanel'
+import { useAssets } from '../workshop/asset-store'
 import { allFindings } from '../workshop/findings'
 import { useWorkshopView } from '../workshop/view-store'
 import { useComponentIndex } from '../workshop/component-index'
@@ -594,9 +595,10 @@ function PartPorts({ part, wires, index, onSelectWire }: { part?: WiringPart; wi
 const Diagnostics = memo(function Diagnostics({ doc, geo, onSelect }: { doc: AssemblyDocument; geo: FrameGeometry; onSelect: (partId: string) => void }) {
   const components = useComponentIndex()
   const tolerance = useWorkshopView((s) => s.balanceTolerance)
+  const assets = useAssets((s) => s.assets)
   const findings = useMemo(
-    () => allFindings(doc, geo, components, tolerance).filter((f) => f.severity !== 'cannot-check'),
-    [doc, geo, components, tolerance],
+    () => allFindings(doc, geo, components, tolerance, assets).filter((f) => f.severity !== 'cannot-check'),
+    [doc, geo, components, tolerance, assets],
   )
   return (
     <Section title="Checks" count={findings.length} testId="electrical-checks">

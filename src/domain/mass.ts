@@ -16,6 +16,9 @@
  *     averaged over a revolution:  Izz = m R²/3, Ixx = Iyy = m R²/6
  *     (a rod at angle φ in the disc gives m R² sin²φ / 3 about X; the mean of sin²φ is ½)
  *   - convex hull: its axis-aligned bounding box as a uniform solid box.
+ *   - imported model: its bounding box as a uniform solid box (`inertiaShape`), even when
+ *     it collides as its convex hull. The hull bounds the model's surface; it says nothing
+ *     about how its mass is distributed, so it is not used as a mass model.
  *   These are labelled assumptions; a part's own entered tensor and CoM offset
  *   (`override`) replace them.
  * - In body axes: I_body = R · I_local · Rᵀ (R from the part's rotation).
@@ -53,6 +56,11 @@ export interface BodyInput {
   massKg: number | null
   model: InertiaModel
   shape: CollisionShape
+  /**
+   * Shape for the derived inertia when it is not the collision shape (an imported model:
+   * its bounding box, while it collides as its hull). Absent: `shape`.
+   */
+  inertiaShape?: CollisionShape
   /** Shape centre (and so the part's centre of mass), body coordinates. */
   position: Vec3
   quaternion: Quat
@@ -212,7 +220,7 @@ export function massProperties(bodies: readonly BodyInput[]): MassProperties {
       partId: b.id,
       massKg: b.massKg,
       com: b.override ? add3(b.position, rotate(b.quaternion, b.override.comOffset)) : [...b.position],
-      inertia: rotateInertia(b.override ? b.override.inertia : shapeInertia(b.shape, b.massKg, b.model), b.quaternion),
+      inertia: rotateInertia(b.override ? b.override.inertia : shapeInertia(b.inertiaShape ?? b.shape, b.massKg, b.model), b.quaternion),
       pose: { position: [...b.position], quaternion: [...b.quaternion] },
       shape: b.shape,
     })

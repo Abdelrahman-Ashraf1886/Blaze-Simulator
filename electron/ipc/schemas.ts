@@ -3,8 +3,11 @@ import { z } from 'zod'
 import { inertiaProblem } from './inertia'
 import {
   FRAME_PARAM_LIMITS,
+  FRAME_PART_ID,
   FRAME_TYPES,
+  MAX_INTERFERENCE_TOLERANCE_M,
   MAX_MOTOR_TILT,
+  MAX_OBSTACLES,
   MODEL_UNITS,
   PART_KINDS,
   WIRE_COLORS,
@@ -115,6 +118,37 @@ const wireSchema = z
   })
   .strict()
 
+const finite = z.number().refine(Number.isFinite, 'must be a finite number')
+/** null = not set (the user has not entered it); otherwise within physical limits. */
+const friction = finite.min(0, 'Friction cannot be negative').max(10, 'Friction above 10 is not a physical coefficient').nullable()
+const restitution = finite.min(0, 'Restitution must be between 0 and 1').max(1, 'Restitution must be between 0 and 1').nullable()
+const obstacleCoord = z.number().min(-1000, 'Obstacle positions must be within 1 km').max(1000, 'Obstacle positions must be within 1 km')
+const side = z.number().positive('Obstacle sizes must be positive').max(1000, 'Obstacle sizes must be within 1 km')
+
+export const environmentDocSchema = z
+  .object({
+    ground: z.object({ friction, restitution }).strict(),
+    obstacles: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(64),
+            name: z.string().trim().min(1, 'An obstacle needs a name').max(80),
+            center: z.tuple([obstacleCoord, obstacleCoord, obstacleCoord]),
+            size: z.tuple([side, side, side]),
+            yaw: finite.min(-2 * Math.PI).max(2 * Math.PI),
+            friction,
+            restitution,
+          })
+          .strict(),
+      )
+      .max(MAX_OBSTACLES, `At most ${MAX_OBSTACLES} obstacles`)
+      .superRefine((obstacles, ctx) => {
+        if (new Set(obstacles.map((o) => o.id)).size !== obstacles.length) ctx.addIssue({ code: 'custom', message: 'Obstacle ids must be unique' })
+      }),
+  })
+  .strict()
+
 export const saveAssemblySchema = z
   .object({
     projectId: z.uuid(),
@@ -135,6 +169,20 @@ export const saveAssemblySchema = z
     schematic: z
       .record(z.uuid(), z.object({ x: z.number().min(-1e5).max(1e5), y: z.number().min(-1e5).max(1e5) }).strict())
       .optional(),
+    environment: environmentDocSchema.nullable().optional(),
+    interference: z
+      .object({
+        toleranceM: z
+          .number()
+          .min(0, 'The interference tolerance cannot be negative')
+          .max(MAX_INTERFERENCE_TOLERANCE_M, `The interference tolerance must be at most ${MAX_INTERFERENCE_TOLERANCE_M * 1000} mm`),
+        allowedPairs: z
+          .array(z.tuple([z.string().min(1).max(64), z.string().min(1).max(64)]))
+          .max(MAX_PARTS * 4, 'Too many allowed pairs'),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .superRefine((doc, ctx) => {
     const byId = new Map(doc.parts.map((p) => [p.id, p]))
@@ -153,6 +201,15 @@ export const saveAssemblySchema = z
       if (!byId.has(id)) ctx.addIssue({ code: 'custom', message: 'The schematic places a part that does not exist' })
     }
     if (byId.size !== doc.parts.length) ctx.addIssue({ code: 'custom', message: 'Part ids must be unique' })
+    const pairs = new Set<string>()
+    for (const [a, b] of doc.interference?.allowedPairs ?? []) {
+      for (const id of [a, b]) {
+        if (id !== FRAME_PART_ID && !byId.has(id)) ctx.addIssue({ code: 'custom', message: 'An allowed overlap names a part that does not exist' })
+      }
+      if (a >= b) ctx.addIssue({ code: 'custom', message: 'An allowed overlap must name two different parts, sorted' })
+      if (pairs.has(`${a},${b}`)) ctx.addIssue({ code: 'custom', message: 'An allowed overlap is listed twice' })
+      pairs.add(`${a},${b}`)
+    }
     for (const p of doc.parts) {
       if (p.parentId === null) continue
       if (!byId.has(p.parentId)) {

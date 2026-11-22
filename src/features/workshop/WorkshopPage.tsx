@@ -29,6 +29,7 @@ import { PageHeader } from '@/components/page-header'
 import { EmptyState, Readout, Readouts, Section } from '@/components/section'
 import { Table, Td, Th } from '@/components/table'
 import { cn, formatTimestamp } from '@/lib/utils'
+import { registerTestHook } from '@/lib/test-hooks'
 import { useProjects } from '@/stores/projects'
 import { buildFrame, type FrameGeometry } from '@/three/frame-geometry'
 import { VIEW_LABELS, type ViewPreset } from '@/three/views'
@@ -56,6 +57,10 @@ import {
 import { effectiveMass, resolveLinks } from './links'
 import { useComponents } from '@/stores/components'
 import { ComDropLine, ComMarker, MassPanel } from './MassPanel'
+import { CollisionShapes, CollisionStatus } from './CollisionView'
+import { InterferencePanel } from './InterferencePanel'
+import { addPlaced } from './place-actions'
+import { EnvironmentPanel } from './EnvironmentPanel'
 import { ChecksPanel, ChecksStatus } from './ChecksPanel'
 import { PartsModel } from './PartsModel'
 import { duplicatePart, subtreeIds, updatePart } from './assembly-ops'
@@ -200,6 +205,12 @@ function Workshop({ project }: { project: Project }) {
     [display, geo, selectedId, assets],
   )
 
+  // Test hooks (test and development builds only): the workshop stores, for e2e tests.
+  useEffect(() => {
+    const off = [registerTestHook('workshopView', useWorkshopView), registerTestHook('assembly', useAssembly)]
+    return () => off.forEach((f) => f())
+  }, [])
+
   // Load this project's assembly; save pending edits when leaving the workshop,
   // and synchronously if the window is closed or reloaded.
   useEffect(() => {
@@ -238,7 +249,7 @@ function Workshop({ project }: { project: Project }) {
         const a = useAssembly.getState()
         if (k === 'z' && !e.shiftKey) a.undo()
         else if (k === 'y' || (k === 'z' && e.shiftKey)) a.redo()
-        else if (k === 'd') duplicateSelected()
+        else if (k === 'd' && geo) duplicateSelected(geo)
         else return
         e.preventDefault()
         return
@@ -253,6 +264,7 @@ function Workshop({ project }: { project: Project }) {
       else if (e.key === 'x' || e.key === 'X') s.setExploded(!s.exploded)
       else if (e.key === 'm' || e.key === 'M') s.setMeasuring(!s.measuring)
       else if (e.key === 'c' || e.key === 'C') s.setShowCom(!s.showCom)
+      else if (e.key === 'b' || e.key === 'B') s.setShowCollision(!s.showCollision)
       // Esc in measure mode: clear the measurement, then leave the tool.
       else if (e.key === 'Escape' && s.measuring && s.measure.length > 0) s.clearMeasure()
       else if (e.key === 'Escape' && s.measuring) s.setMeasuring(false)
@@ -262,7 +274,7 @@ function Workshop({ project }: { project: Project }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [geo])
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="workshop">
@@ -450,7 +462,7 @@ function Workshop({ project }: { project: Project }) {
               if (!doc || !PART_KINDS.includes(kind)) return
               e.preventDefault()
               const mount = markerUnder(e.clientX, e.clientY)
-              addLibraryPart(kind, mount ? { kind: 'mount', id: mount } : { kind: 'none' }, doc.frame.armThickness)
+              if (geo) addLibraryPart(kind, mount ? { kind: 'mount', id: mount } : { kind: 'none' }, doc.frame.armThickness, geo)
             }}
           >
             <Viewport
@@ -464,6 +476,7 @@ function Workshop({ project }: { project: Project }) {
                   <DimensionLabels doc={display} geo={geo} />
                   <MeasureLabel />
                   <ComMarker doc={doc} geo={geo} />
+                  <CollisionStatus doc={doc} geo={geo} />
                 </>
               ) : null
             }
@@ -474,6 +487,7 @@ function Workshop({ project }: { project: Project }) {
             </MeasureCapture>
             <MeasureLine />
             {geo && doc && <ComDropLine doc={doc} geo={geo} />}
+            {geo && doc && <CollisionShapes doc={doc} geo={geo} />}
           </Viewport>
           </div>
         </Panel>
@@ -614,8 +628,14 @@ function ProjectPanel({
           <Section title="Checks">
             <ChecksPanel doc={doc} geo={geo} projectName={project.name} />
           </Section>
+          <Section title="Interference">
+            <InterferencePanel doc={doc} geo={geo} />
+          </Section>
           <Section title="Mass">
             <MassPanel doc={doc} geo={geo} />
+          </Section>
+          <Section title="Environment">
+            <EnvironmentPanel doc={doc} geo={geo} />
           </Section>
         </>
       )}
@@ -641,6 +661,7 @@ function ViewPanel() {
   const projection = useWorkshopView((s) => s.projection)
   const detail = useWorkshopView((s) => s.detail)
   const showCom = useWorkshopView((s) => s.showCom)
+  const showCollision = useWorkshopView((s) => s.showCollision)
   return (
     <>
       <Section title="View">
@@ -670,6 +691,23 @@ function ViewPanel() {
                 pressed={showCom === on}
                 onClick={() => useWorkshopView.getState().setShowCom(on)}
                 title={on ? 'Show the centre-of-mass marker (C)' : 'Hide the centre-of-mass marker (C)'}
+              >
+                {on ? 'Show' : 'Hide'}
+              </SegmentButton>
+            ))}
+          </Segmented>
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-line py-1.5">
+          <span className="text-[12.5px] text-fg-muted" title="The shapes the interference check and the simulation use">
+            Collision shapes
+          </span>
+          <Segmented label="Collision shapes">
+            {([true, false] as const).map((on) => (
+              <SegmentButton
+                key={String(on)}
+                pressed={showCollision === on}
+                onClick={() => useWorkshopView.getState().setShowCollision(on)}
+                title={on ? 'Draw every collision shape (B)' : 'Hide the collision shapes (B); overlaps stay highlighted'}
               >
                 {on ? 'Show' : 'Hide'}
               </SegmentButton>
@@ -707,6 +745,7 @@ function ViewPanel() {
             ['Exploded view', 'X'],
             ['Measure', 'M'],
             ['Centre of mass', 'C'],
+            ['Collision shapes', 'B'],
           ].map(([action, key]) => (
             <div key={action} className="flex justify-between border-b border-line/60 py-1.5">
               <dt className="text-fg-muted">{action}</dt>
@@ -831,19 +870,16 @@ function partKeys(e: KeyboardEvent): boolean {
   return true
 }
 
-function duplicateSelected() {
+function duplicateSelected(geo: FrameGeometry) {
   const v = useWorkshopView.getState()
   const a = useAssembly.getState()
   const sel = v.selection
   const part = sel?.kind === 'part' ? a.doc?.parts.find((p) => p.id === sel.id) : undefined
   if (!part) return
-  let rootId: string | null = null
-  a.edit(`Duplicate ${part.name}`, (d) => {
+  addPlaced(`Duplicate ${part.name}`, geo, (d) => {
     const r = duplicatePart(d, part.id)
-    rootId = r.rootId
-    return r.doc
+    return { doc: r.doc, roots: r.rootId ? [r.rootId] : [] }
   })
-  if (rootId) v.selectPart(rootId)
 }
 
 /** The mount marker nearest a screen point, within 28 px (markers show while a library part is dragged). */

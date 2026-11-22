@@ -5,8 +5,11 @@ import { Button } from '@/components/ui/button'
 import { cn, formatTimestamp } from '@/lib/utils'
 import { report, summary, type Finding, type Severity } from '@/domain/checks'
 import type { FrameGeometry } from '@/three/frame-geometry'
+import { FRAME_PART_ID } from '../../../electron/ipc/contract'
+import { useAssets } from './asset-store'
 import { useComponentIndex } from './component-index'
 import { allFindings } from './findings'
+import { allowOverlap, useLiveDoc } from './InterferencePanel'
 import { useWorkshopView } from './view-store'
 
 export const SEVERITY: Record<Severity, { icon: LucideIcon; tone: string; label: string }> = {
@@ -15,11 +18,24 @@ export const SEVERITY: Record<Severity, { icon: LucideIcon; tone: string; label:
   'cannot-check': { icon: CircleHelp, tone: 'text-fg-subtle', label: 'Cannot check' },
 }
 
-/** Findings for the current assembly, wiring included (recomputed when the document or the library changes). */
+/**
+ * Findings for the current assembly, wiring included (recomputed when the document or
+ * the library changes, and during a gizmo drag after a short pause).
+ */
 export function useFindings(doc: AssemblyDocument, geo: FrameGeometry): Finding[] {
   const components = useComponentIndex()
   const tolerance = useWorkshopView((s) => s.balanceTolerance)
-  return useMemo(() => allFindings(doc, geo, components, tolerance), [doc, geo, components, tolerance])
+  const assets = useAssets((s) => s.assets)
+  const live = useLiveDoc(doc)
+  return useMemo(() => allFindings(live, geo, components, tolerance, assets), [live, geo, components, tolerance, assets])
+}
+
+/** The two owners of an interference error, from its id `interference:<a>,<b>`. */
+function overlapPair(f: Finding, doc: AssemblyDocument) {
+  if (f.rule !== 'interference' || f.severity !== 'error') return null
+  const [a, b] = f.id.slice('interference:'.length).split(',') as [string, string]
+  const name = (id: string) => (id === FRAME_PART_ID ? 'Frame' : (doc.parts.find((p) => p.id === id)?.name ?? id))
+  return { a, b, aName: name(a), bName: name(b) }
 }
 
 const select = (f: Finding) => {
@@ -49,8 +65,9 @@ export function ChecksPanel({ doc, geo, projectName }: { doc: AssemblyDocument; 
           {findings.map((f) => {
             const s = SEVERITY[f.severity]
             const Icon = s.icon
+            const pair = overlapPair(f, doc)
             return (
-              <li key={f.id}>
+              <li key={f.id} className={pair ? 'relative' : undefined}>
                 <button
                   type="button"
                   data-testid="finding"
@@ -62,8 +79,19 @@ export function ChecksPanel({ doc, geo, projectName }: { doc: AssemblyDocument; 
                   className="flex w-full gap-2 border-b border-line/60 py-1.5 text-left text-[12.5px] leading-snug hover:bg-hover/50 disabled:cursor-default disabled:hover:bg-transparent"
                 >
                   <Icon className={cn('mt-0.5 size-3.5 shrink-0', s.tone)} aria-label={s.label} />
-                  <span className="min-w-0 text-fg-muted">{f.message}</span>
+                  <span className={cn('min-w-0 text-fg-muted', pair && 'pr-12')}>{f.message}</span>
                 </button>
+                {pair && (
+                  <button
+                    type="button"
+                    data-testid="allow-overlap"
+                    title={`Accept this overlap of ${pair.aName} and ${pair.bName} (saved with the project; undo restores it)`}
+                    onClick={() => allowOverlap(pair, true)}
+                    className="absolute right-0 top-1.5 text-[12px] text-fg-subtle underline hover:text-fg"
+                  >
+                    Allow
+                  </button>
+                )}
               </li>
             )
           })}

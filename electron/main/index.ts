@@ -4,13 +4,14 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
 import { createHandlers } from '../ipc/handlers'
-import { importAssetFile, removeAssetFiles, resolveAssetUrl } from './assets/store'
+import { backfillHulls, importAssetFile, removeAssetFiles, resolveAssetUrl } from './assets/store'
 import { safeFileName, savePngSchema } from './screenshot'
 import { MAX_PACK_BYTES, PackError, buildPack, importPack } from './components/pack'
 import { loadBuiltIns } from './components/seed'
 import { z } from 'zod'
 import { openDatabase, schemaVersion, type Db } from './db/database'
 import { createRepositories } from './db/repositories'
+import { dropTest } from './engine/drop-test'
 import { EngineSupervisor } from './engine/supervisor'
 
 const APP_ID = 'com.blazeuav.app'
@@ -110,6 +111,8 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      // Test hooks (window.__blazeTest) for end-to-end tests only; never set in normal use.
+      ...(process.env.BLAZE_UAV_TEST_HOOKS === '1' ? { additionalArguments: ['--blaze-test-hooks'] } : {}),
     },
   })
   win.once('ready-to-show', () => win.show())
@@ -202,6 +205,12 @@ function start(): void {
     removeAssetFiles(assetsDir, repos.assets.collectGarbage())
   } catch (e) {
     console.error('[assets] cleanup failed', e) // never blocks startup
+  }
+  try {
+    const filled = backfillHulls(assetsDir, repos)
+    if (filled.length) console.log(`[assets] computed the hull of ${filled.length} model(s) imported before 4.4`)
+  } catch (e) {
+    console.error('[assets] hull back-fill failed', e) // those parts keep their bounding box
   }
   protocol.handle(ASSET_SCHEME, async (request) => {
     const file = resolveAssetUrl(request.url, assetsDir)
@@ -303,6 +312,8 @@ function start(): void {
   ipcMain.on(Channels.assemblySaveSync, (event, payload: unknown) => {
     event.returnValue = handlers[Channels.assemblySave]!(payload)
   })
+
+  ipcMain.handle(Channels.engineDropTest, (_event, payload: unknown) => dropTest(engine!, payload))
 
   engine.on('status', (status) => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(Channels.engineStatusChanged, status)

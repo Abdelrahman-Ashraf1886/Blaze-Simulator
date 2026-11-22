@@ -4,6 +4,9 @@ import { EngineSupervisor } from '../../electron/main/engine/supervisor'
 import type { VehicleDefinition as EngineDef } from '../../electron/main/engine/protocol'
 import { massProperties, vehicleDefinition, type BodyInput, type MotorInput, type Quat, type Vec3, type VehicleDefinition } from '../../src/domain/mass'
 
+/** Free space, stated (sim.run has no default environment). */
+const FREE = { ground: null, obstacles: [] }
+
 // Type-level: mass.ts's VehicleDefinition must be assignable to the engine's zod type and back.
 const toEngine = (v: VehicleDefinition): EngineDef => v
 const fromEngine = (v: EngineDef): VehicleDefinition => v
@@ -71,6 +74,6 @@ it('mass.ts output loads in the real engine, and the engine totals agree to 1e-9
     expect(Math.hypot(...r.totals.inertia.map((v, i) => v - def.inertia[i]!)) / norm, where).toBeLessThan(1e-9)
   }
   // Hover force through the CoM for 1 s: no vertical velocity builds up.
-  const run = await sup.runSim({ durationS: 1, forceBodyN: [0, 0, quad(0, 0).totalMassKg * 9.80665] })
+  const run = await sup.runSim({ environment: FREE, durationS: 1, forceBodyN: [0, 0, quad(0, 0).totalMassKg * 9.80665] })
   expect(Math.abs(run.state.linearVelocityMps[2])).toBeLessThan(1e-12)
 }, 20_000)

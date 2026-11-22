@@ -57,6 +57,12 @@ interface ViewState {
   /** Show the centre-of-mass marker in the viewport. */
   showCom: boolean
   setShowCom(on: boolean): void
+  /** Debug view: draw every part's collision shape (what the interference check and the engine use). */
+  showCollision: boolean
+  setShowCollision(on: boolean): void
+  /** Why the last part could not be placed (shown under "Add part"); null when it was. */
+  placementNote: string | null
+  setPlacementNote(note: string | null): void
   /**
    * Warn when a motor's hover share exceeds the mean by more than this many percent.
    * The user's own margin; 10 % is only the starting value.
@@ -151,6 +157,15 @@ export const useWorkshopView = create<ViewState>((set) => ({
   setShowCom(showCom) {
     writePref('workshop.showCom', showCom)
     set({ showCom })
+  },
+  placementNote: null,
+  setPlacementNote(placementNote) {
+    set((s) => (s.placementNote === placementNote ? s : { placementNote }))
+  },
+  showCollision: readPref('workshop.showCollision', false),
+  setShowCollision(showCollision) {
+    writePref('workshop.showCollision', showCollision)
+    set({ showCollision })
   },
   balanceTolerance: readPref('workshop.balanceTolerance', 10),
   setBalanceTolerance(balanceTolerance) {

@@ -1,7 +1,9 @@
 //! Engine protocol v2.
 //!
 //! v2 adds `vehicle.load` and `sim.run` (batch); `hello`, `ping` and
-//! `shutdown` are unchanged from v1.
+//! `shutdown` are unchanged from v1. 4.4 makes `sim.run` take a required
+//! `environment` (ground and obstacles, with the user's friction and
+//! restitution) and an optional `startPositionM`, and report `contacts`.
 //!
 //! Transport: newline-delimited JSON (one message per line, UTF-8) on the
 //! engine's stdin (requests) and stdout (responses). stderr is free-form log
@@ -29,12 +31,20 @@ pub enum Command {
     /// that `sim.run` simulates. An invalid one clears the loaded vehicle.
     #[serde(rename = "vehicle.load")]
     VehicleLoad { vehicle: Value },
-    /// Runs the loaded vehicle from rest at the origin (identity attitude)
-    /// for `durationS`, with an optional constant body-frame force (through
-    /// the CoM) and torque (about the CoM); returns the final state and hash.
+    /// Runs the loaded vehicle from rest (identity attitude, body origin at
+    /// `startPositionM`, default the world origin) for `durationS`, with an
+    /// optional constant body-frame force (through the CoM) and torque (about
+    /// the CoM), in `environment`; returns the final state, the hash and the
+    /// contacts. `environment` is required: `{"ground": null, "obstacles": []}`
+    /// is free space; a ground or obstacle must carry its friction and
+    /// restitution (engine-core `environment.rs`).
     #[serde(rename = "sim.run", rename_all = "camelCase")]
     SimRun {
         duration_s: f64,
+        #[serde(default)]
+        environment: Option<Value>,
+        #[serde(default)]
+        start_position_m: Option<[f64; 3]>,
         #[serde(default)]
         dt_s: Option<f64>,
         #[serde(default)]
@@ -77,6 +87,12 @@ pub enum ErrorCode {
     NoVehicle,
     /// The loaded vehicle lists parts without a mass; it cannot fly.
     VehicleIncomplete,
+    /// `sim.run` without a complete environment (ground and obstacle friction
+    /// and restitution are the user's inputs; there are no defaults).
+    EnvironmentIncomplete,
+    /// `sim.run` needed more compute time than the engine allows one request
+    /// (it would stop answering health pings); no state is returned.
+    RunTooLong,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -139,6 +155,8 @@ mod tests {
                 .command,
             Command::SimRun {
                 duration_s: 1.5,
+                environment: None,
+                start_position_m: None,
                 dt_s: None,
                 force_body_n: Some([0.0, 0.0, 9.0]),
                 torque_body_nm: None

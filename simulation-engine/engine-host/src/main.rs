@@ -1,6 +1,7 @@
 //! `drone-engine` sidecar entry point. See `protocol.rs` for the wire format.
 
 mod engine;
+mod flight_session;
 mod protocol;
 
 use protocol::{parse_request, PROTOCOL_VERSION};

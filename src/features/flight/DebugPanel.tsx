@@ -9,11 +9,11 @@ const vector = (v: readonly number[], unit: Unit) => v.map((n) => value(n, unit)
 const axes = (v: AxisVector, unit: Unit) => vector([v.x, v.y, v.z], unit)
 export const endReason = (ended: FlightFrame['ended']) => ended === 'voltageCutoff' ? 'Voltage cut-off' : ended === 'chargeCutoff' ? 'Charge cut-off' : null
 
-export function DebugPanel({ frame, mass, indicators }: { frame: FlightFrame; mass: MassProperties; indicators: Record<string, Indicator> }) {
+export function DebugPanel({ frame, mass, indicators, source = 'demo' }: { frame: FlightFrame; mass: MassProperties; indicators: Record<string, Indicator>; source?: 'demo' | 'live' }) {
   return (
     <div className="space-y-5 text-[12.5px] [&_dd]:break-words [&_dd]:!overflow-visible [&_dd]:!whitespace-normal" data-testid="flight-debug">
       <Section title="Physics debug">
-        <p className="mb-2 text-warn">Demo telemetry — scripted, not a flight prediction.</p>
+        {source === 'demo' && <p className="mb-2 text-warn">Demo telemetry — scripted, not a flight prediction.</p>}
         <Readouts>
           <Readout label="Time" value={value(frame.timeS, 's')} unit="s" />
           <Readout label="End reason" value={endReason(frame.ended) ?? 'None'} mono={false} />
@@ -61,14 +61,14 @@ export function DebugPanel({ frame, mass, indicators }: { frame: FlightFrame; ma
               <Readout label="Throttle" value={value(motor.throttle, '%', 1)} unit="%" />
               <Readout label="Speed" value={value(motor.omegaRadps, 'rpm', 1)} unit="rpm" />
               <Readout label="Thrust" value={value(motor.thrustN, 'N')} unit="N" />
-              <Readout label="Shaft torque" value={value(motor.shaftTorqueNm, 'N·m')} unit="N·m" />
+              <Readout label="Drag torque (air)" value={value(motor.dragTorqueNm, 'N·m')} unit="N·m" />
             </Readouts>
           </div>
         ))}
       </Section>
       <Section title="Torque (body X / Y / Z)">
         <Readouts>
-          {([['Arm', frame.armTorqueNm], ['Reaction', frame.reactionTorqueNm], ['Rotor gyro', frame.rotorGyroTorqueNm], ['Total', frame.totalTorqueNm]] as const).map(([label, v]) => (
+          {([['Arm', frame.armTorqueNm], ['Drag reaction', frame.dragReactionTorqueNm], ['Spin-up reaction', frame.spinUpReactionTorqueNm], ['Rotor gyro', frame.rotorGyroTorqueNm], ['Total', frame.totalTorqueNm]] as const).map(([label, v]) => (
             <Readout key={label} label={label} value={axes(v, 'N·m')} unit="N·m" />
           ))}
           <Readout label="Control demand" value={frame.control ? vector(frame.control.torqueDemand, 'N·m') : 'Unavailable'} unit="N·m" />

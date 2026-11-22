@@ -189,3 +189,44 @@ fn gains_take_px4_overrides_by_exact_name() {
     }
     assert_eq!(gains_with_overrides(None).unwrap(), Gains::px4_v1_13_3());
 }
+
+/// `Controller::step` asserts a unit estimate within 1e-9 and a panic would end
+/// the sidecar, while rapier's integrated quaternion is only unit to rounding.
+/// A quaternion off by 1e-8 in |q|² (outside the assert) makes the controller
+/// panic as it is, and runs once normalised.
+#[test]
+fn the_estimate_is_normalised_before_the_controllers_unit_assert() {
+    let v = quad(1.0, [0.0; 3]);
+    let p = propulsion(&v);
+    let mut c = Controller::new(&v.definition.motors, p.yaw_ratio(), Gains::px4_v1_13_3()).unwrap();
+    let drifted = [0.0, 0.0, 0.0, (1.0f64 + 1e-8).sqrt()];
+    let sp = Setpoint { attitude: LEVEL, yaw_rate: 0.0, z: Some(1.0), z_velocity: 0.0 };
+    let input = |attitude| ControllerInput { attitude, body_rates: [0.0; 3], z: 0.0, z_velocity: 0.0 };
+    let raw = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Controller::new(&v.definition.motors, p.yaw_ratio(), Gains::px4_v1_13_3()).unwrap().step(&input(drifted), &sp, 1e-3).collective_thrust
+    }));
+    assert!(raw.is_err(), "the raw drifted quaternion trips the assert");
+    let unit = unit_attitude(drifted);
+    assert!((unit.iter().map(|x| x * x).sum::<f64>() - 1.0).abs() < 1e-15);
+    assert!(c.step(&input(unit), &sp, 1e-3).collective_thrust.is_finite());
+}
+
+/// Long run with rapier's own quaternion in the loop: 60 s of yaw at 6 rad/s
+/// (60 000 steps, ≈57 turns) flies on. In free flight the raw norm stayed at
+/// 6e-16 (|q|² − 1) here, so this guards the whole path rather than proving the
+/// drift; the test above proves the normalisation.
+#[test]
+fn a_long_yawing_run_flies_on() {
+    let v = quad(1.0, [0.0; 3]);
+    let p = propulsion(&v);
+    let yaw = p.yaw_ratio();
+    let flight = Flight::new(&v, p, None, None).unwrap();
+    let mut cl = ClosedLoop::new(&v, flight, yaw, Gains::px4_v1_13_3()).unwrap();
+    let mut sim = Simulation::new(&v, SimConfig::default()).unwrap();
+    let sp = Setpoint { attitude: LEVEL, yaw_rate: 6.0, z: Some(1.0), z_velocity: 0.0 };
+    for _ in 0..60_000 {
+        cl.step(&mut sim, &sp);
+    }
+    assert!(sim.state().time_s > 59.9);
+    assert!(cl.control().torque_demand.iter().all(|x| x.is_finite()));
+}

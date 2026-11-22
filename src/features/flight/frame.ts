@@ -13,12 +13,16 @@ export interface FlightFrame {
   linearVelocityMps: Vec3
   angularVelocityBodyRadps: Vec3
   /** Same stable order as the vehicle definition's motors. */
-  motors: { throttle: number; omegaRadps: number; thrustN: number; shaftTorqueNm: number }[]
+  /** `dragTorqueNm` is the air's drag torque k_Q ω² the motor holds the rotor against. */
+  motors: { throttle: number; omegaRadps: number; thrustN: number; dragTorqueNm: number }[]
   totalThrustN: number
   thrustBodyN: AxisVector
   dragBodyN: AxisVector
   armTorqueNm: AxisVector
-  reactionTorqueNm: AxisVector
+  /** The rotors' drag torque on the body, −s·Q·a per motor. */
+  dragReactionTorqueNm: AxisVector
+  /** Spinning the rotors up or down, −s·J·dω/dt·a per motor. */
+  spinUpReactionTorqueNm: AxisVector
   rotorGyroTorqueNm: AxisVector
   totalTorqueNm: AxisVector
   packVoltageV: number

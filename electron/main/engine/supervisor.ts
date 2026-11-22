@@ -5,6 +5,16 @@ import { createInterface } from 'node:readline'
 import type { EngineStatus } from '../../ipc/contract'
 import {
   PROTOCOL_VERSION,
+  FlightSessionEndResultSchema,
+  FlightSessionStartParamsSchema,
+  FlightSessionStartResultSchema,
+  FlightSessionStepParamsSchema,
+  FlightSessionStepResultSchema,
+  type FlightSessionEndResult,
+  type FlightSessionStartParams,
+  type FlightSessionStartResult,
+  type FlightSessionStepParams,
+  type FlightSessionStepResult,
   SimRunParamsSchema,
   SimRunResultSchema,
   BodyDragSchema,
@@ -151,6 +161,22 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
     const checked = SimRunParamsSchema.parse(params)
     const result = await this.request({ type: 'sim.run', ...checked })
     return SimRunResultSchema.parse(result)
+  }
+
+  /** Live flight (4.8 part B): replaces any session; the loaded vehicle must carry propulsion. */
+  async startFlightSession(params: FlightSessionStartParams): Promise<FlightSessionStartResult> {
+    const checked = FlightSessionStartParamsSchema.parse(params)
+    return FlightSessionStartResultSchema.parse(await this.request({ type: 'flight.session.start', ...checked }))
+  }
+
+  /** Advances the session by `steps` 1 ms steps with the setpoint held (at most 100 steps, well inside the timeout). */
+  async stepFlightSession(params: FlightSessionStepParams): Promise<FlightSessionStepResult> {
+    const checked = FlightSessionStepParamsSchema.parse(params)
+    return FlightSessionStepResultSchema.parse(await this.request({ type: 'flight.session.step', ...checked }))
+  }
+
+  async endFlightSession(): Promise<FlightSessionEndResult> {
+    return FlightSessionEndResultSchema.parse(await this.request({ type: 'flight.session.end' }))
   }
 
   private launch(state: 'starting' | 'restarting'): void {

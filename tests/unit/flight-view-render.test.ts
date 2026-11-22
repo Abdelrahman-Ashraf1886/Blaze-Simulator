@@ -32,7 +32,7 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
     const mass = massProperties([{ id: 'payload', name: 'Payload', massKg: 0.5, position: [0.01, 0.02, 0.03], quaternion: [0, 0, 0, 1], model: 'solid', shape: { type: 'box', halfExtents: [0.1, 0.1, 0.1] } }])
     const render = () => renderToStaticMarkup(createElement(module.DebugPanel, { frame, mass, indicators: { Collisions: { state: 'warning', detail: '1 active contact.' } } }))
     const html = render()
-    for (const text of ['Demo telemetry', 'Current build mass', '500.0', 'CoM (body)', 'Ixx / Iyy / Izz', 'Ixy / Ixz / Iyz', 'Total thrust', 'Motor 1', 'Motor 4', 'Shaft torque', 'Arm', 'Reaction', 'Rotor gyro', 'Total', '0.123 / 0.234 / 0.345', 'Linear (world)', 'Angular (body)', 'Pack voltage', 'Pack current', 'Charge used', 'Air density', 'Landing leg', 'Ground', 'Charge cut-off', 'N·m', 'kg·m²', 'deg/s', 'mAh']) expect(html).toContain(text)
+    for (const text of ['Demo telemetry', 'Current build mass', '500.0', 'CoM (body)', 'Ixx / Iyy / Izz', 'Ixy / Ixz / Iyz', 'Total thrust', 'Motor 1', 'Motor 4', 'Drag torque (air)', 'Arm', 'Drag reaction', 'Spin-up reaction', 'Rotor gyro', 'Total', '0.123 / 0.234 / 0.345', 'Linear (world)', 'Angular (body)', 'Pack voltage', 'Pack current', 'Charge used', 'Air density', 'Landing leg', 'Ground', 'Charge cut-off', 'N·m', 'kg·m²', 'deg/s', 'mAh']) expect(html).toContain(text)
     frame.ended = 'voltageCutoff'
     frame.control = null
     expect(render()).toContain('Voltage cut-off')

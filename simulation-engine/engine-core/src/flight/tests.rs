@@ -278,3 +278,91 @@ fn refuses_drag_without_air_density_and_motors_without_data() {
     assert!(f.set_rotor_speeds(&[1.0, 2.0]).is_err());
     assert!(f.set_rotor_speeds(&[-1.0, 0.0, 0.0, 0.0]).is_err());
 }
+
+/// The last step's loads by source (4.8). One CCW motor 0.2 m forward at
+/// ω = 500 rad/s with zero throttle (the rotor spins down), body at rest:
+/// thrust 5 N along +z, arm torque (0.2, 0, 0) × (0, 0, 5) = (0, −1, 0) N·m,
+/// drag reaction −s k_Q ω² a = −0.025 N·m about z, no gyroscopic term (no body
+/// rate), spin-up reaction −s J (ω₁ − ω₀)/dt a with the rotor's own change of
+/// speed, and the total is the sum of the four, which is what was applied.
+#[test]
+fn step_loads_are_split_by_source_and_sum_to_the_applied_torque() {
+    let v = vehicle(1.0, &[([0.2, 0.0, 0.0], Spin::Ccw)]);
+    let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+    f.set_rotor_speeds(&[500.0]).unwrap();
+    let mut s = sim(&v);
+    f.step(&mut s, &[0.0]);
+    let l = *f.loads();
+    close(l.thrust_body_n[2], 5.0, 1e-12, "thrust");
+    close(l.arm_torque_nm[1], -1.0, 1e-12, "arm torque");
+    close(l.drag_reaction_torque_nm[2], -0.025, 1e-15, "drag reaction");
+    assert_eq!(l.rotor_gyro_torque_nm, [0.0; 3]);
+    let dw = f.state.omega[0] - 500.0;
+    assert!(dw < 0.0, "the rotor spins down");
+    close(l.spin_up_reaction_torque_nm[2], -2e-5 * dw / DT, 1e-12, "spin-up reaction");
+    for k in 0..3 {
+        let sum = l.arm_torque_nm[k] + l.drag_reaction_torque_nm[k] + l.spin_up_reaction_torque_nm[k] + l.rotor_gyro_torque_nm[k];
+        close(l.total_torque_nm[k], sum, 1e-12, "total torque");
+    }
+    // Body rolling at 1 rad/s: the gyroscopic term appears, as in `rotor_loads_match_the_hand_calculation`.
+    let mut s = sim(&v);
+    s.step(&BodyInput { force_body_n: Vector::ZERO, torque_body_nm: Vector::new(1e-3, 0.0, 0.0) });
+    let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+    f.set_rotor_speeds(&[500.0]).unwrap();
+    f.step(&mut s, &[0.0]);
+    assert!(f.loads().rotor_gyro_torque_nm.iter().any(|x| x.abs() > 0.0));
+}
+
+/// Body drag is reported through the CoM: with the air density and a body at
+/// rest it is zero; moving it opposes the velocity, −½ ρ C_d A v|v| per axis.
+#[test]
+fn step_loads_report_the_drag_force() {
+    let v = vehicle(1.0, &[([0.2, 0.0, 0.0], Spin::Ccw)]);
+    let drag = BodyDrag { cd_body: [1.0, 1.0, 1.2], area_m2: [0.01, 0.01, 0.03] };
+    let mut f = Flight::new(&v, propulsion(&v), Some(drag), Some(1.2)).unwrap();
+    let mut s = sim(&v);
+    f.step(&mut s, &[0.0]);
+    assert_eq!(f.loads().drag_body_n, [0.0; 3]);
+    s.step(&BodyInput { force_body_n: Vector::new(0.0, 0.0, G + 1.0), torque_body_nm: Vector::ZERO });
+    let v_z = s.state().linear_velocity_mps[2];
+    f.step(&mut s, &[0.0]);
+    assert!(v_z.abs() > 1e-3, "the body moves (falling a little): {v_z}");
+    close(f.loads().drag_body_n[2], -0.5 * 1.2 * 1.2 * 0.03 * v_z * v_z.abs(), 1e-12, "drag along z");
+}
+
+/// The battery cut-off ends the run (4.8): a charge cut-off at 0.5 mAh (1.8 C,
+/// reached within a second at hover current) and a voltage cut-off at 9.9 V
+/// (the 10 V pack sags below it as the rotors draw their start-up
+/// current, R = 0.1 Ω motors on 0.01 Ω), and the flight is frozen afterwards.
+#[test]
+fn a_cutoff_ends_the_run_and_freezes_it() {
+    let v = quad(1.0);
+    let d = hover_throttle(&v);
+    for (cutoff, reason) in [(Cutoff::ChargeMah(0.5), EndReason::ChargeCutoff), (Cutoff::VoltageV(9.9), EndReason::VoltageCutoff)] {
+        let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+        f.set_cutoff(cutoff).unwrap();
+        let mut s = sim(&v);
+        assert!(f.ended().is_none());
+        let mut steps = 0;
+        while f.ended().is_none() && steps < 5000 {
+            f.step(&mut s, &[d; 4]);
+            steps += 1;
+        }
+        assert_eq!(f.ended(), Some(reason));
+        assert!(steps >= 1 && steps < 5000, "{reason:?} after {steps} steps");
+        let (hash, words) = (s.state_hash(), f.hash_words());
+        f.step(&mut s, &[d; 4]);
+        assert_eq!((s.state_hash(), f.hash_words()), (hash, words), "an ended flight does not step");
+    }
+    // Without a cut-off nothing ends; a cut-off must be positive and finite.
+    let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+    let mut s = sim(&v);
+    for _ in 0..200 {
+        f.step(&mut s, &[d; 4]);
+    }
+    assert!(f.ended().is_none());
+    for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(f.set_cutoff(Cutoff::VoltageV(bad)).is_err());
+        assert!(f.set_cutoff(Cutoff::ChargeMah(bad)).is_err());
+    }
+}

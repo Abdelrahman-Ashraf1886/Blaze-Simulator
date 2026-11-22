@@ -114,6 +114,19 @@ export const EnvironmentSchema = z.strictObject({
 })
 export type Environment = z.infer<typeof EnvironmentSchema>
 
+/**
+ * The PX4 controller's setpoint and gain overrides (`sim.run`'s `controller`, and the live flight's
+ * setpoint and gains). `altitudeM` is the CoM height (null/absent = hold `climbRateMps`); `attitude` a
+ * unit quaternion x y z w (absent = level); `gains` overrides by exact PX4 name, e.g. { MC_ROLL_P: 7 }.
+ */
+export const ControllerRequestSchema = z.strictObject({
+  altitudeM: num.nullable().optional(),
+  climbRateMps: num.optional(),
+  attitude: quat.optional(),
+  yawRateRadps: num.optional(),
+  gains: z.record(z.string().regex(/^[A-Z][A-Z0-9_]*$/, 'use the exact PX4 parameter name'), num).optional(),
+})
+
 export const SimRunParamsSchema = z.strictObject({
   durationS: num.refine((v) => v > 0, 'must be positive'),
   environment: EnvironmentSchema,
@@ -129,20 +142,8 @@ export const SimRunParamsSchema = z.strictObject({
   rotorSpeedsRadps: z.array(num.refine((v) => v >= 0, 'must not be negative')).optional(),
   /** Air density for the body drag, kg/m³ (`src/domain/atmosphere.ts`); required with body drag. */
   airDensityKgM3: num.refine((v) => v > 0, 'must be positive').optional(),
-  /**
-   * With propulsion (4.7): the PX4 v1.13.3 controller flies to this setpoint instead of fixed
-   * throttles. `altitudeM` is the CoM height (null/absent = hold `climbRateMps`); `attitude` a unit
-   * quaternion x y z w (absent = level); `gains` overrides by exact PX4 name, e.g. { MC_ROLL_P: 7 }.
-   */
-  controller: z
-    .strictObject({
-      altitudeM: num.nullable().optional(),
-      climbRateMps: num.optional(),
-      attitude: quat.optional(),
-      yawRateRadps: num.optional(),
-      gains: z.record(z.string().regex(/^[A-Z][A-Z0-9_]*$/, 'use the exact PX4 parameter name'), num).optional(),
-    })
-    .optional(),
+  /** With propulsion (4.7): the PX4 v1.13.3 controller flies to this setpoint instead of fixed throttles. */
+  controller: ControllerRequestSchema.optional(),
 })
 export type SimRunParams = z.infer<typeof SimRunParamsSchema>
 
@@ -152,6 +153,9 @@ export type EngineCommand =
   | { type: 'shutdown' }
   | { type: 'vehicle.load'; vehicle: VehicleDefinition; propulsion?: PropulsionDefinition; aero?: BodyDrag }
   | ({ type: 'sim.run' } & SimRunParams)
+  | ({ type: 'flight.session.start' } & FlightSessionStartParams)
+  | ({ type: 'flight.session.step' } & FlightSessionStepParams)
+  | { type: 'flight.session.end' }
 
 // ---------------------------------------------------------------------------
 // Results
@@ -220,7 +224,7 @@ export const SimRunResultSchema = z.strictObject({
 export type SimRunResult = z.infer<typeof SimRunResultSchema>
 
 export interface EngineErrorBody {
-  code: 'INVALID_JSON' | 'INVALID_REQUEST' | 'INVALID_PARAMS' | 'NO_VEHICLE' | 'VEHICLE_INCOMPLETE' | 'ENVIRONMENT_INCOMPLETE' | 'RUN_TOO_LONG'
+  code: 'INVALID_JSON' | 'INVALID_REQUEST' | 'INVALID_PARAMS' | 'NO_VEHICLE' | 'VEHICLE_INCOMPLETE' | 'ENVIRONMENT_INCOMPLETE' | 'RUN_TOO_LONG' | 'CUTOFF_REQUIRED' | 'NO_SESSION'
   message: string
 }
 
@@ -233,3 +237,94 @@ export function isEngineResponse(v: unknown): v is EngineResponse {
   const o = v as Record<string, unknown>
   return typeof o.ok === 'boolean' && (typeof o.id === 'number' || o.id === null)
 }
+
+// ---------------------------------------------------------------------------
+// Live flight session (4.8 part B): the renderer drives the PX4 controller flying the loaded vehicle
+// in lockstep. `start` takes what a controller `sim.run` takes (environment, start position, air density,
+// gain overrides) plus the user's battery cut-off, and no duration; `step` advances 1..=100 fixed 1 ms
+// steps with one setpoint held and returns the last diagnostic. The loaded vehicle needs propulsion.
+
+export const MAX_SESSION_STEPS = 100
+
+export const FlightSessionStartParamsSchema = z.strictObject({
+  environment: EnvironmentSchema,
+  /** Body origin at the start, world frame. */
+  startPositionM: vec3.optional(),
+  /** ISA density at the user's altitude (src/domain/atmosphere.ts), kg/m³. */
+  airDensityKgM3: num.refine((v) => v > 0, 'must be positive'),
+  /** The user's choice; no default. */
+  cutoff: z.discriminatedUnion('type', [
+    z.strictObject({ type: z.literal('voltageV'), value: num.refine((v) => v > 0, 'must be positive') }),
+    z.strictObject({ type: z.literal('chargeMah'), value: num.refine((v) => v > 0, 'must be positive') }),
+  ]),
+  gains: ControllerRequestSchema.shape.gains,
+})
+export type FlightSessionStartParams = z.infer<typeof FlightSessionStartParamsSchema>
+
+export const FlightSessionSetpointSchema = ControllerRequestSchema.omit({ gains: true }).refine(
+  (c) => c.attitude === undefined || Math.abs(c.attitude.reduce((n, x) => n + x * x, 0) - 1) < 1e-9,
+  'attitude must be a unit quaternion',
+)
+export type FlightSessionSetpoint = z.infer<typeof FlightSessionSetpointSchema>
+export const FlightSessionStepParamsSchema = z.strictObject({
+  steps: num.int().min(1).max(MAX_SESSION_STEPS),
+  setpoint: FlightSessionSetpointSchema,
+})
+export type FlightSessionStepParams = z.infer<typeof FlightSessionStepParamsSchema>
+
+const cutoffReason = z.enum(['voltageCutoff', 'chargeCutoff'])
+
+/** Everything the debug panel shows for one moment of the flight (engine-host `flight_session.rs`). */
+export const FlightDiagnosticSchema = z.strictObject({
+  state: SimStateSchema,
+  /** Vehicle motor order. Speed in rpm; `dragTorqueNm` is the air's drag torque k_Q ω² the motor holds. */
+  motors: z.array(z.strictObject({ partId: z.string(), throttle: num, rpm: num, thrustN: num, dragTorqueNm: num })),
+  battery: z.strictObject({ voltageV: num, currentA: num, chargeUsedC: num, stateOfCharge: num }),
+  /** What acted on the body over the last step, body axes, by source; zero before the first step. */
+  loads: z.strictObject({
+    thrustBodyN: vec3,
+    dragBodyN: vec3,
+    armTorqueNm: vec3,
+    dragReactionTorqueNm: vec3,
+    spinUpReactionTorqueNm: vec3,
+    rotorGyroTorqueNm: vec3,
+    totalTorqueNm: vec3,
+  }),
+  airDensityKgM3: num,
+  /** The controller's last step; null before the first step. */
+  control: z
+    .strictObject({
+      torqueDemand: vec3,
+      rateIntegral: vec3,
+      collectiveThrust: num,
+      saturation: z.strictObject({
+        positive: z.tuple([z.boolean(), z.boolean(), z.boolean(), z.boolean()]),
+        negative: z.tuple([z.boolean(), z.boolean(), z.boolean(), z.boolean()]),
+      }),
+    })
+    .nullable(),
+})
+export type FlightDiagnostic = z.infer<typeof FlightDiagnosticSchema>
+
+export const FlightSessionStartResultSchema = z.strictObject({
+  dtS: num,
+  maxStepsPerRequest: z.number().int().positive(),
+  /** The state before the first step. */
+  diagnostic: FlightDiagnosticSchema,
+})
+export type FlightSessionStartResult = z.infer<typeof FlightSessionStartResultSchema>
+
+export const FlightSessionStepResultSchema = z.strictObject({
+  /** Fewer than asked only when the cut-off ended the run (an ended run runs none). */
+  stepsRun: z.number().int().nonnegative(),
+  diagnostic: FlightDiagnosticSchema,
+  /** Contacts whose start or end time falls in the steps just run (an event can repeat across requests). */
+  contacts: z.array(z.strictObject({ partId: z.string(), with: z.string(), startS: num, endS: num.nullable() })),
+  contactsDropped: z.number().int().nonnegative(),
+  endReason: cutoffReason.nullable(),
+  stateHash: z.string().regex(/^[0-9a-f]{16}$/),
+})
+export type FlightSessionStepResult = z.infer<typeof FlightSessionStepResultSchema>
+
+export const FlightSessionEndResultSchema = z.strictObject({ ended: z.boolean() })
+export type FlightSessionEndResult = z.infer<typeof FlightSessionEndResultSchema>

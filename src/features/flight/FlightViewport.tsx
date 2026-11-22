@@ -58,7 +58,7 @@ export function FlightViewport({ frame, doc, geo }: { frame: FlightFrame; doc: A
           <GizmoViewport disabled axisColors={['#e0605a', '#6fc27a', '#5aa7e0']} labelColor="#101215" />
         </GizmoHelper>
       </Canvas>
-      <p className="pointer-events-none absolute left-3 top-3 text-[12px] text-warn">Demo data · Follow camera · Amber sphere: CoM</p>
+      <p className="pointer-events-none absolute left-3 top-3 text-[12px] text-warn">Live engine · Follow camera · Amber sphere: CoM</p>
     </div>
   )
 }

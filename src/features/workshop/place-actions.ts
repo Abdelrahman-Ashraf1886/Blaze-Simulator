@@ -48,6 +48,26 @@ export function addPlaced(
 }
 
 /**
+ * Attaches a part (with what is attached to it) to another support and places it clear of
+ * the other parts there, as one undo step. If it does not fit, nothing changes and the
+ * reason is shown.
+ */
+export function attachPlaced(label: string, geo: FrameGeometry, id: string, change: (doc: AssemblyDocument) => AssemblyDocument): boolean {
+  const store = useAssembly.getState()
+  const view = useWorkshopView.getState()
+  if (!store.doc) return false
+  const { components, assets } = context()
+  const placed = placeClear(change(store.doc), geo, id, components, assets)
+  if (!placed.ok) {
+    view.setPlacementNote(placed.reason)
+    return false
+  }
+  view.setPlacementNote(null)
+  store.edit(label, () => placed.doc)
+  return true
+}
+
+/**
  * Changes a part's size-giving fields (component link, shape) and keeps it, and what rests
  * on it, on their supports. If the new size overlaps another part, the part moves to the
  * nearest free spot on its support; if there is none it stays, the overlap shows in

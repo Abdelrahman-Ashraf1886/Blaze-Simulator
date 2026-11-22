@@ -64,7 +64,7 @@ import {
 } from './links'
 
 import { componentIndex, useComponentIndex } from './component-index'
-import { addPlaced, editSize } from './place-actions'
+import { addPlaced, attachPlaced, editSize } from './place-actions'
 export { useComponentIndex }
 const shapeOfFor = (components: ComponentIndex) => (p: AssemblyPart) => effectiveShape(p, components)
 import { InertiaEditor } from './InertiaEditor'
@@ -250,6 +250,7 @@ export function PartInspector({ doc, geo }: { doc: AssemblyDocument; geo: FrameG
   const part = selection?.kind === 'part' ? doc.parts.find((p) => p.id === selection.id) : undefined
   const assets = useAssets((s) => s.assets)
   const library = useComponents((s) => s.components)
+  const note = useWorkshopView((s) => s.placementNote)
   const components = componentIndex(library)
   if (!part) return null
   const id = part.id
@@ -285,6 +286,11 @@ export function PartInspector({ doc, geo }: { doc: AssemblyDocument; geo: FrameG
         </button>
       }
     >
+      {note && (
+        <p role="alert" data-testid="placement-error-inspector" className="mb-2 text-[12px] leading-relaxed text-fault">
+          {note}
+        </p>
+      )}
       <div className="border-t border-line">
         <NameField key={`name:${part.name}`} part={part} />
         <Row label="Kind">
@@ -314,7 +320,7 @@ export function PartInspector({ doc, geo }: { doc: AssemblyDocument; geo: FrameG
               const v = e.target.value
               const target: AttachTarget =
                 v === 'none' ? { kind: 'none' } : v.startsWith('mount:') ? { kind: 'mount', id: v.slice(6) } : { kind: 'part', id: v.slice(5) }
-              edit(`Attach ${part.name}`, (d) => attach(d, geo, id, target, assets, shapeOf))
+              attachPlaced(`Attach ${part.name}`, geo, id, (d) => attach(d, geo, id, target, assets, shapeOf))
             }}
             className="h-7 w-[150px] rounded-[var(--radius-sm)] border border-line-strong bg-chrome px-1.5 text-[12.5px] text-fg"
           >

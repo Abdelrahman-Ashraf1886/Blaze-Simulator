@@ -71,11 +71,6 @@ test('hex from library parts: auto-wire, zero errors; an 8S battery on 6S ESCs i
   }, TEST_8S)
   await createProject(page, NAME, 'Hex X')
   await openWorkshop(page)
-  // These parts are stacked at shared spots (a real overlap, reported by the 4.4 interference
-  // check); this test is about other rules, so a 50 mm overlap tolerance keeps those findings out.
-  // Interference itself is tested in collisions.spec.ts.
-  await page.getByTestId('interference-tolerance').fill('50')
-  await page.getByTestId('interference-tolerance').press('Enter')
 
   // 1. Build: a linked motor and propeller on every mount, then the electrical parts.
   await page.getByTestId('mount-motor-1').click()
@@ -86,7 +81,11 @@ test('hex from library parts: auto-wire, zero errors; an 8S battery on 6S ESCs i
   await row(page, 'Motor 1').click()
   await page.getByTestId('copy-to-mounts').click()
   await expect(rows(page)).toHaveCount(12)
+  // The battery hangs under the frame (bottom plate mount), as on a real hex; the rest goes on
+  // top. New parts are placed clear of each other, and a part that does not fit is refused.
   await add(page, 'Battery', 'Tattu Tattu G-Tech 5200mAh 4S 35C')
+  await page.getByRole('combobox', { name: 'Attached to' }).selectOption({ label: 'Plate bottom' })
+  await expect(page.getByRole('combobox', { name: 'Attached to' })).toHaveValue('mount:plate-bottom')
   await add(page, 'ESC', 'Holybro Tekko32 F4 45A ESC (AM32)')
   for (let i = 0; i < 5; i++) await page.keyboard.press('Control+d') // linked copies: ESC 2…6
   await expect(rows(page)).toHaveCount(19)

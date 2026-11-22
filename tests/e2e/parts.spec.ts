@@ -47,15 +47,19 @@ test('build with the library, tree, inspector and keyboard; everything persists'
   await expect(page.getByLabel('Attached to')).toHaveValue(/^part:/)
   await expect(page.getByTestId('part-pos-z')).toHaveValue('19')
 
-  // Keyboard: duplicate the motor (with its prop), then delete the copy and everything on it.
+  // Keyboard: a duplicate of the motor would sit on the same mount, which holds one motor, so it
+  // is refused with the reason (placement.ts); nothing is added.
   await row(page, 'Motor 1').click()
   await page.keyboard.press('Control+d')
-  await expect(rows(page)).toHaveCount(4)
-  await expect(inspector(page)).toContainText('Motor 2')
-  await page.keyboard.press('Delete')
+  await expect(page.getByTestId('placement-error-inspector')).toContainText('No free spot on Motor 1 mount for Motor 2')
   await expect(rows(page)).toHaveCount(2)
+  // Delete removes the motor and everything on it; undo brings both back, redo removes them again.
+  await page.keyboard.press('Delete')
+  await expect(rows(page)).toHaveCount(0)
   await page.keyboard.press('Control+z')
-  await expect(rows(page)).toHaveCount(4)
+  await expect(rows(page)).toHaveCount(2)
+  await page.keyboard.press('Control+y')
+  await expect(rows(page)).toHaveCount(0)
   await page.keyboard.press('Control+z')
   await expect(rows(page)).toHaveCount(2)
 

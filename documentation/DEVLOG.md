@@ -1,5 +1,82 @@
 # Development log
 
+## 2026-11-22 — Phase 4, milestone 4.4 follow-ups: placement, hulls, environment, live drag, contact limits
+
+The 4.4 entry below left five issues open, and three e2e tests had hidden one of them with a 50 mm overlap tolerance. This entry fixes them; the workarounds are gone.
+
+**Placement keeps physical constraints** (`src/features/workshop/placement.ts`, `place-actions.ts`)
+- A new part rests on what it is attached to: a motor mount (that pose only), a plate face or the top of the frame (centre within the plate), or its parent's top face (centre within it). It keeps its attachment and is never stacked onto another part.
+- Search: a 5 mm grid on that face, nearest first, then by angle and coordinates. Deterministic.
+- The first spot with no interference error is taken. If none exists, the part is not added: no undo step, and the reason appears under "Add part" and in the inspector, e.g. "No free spot on the frame for Battery 4 (140 × 45 × 35 mm): …".
+- Applies to adding from the library, dropping on the viewport, model import, duplicate, copy to motor mounts and attaching (the field or a gizmo release onto a mount). Each is one undo step.
+- Linking a component or resizing keeps the part, and what rests on it, on its support. This was the cause of the 1.2 mm flight-controller-into-frame overlap: a linked part kept its placeholder's resting height. If the new size overlaps, the part moves to the nearest free spot on its support; if there is none, it stays and the error shows.
+- The e2e builds were fixed rather than tolerated:
+  - `buildHex` gives its parts real positions;
+  - the hex acceptance build hangs the battery under the frame. On top, the 140 mm battery plus six ESCs and three payloads did not fit a 150 mm plate, which the check now says.
+
+**Conservative hulls for imported models** (`electron/main/assets/hull.ts`)
+- At import, every vertex of the default scene is read from its POSITION accessor, with node transforms. Handled: byteOffset, byteStride, sparse substitution and normalized integers (KHR_mesh_quantization).
+- The full convex hull is kept (three.js `ConvexHull`); nothing is simplified.
+- Every source vertex is checked against every hull face (1e-9 × size), and every hull point against the stored bounds.
+- Flat models, unreadable data, a failed check, or more than 4096 hull vertices: no hull, with the reason stored; the part collides as its bounding box, which contains it.
+- Stored in `assets.hull_json`, and back-filled at startup for models imported earlier.
+- The production main bundle contains the hull code (`out/main/index.js`, 628 kB). An e2e test imports `pod.glb` through the built app and sees a hull.
+- Measured:
+  - the fixture `pod.glb`: 216 vertices give a 40-point hull in 11 ms;
+  - 200 000 random vertices give a 130-point hull, fully verified, in 1.17 s (main thread, at import).
+- Mass and inertia are unchanged: a model is still a uniform solid box of its bounds (`inertiaShape` in `mass.ts`). The hull bounds the surface; it says nothing about the mass distribution. Tests check that the inertia is identical with and without the hull, and that a hull loads in the real engine with totals equal to `mass.ts`.
+
+**Environment per project** (`src/domain/environment.ts`, `EnvironmentPanel.tsx`)
+- Ground friction and restitution and box obstacles (name, centre, size, yaw, friction, restitution), saved with the project (`assemblies.environment_json`).
+- Not set means null. Each missing value is listed with where to enter it, and nothing is assumed (zero is a value).
+- Validated in main: μ ≥ 0, 0 ≤ e ≤ 1, positive sizes, unique ids, finite numbers.
+- **Drop test** (IPC `engine:dropTest`): the vehicle from `mass.ts` and the environment from `simEnvironment` go through the protocol schemas to the real engine. The release height is taken from the lowest point of the collision shapes plus a visible "Release height" field. The button stays disabled while a value or a mass is missing.
+
+**Live drag tested, with test hooks only in tests**
+- `window.__blazeTest` exists only in a development build or when main is started with `BLAZE_UAV_TEST_HOOKS=1` (the e2e launcher). A launch without it has none; an e2e test checks that.
+- The preview follows a drag pose after the 80 ms pause, while the saved revision, the undo list and `save-state` stay unchanged.
+- A real pointer drag of the gizmo (top view, orthographic) sets the drag pose, updates the outline, saves nothing until release, then adds one undo step. Dragging the gizmo's free-move handle can also move the part a little in Z (the view plane is not exactly horizontal).
+
+**rapier flat-impact spin, measured** (`environment/spin_study.rs`, run on demand)
+- A flat 100 × 100 × 40 mm box dropped from 0.5 m:
+
+  | Setting | Corner impulse ratio | Peak spin, e = 0 | Rebound, e = 0.5 (should be 120 mm) | Rest, e = 0 |
+  |---|---|---|---|---|
+  | rapier default | 1.30 | 12.8 rad/s | 65.7 mm | 1.18 s |
+  | stabilization 4 | 1.01 | 1.2 rad/s | 64.7 mm | 1.32 s |
+  | stabilization 8 | 1.01 | 1.2 rad/s | 64.7 mm | 0.39 s |
+
+  Contact clustering off, warm-start 0, more PGS iterations and more substeps were also tried. None fixed the rebound. The one-point pyramid control rebounds 119.1 mm in every case.
+- Not applied: stabilization fixes the dead landing but not the bounce, and makes a contact step 1.6× to 2.9× slower. A 120 000-step resting run took 2.7 s (×4) and 4.8 s (×8), against 1.7 s. Documented in `environment.rs`; the existing test that the box lands back flat stays.
+
+**Engine time budget (new finding)**
+- With ground contact a step costs far more than in free flight: a 20-box vehicle resting on the ground took ≈25 s for 120 000 steps (≈0.2 ms per step).
+- The supervisor kills an engine that misses its 3 s health ping. So `sim.run` now stops itself after 2 s of computing with `RUN_TOO_LONG` (no partial state, so completed runs stay deterministic). A sidecar test runs the 20-box case and checks that the engine keeps answering.
+- Long simulations with contact need a step budget per message (streaming, 4.6/4.8).
+
+**Migration 0010**
+- 0010 is renamed `0010_collisions.sql` and adds `interference_json`, `environment_json` and `assets.hull_json`. It was extended before shipping.
+- Development databases that ran the first 0010 get the missing columns from `repairUnshippedMigrations` (database.ts), with the same constraints.
+- A test checks that migration files are numbered without gaps and that `MIGRATIONS` runs them in file order, so the merge with 4.5 keeps 0010 → 0011.
+
+**Verified** (partly: the machine ran out of memory, see Still open)
+- Rust: debug and release workspaces green. 53 tests: engine-core 41, protocol 5, sidecar 8; plus 3 ignored studies.
+- vitest: 285 tests, 31 files, all green, against the real engine binary. Typecheck and lint clean.
+- Playwright, run file by file:
+  - green: collisions (5), checks, electrical, phase3-acceptance, acceptance, parts;
+  - not re-run after the last fix: the full 43-test suite in one `test:all`. Three runs died with "out of memory" on this machine (about 2 GB of a 28 GB commit limit free; other applications held the rest).
+- Performance, run alone: 1080p 53.5 rendered fps, median frame 16.7 ms, 50 parts. The 4K half died with the same out-of-memory error.
+
+Screenshots: `documentation/screenshots/4.4-interference-highlight.png`, `4.4-collision-debug-view.png`, `4.4-model-hull-debug-view.png`, `4.4-environment-drop-test.png`.
+
+**Still open**
+- A full `npm run test:all` in one go, and the 4K performance number: rerun when memory allows.
+- A bouncing flat box rebounds about half the expected height (rapier; above).
+- Long simulations with ground contact stop at the 2 s compute budget.
+- Hull computation runs on main's thread: about 1 s for a 200 000-vertex model.
+- Placement uses a new part's placeholder size until a component is linked. A large placeholder can be refused where the linked part would fit; add it elsewhere, or link it on a support with room.
+- Obstacles are not drawn in 3D yet (flight view, 4.8).
+
 ## 2026-11-22 — Phase 4, milestone 4.4: collisions
 
 **Built**

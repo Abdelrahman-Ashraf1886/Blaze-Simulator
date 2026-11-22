@@ -77,3 +77,39 @@ it('mass.ts output loads in the real engine, and the engine totals agree to 1e-9
   const run = await sup.runSim({ environment: FREE, durationS: 1, forceBodyN: [0, 0, quad(0, 0).totalMassKg * 9.80665] })
   expect(Math.abs(run.state.linearVelocityMps[2])).toBeLessThan(1e-12)
 }, 20_000)
+
+/**
+ * 4.6 end to end: a mass.ts vehicle with a propulsion definition and body drag
+ * flies its throttles in the real engine. The motor values are the test motor of
+ * engine-core `flight/tests.rs` (not a catalogue part); the air density is the
+ * ISA value from the cited reference data.
+ */
+it('flies throttles through the supervisor: motor and battery readings, ISA density for the drag', async () => {
+  const { readFileSync } = await import('node:fs')
+  const { airDensity, isaConstants } = await import('../../src/domain/atmosphere')
+  const def = quad(0, 0)
+  const motor = (partId: string) => ({ partId, kvRadPerSV: 100, resistanceOhm: 0.1, noLoadCurrentA: 0.5, thrustCoefNs2: 2e-5, torqueCoefNms2: 1e-7, inertiaKgM2: 2e-5 })
+  const propulsion = { version: 1 as const, motors: def.motors.map((m) => motor(m.partId)), battery: { openCircuitVoltageV: 10, internalResistanceOhm: 0.01, capacityC: 18720 } }
+  const aero = { cdBody: [1.1, 1.1, 1.2] as Vec3, areaM2: [0.02, 0.02, 0.05] as Vec3 }
+  const loaded = await sup.loadVehicle(def, { propulsion, aero })
+  expect(loaded.valid).toBe(true)
+  const rho = airDensity(isaConstants(JSON.parse(readFileSync(join(__dirname, '../../database/reference/physics.v1.json'), 'utf8'))), 500)
+  const run = await sup.runSim({ environment: FREE, durationS: 0.5, throttle: [0.7, 0.7, 0.7, 0.7], airDensityKgM3: rho })
+  expect(run.motors!.map((m) => m.partId)).toEqual(def.motors.map((m) => m.partId))
+  for (const m of run.motors!) {
+    const w = (m.rpm * Math.PI) / 30
+    expect(Math.abs(m.thrustN - 2e-5 * w * w)).toBeLessThan(1e-9 * m.thrustN)
+  }
+  // Equal thrust climbs; with the CoM aft of the motor centre (the GPS sits at x = −40 mm),
+  // r × F pitches the nose up (−y in FLU), with no roll (everything is on y = 0).
+  // Nothing holds it level until the controller (4.7).
+  expect(def.com[0]).toBeLessThan(0)
+  expect(run.state.linearVelocityMps[2]).toBeGreaterThan(0)
+  expect(run.state.angularVelocityBodyRadps[1]).toBeLessThan(0)
+  expect(Math.abs(run.state.angularVelocityBodyRadps[0])).toBeLessThan(1e-9)
+  const b = run.battery!
+  expect(Math.abs(b.voltageV - (10 - 0.01 * b.currentA))).toBeLessThan(1e-9)
+  expect(b.stateOfCharge).toBeLessThan(1)
+  // Drag without the density is refused.
+  await expect(sup.runSim({ environment: FREE, durationS: 0.1, throttle: [0.7, 0.7, 0.7, 0.7] })).rejects.toThrow(/air density/)
+}, 20_000)

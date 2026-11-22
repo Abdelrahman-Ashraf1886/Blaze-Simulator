@@ -3,6 +3,7 @@
 use crate::protocol::{Command, ErrorCode, HelloResult, PongResult, Request, Response, PROTOCOL_VERSION};
 use engine_core::aero::BodyDrag;
 use engine_core::environment::{ContactEvent, Environment};
+use engine_core::flight::{BatteryReading, Flight, MotorReading};
 use engine_core::propulsion::Propulsion;
 use engine_core::sim::{hash_hex, BodyInput, SimConfig, SimState, Simulation, DEFAULT_DT_S};
 use engine_core::vehicle::{vec, MassTotals, Vehicle, VehicleError};
@@ -66,18 +67,35 @@ struct SimRunResult {
     contacts: Vec<ContactEvent>,
     /// Events beyond `MAX_CONTACT_EVENTS`, not listed.
     contacts_dropped: u64,
+    /// With propulsion (4.6): each motor at the end of the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    motors: Option<Vec<MotorReading>>,
+    /// With propulsion (4.6): the pack at the end of the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    battery: Option<BatteryReading>,
+}
+
+/// The parameters of one `sim.run` (protocol.rs).
+struct RunArgs {
+    duration_s: f64,
+    environment: Option<serde_json::Value>,
+    start_position_m: Option<[f64; 3]>,
+    dt_s: Option<f64>,
+    force: Option<[f64; 3]>,
+    torque: Option<[f64; 3]>,
+    throttle: Option<Vec<f64>>,
+    rotor_speeds: Option<Vec<f64>>,
+    air_density: Option<f64>,
 }
 
 
 pub struct Engine {
     started: Instant,
     vehicle: Option<Vehicle>,
-    /// Coefficients of the loaded vehicle's motors and battery (4.5); the
-    /// flight step uses them from 4.6.
-    #[allow(dead_code)]
+    /// Coefficients of the loaded vehicle's motors and battery (4.5), flown
+    /// by `sim.run` (4.6, engine-core `flight.rs`).
     propulsion: Option<Propulsion>,
-    /// Body drag of the loaded vehicle (4.5); applied from 4.6.
-    #[allow(dead_code)]
+    /// Body drag of the loaded vehicle (4.5), applied in flight (4.6).
     aero: Option<BodyDrag>,
 }
 
@@ -107,8 +125,29 @@ impl Engine {
             ),
             Command::Shutdown => (Response::ok(id, serde_json::json!({})), true),
             Command::VehicleLoad { vehicle, propulsion, aero } => (self.load(id, vehicle, propulsion, aero), false),
-            Command::SimRun { duration_s, environment, start_position_m, dt_s, force_body_n, torque_body_nm } => {
-                (self.run(id, duration_s, environment, start_position_m, dt_s, force_body_n, torque_body_nm), false)
+            Command::SimRun {
+                duration_s,
+                environment,
+                start_position_m,
+                dt_s,
+                force_body_n,
+                torque_body_nm,
+                throttle,
+                rotor_speeds_radps,
+                air_density_kg_m3,
+            } => {
+                let args = RunArgs {
+                    duration_s,
+                    environment,
+                    start_position_m,
+                    dt_s,
+                    force: force_body_n,
+                    torque: torque_body_nm,
+                    throttle,
+                    rotor_speeds: rotor_speeds_radps,
+                    air_density: air_density_kg_m3,
+                };
+                (self.run(id, args), false)
             }
         }
     }
@@ -165,17 +204,8 @@ impl Engine {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn run(
-        &self,
-        id: u64,
-        duration_s: f64,
-        environment: Option<serde_json::Value>,
-        start_position_m: Option<[f64; 3]>,
-        dt_s: Option<f64>,
-        force: Option<[f64; 3]>,
-        torque: Option<[f64; 3]>,
-    ) -> Response {
+    fn run(&self, id: u64, args: RunArgs) -> Response {
+        let RunArgs { duration_s, environment, start_position_m, dt_s, force, torque, throttle, rotor_speeds, air_density } = args;
         let bad = |m: String| Response::err(Some(id), ErrorCode::InvalidParams, m);
         let Some(vehicle) = &self.vehicle else {
             return Response::err(Some(id), ErrorCode::NoVehicle, "load a valid vehicle first (vehicle.load)");
@@ -225,11 +255,50 @@ impl Engine {
             Ok(s) => s,
             Err(e) => return bad(e),
         };
+        // With propulsion the motors, battery and body drag fly the vehicle (engine-core flight.rs).
+        let mut flight = match &self.propulsion {
+            Some(p) => {
+                if force.is_some() || torque.is_some() {
+                    return bad("forceBodyN and torqueBodyNm are for a vehicle without propulsion; give throttle instead".into());
+                }
+                let mut fl = match Flight::new(vehicle, p.clone(), self.aero, air_density) {
+                    Ok(fl) => fl,
+                    Err(e) => return bad(e),
+                };
+                if let Some(w) = &rotor_speeds {
+                    if let Err(e) = fl.set_rotor_speeds(w) {
+                        return bad(format!("rotorSpeedsRadps: {e}"));
+                    }
+                }
+                Some(fl)
+            }
+            None => {
+                if throttle.is_some() || rotor_speeds.is_some() {
+                    return bad("throttle and rotorSpeedsRadps need the propulsion definition (vehicle.load with propulsion)".into());
+                }
+                if self.aero.is_some() {
+                    return bad("the body drag is applied in flight: load the vehicle with its propulsion definition too".into());
+                }
+                None
+            }
+        };
+        let throttle = throttle.unwrap_or_default();
+        if let Some(fl) = &flight {
+            if !throttle.is_empty() && throttle.len() != fl.motor_count() {
+                return bad(format!("throttle: give {} values, one per motor in the vehicle's order", fl.motor_count()));
+            }
+            if !throttle.iter().all(|d| d.is_finite() && (0.0..=1.0).contains(d)) {
+                return bad("throttle values must be within 0 and 1".into());
+            }
+        }
         let input = BodyInput { force_body_n: vec(f), torque_body_nm: vec(t) };
         let steps = n as u64;
         let started = Instant::now();
         for k in 0..steps {
-            sim.step(&input);
+            match &mut flight {
+                Some(fl) => fl.step(&mut sim, &throttle),
+                None => sim.step(&input),
+            }
             if k % 256 == 255 && started.elapsed() > RUN_TIME_BUDGET {
                 return Response::err(
                     Some(id),
@@ -252,9 +321,11 @@ impl Engine {
                 duration_s: steps as f64 * dt,
                 gravity_mps2: config.gravity_mps2,
                 state: sim.state(),
-                state_hash: hash_hex(sim.state_hash()),
+                state_hash: hash_hex(sim.state_hash_with(&flight.as_ref().map(Flight::hash_words).unwrap_or_default())),
                 contacts,
                 contacts_dropped,
+                motors: flight.as_ref().map(Flight::motors),
+                battery: flight.as_ref().map(Flight::battery),
             },
         )
     }

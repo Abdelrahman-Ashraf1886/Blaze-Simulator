@@ -1,7 +1,8 @@
 # Phase 4 plan: physics, collisions and flight behaviour
 
-Status: **approved, in progress**. Phase 3 is done (3.8 merged). 4.1, 4.2, 4.3 and
-the data sourcing for 4.5/4.7 are merged on `phase-1-foundation`; next are 4.4 and 4.5.
+Status: **approved, in progress**. Phase 3 is done (3.8 merged). 4.1–4.6, the data
+sourcing and the 4.7 controller module are merged on `phase-1-foundation` (4.4's open
+items: its DEVLOG "Still open"). Next: 4.7 (fly the controller in the engine), then 4.8.
 
 ## Goal
 
@@ -277,7 +278,7 @@ Each milestone ends with `npm run test:all` green, a DEVLOG entry and screenshot
 | 4.3 Engine foundation ✅ | rapier3d-f64 with enhanced determinism; protocol v2; `vehicle.load` from the assembly; cross-check against `mass.ts`; spikes: gyroscopic term and determinism hash; ADR 0005 (rapier) and ADR 0006 (mass properties in TS, simulation in Rust) |
 | 4.4 Collisions | Interference check in the workshop (live while dragging, debounced); tolerance and allowed pairs; collision-boundary debug view; ground and obstacle contact in the engine |
 | 4.5 Motor, prop and battery models ✅ | k_T and k_Q fits and the steady-state solver; validation against the cited thrust tables (error shown); APC performance data sourced into the seed (done, with the cited reference data); Ready-to-fly checklist. Follow-up: bench throttle map, leave-one-prop-out validation, fit domains, catalog gap-fills and part overrides, per-axis body drag. Status: coherent and bounded, not validated (see the DEVLOG) |
-| 4.6 Flight dynamics | Per-motor forces at their true pose, reaction torque, gravity, drag, battery sag and consumption; analytical tests |
+| 4.6 Flight dynamics ✅ | Per-motor forces at their true pose, reaction torque, gravity, drag, battery sag and consumption; analytical tests |
 | 4.7 Controller | Angle/rate cascade, allocation, altitude hold, PX4 default gains (cited) |
 | 4.8 Flight test view and physics debug | Engine → renderer state stream; flight view with ground and obstacles; keyboard sticks; a debug panel showing every value the spec lists (mass, CoM, inertia, thrust per motor and total, torque per axis, angular and linear velocity, collisions, battery use); indicators for unbalanced mass, motor layout, collisions, T/W below the limit and instability |
 | 4.9 Scenarios and acceptance | Scripted unbalanced and payload scenarios; determinism; docs; update the ROADMAP (Phase 5/6 then deepen what 4.7/4.8 start) |

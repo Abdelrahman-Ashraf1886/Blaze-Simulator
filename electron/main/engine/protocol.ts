@@ -120,8 +120,15 @@ export const SimRunParamsSchema = z.strictObject({
   /** Body origin at the start, world frame (default the origin). */
   startPositionM: vec3.optional(),
   dtS: num.refine((v) => v > 0, 'must be positive').optional(),
+  /** Body loads, only for a vehicle loaded without propulsion. */
   forceBodyN: vec3.optional(),
   torqueBodyNm: vec3.optional(),
+  /** With propulsion (4.6): throttle per motor in [0, 1], vehicle motor order, held over the run. */
+  throttle: z.array(num.refine((v) => v >= 0 && v <= 1, 'must be within 0 and 1')).optional(),
+  /** With propulsion: rotor speeds at the start, rad/s (default at rest). */
+  rotorSpeedsRadps: z.array(num.refine((v) => v >= 0, 'must not be negative')).optional(),
+  /** Air density for the body drag, kg/m³ (`src/domain/atmosphere.ts`); required with body drag. */
+  airDensityKgM3: num.refine((v) => v > 0, 'must be positive').optional(),
 })
 export type SimRunParams = z.infer<typeof SimRunParamsSchema>
 
@@ -185,6 +192,12 @@ export const SimRunResultSchema = z.strictObject({
   /** Which part touched what, and when (s); `endS` null = still touching at the end. */
   contacts: z.array(z.strictObject({ partId: z.string(), with: z.string(), startS: num, endS: num.nullable() })),
   contactsDropped: z.number().int().nonnegative(),
+  /** With propulsion (4.6): each motor at the end of the run. */
+  motors: z
+    .array(z.strictObject({ partId: z.string(), throttle: num, rpm: num, thrustN: num, dragTorqueNm: num }))
+    .optional(),
+  /** With propulsion: the pack at the end of the run (V = V_oc − R_int·I). */
+  battery: z.strictObject({ voltageV: num, currentA: num, chargeUsedC: num, stateOfCharge: num }).optional(),
 })
 export type SimRunResult = z.infer<typeof SimRunResultSchema>
 

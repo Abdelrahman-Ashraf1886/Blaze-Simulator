@@ -314,6 +314,61 @@ fn vehicle_load_accepts_propulsion_and_refuses_a_mismatch() {
     assert_eq!(r["error"]["code"], "NO_VEHICLE");
 }
 
+/// 4.6 through the protocol: with propulsion loaded, `sim.run` flies the
+/// throttles (motors, battery, drag) and reports each motor and the pack;
+/// throttles without propulsion, drag without air density and body loads with
+/// propulsion are refused.
+#[test]
+fn sim_run_flies_the_throttles_and_reports_motors_and_battery() {
+    let mut e = Engine::start();
+    let free = serde_json::json!({"ground": null, "obstacles": []});
+    let mut v = two_part_vehicle();
+    v["motors"] = serde_json::json!([{ "partId": "m1", "position": [-0.05, 0.0, 0.0375], "thrustAxis": [0, 0, 1], "spin": "cw" }]);
+    let p = serde_json::json!({ "version": 1, "battery": { "openCircuitVoltageV": 14.8, "internalResistanceOhm": 0.012, "capacityC": 18720.0 },
+        "motors": [{ "partId": "m1", "kvRadPerSV": 49.22, "resistanceOhm": 0.135, "noLoadCurrentA": 0.3,
+            "thrustCoefNs2": 2.294e-5, "torqueCoefNms2": 3.7e-7, "inertiaKgM2": 4e-5 }] });
+
+    // Without propulsion: throttle is refused.
+    e.call(serde_json::json!({"type": "vehicle.load", "vehicle": v}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [0.5]}));
+    assert_eq!(r["error"]["code"], "INVALID_PARAMS", "{r}");
+
+    let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": v, "propulsion": p}));
+    assert_eq!(r["result"]["valid"], true, "{r}");
+    let run = |e: &mut Engine| e.call(serde_json::json!({"type": "sim.run", "durationS": 0.5, "environment": free, "throttle": [0.6]}));
+    let r = run(&mut e);
+    assert_eq!(r["ok"], true, "{r}");
+    let m = &r["result"]["motors"][0];
+    assert_eq!(m["partId"], "m1");
+    assert_eq!(m["throttle"], 0.6);
+    let (rpm, thrust) = (m["rpm"].as_f64().unwrap(), m["thrustN"].as_f64().unwrap());
+    // T = k_T ω², ω = rpm·2π/60.
+    let w = rpm * std::f64::consts::PI / 30.0;
+    assert!(rpm > 1000.0 && (thrust - 2.294e-5 * w * w).abs() < 1e-9 * thrust, "{m}");
+    let b = &r["result"]["battery"];
+    let (volts, amps) = (b["voltageV"].as_f64().unwrap(), b["currentA"].as_f64().unwrap());
+    assert!(amps > 0.0 && (volts - (14.8 - 0.012 * amps)).abs() < 1e-9, "{b}");
+    assert!(b["chargeUsedC"].as_f64().unwrap() > 0.0);
+    // Deterministic, rotors included in the hash.
+    assert_eq!(run(&mut e)["result"]["stateHash"], r["result"]["stateHash"]);
+    // A body load with propulsion, a wrong throttle count or range: refused.
+    for bad in [
+        serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "forceBodyN": [0, 0, 1]}),
+        serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [0.5, 0.5]}),
+        serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [1.5]}),
+    ] {
+        assert_eq!(e.call(bad)["error"]["code"], "INVALID_PARAMS");
+    }
+
+    // Body drag needs the air density.
+    let aero = serde_json::json!({ "cdBody": [1.1, 1.1, 1.2], "areaM2": [0.012, 0.012, 0.03] });
+    e.call(serde_json::json!({"type": "vehicle.load", "vehicle": v, "propulsion": p, "aero": aero}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [0.6]}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("air density"), "{r}");
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [0.6], "airDensityKgM3": 1.225}));
+    assert_eq!(r["ok"], true, "{r}");
+}
+
 #[test]
 fn vehicle_load_accepts_aero_and_lists_its_errors() {
     let mut e = Engine::start();

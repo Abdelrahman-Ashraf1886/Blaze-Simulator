@@ -12,6 +12,7 @@
 
 pub mod aero;
 pub mod environment;
+pub mod flight;
 pub mod math;
 pub mod propulsion;
 pub mod sim;

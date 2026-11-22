@@ -202,6 +202,12 @@ impl Simulation {
     /// bit-identical states (up to 64-bit collisions); any change of any bit
     /// changes the hash with overwhelming probability.
     pub fn state_hash(&self) -> u64 {
+        self.state_hash_with(&[])
+    }
+
+    /// `state_hash` with further 64-bit words (e.g. rotor speeds, `flight.rs`)
+    /// written after the body state; no extra words gives `state_hash`.
+    pub fn state_hash_with(&self, extra: &[u64]) -> u64 {
         let rb = &self.world.bodies[self.body];
         let q = rb.rotation();
         let (p, v, w) = (rb.translation(), rb.linvel(), rb.angvel());
@@ -210,6 +216,9 @@ impl Simulation {
         h.write(&self.steps.to_le_bytes());
         for x in values {
             h.write(&x.to_bits().to_le_bytes());
+        }
+        for w in extra {
+            h.write(&w.to_le_bytes());
         }
         h.finish()
     }

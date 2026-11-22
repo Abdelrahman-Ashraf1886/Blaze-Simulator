@@ -1,5 +1,64 @@
 # Development log
 
+## 2026-11-22 — Phase 4, milestone 4.6: flight dynamics
+
+The 4.5 motor, battery and drag models now fly the rigid body. The throttles drive
+everything; the controller that sets them is 4.7.
+
+**Built**
+- **`engine-core/src/flight.rs`**: one fixed step, with the throttles held over it:
+  1. Rotor loads from each rotor's speed at the start of the step:
+     - thrust k_T ω² along the motor's true thrust axis, at its true position, giving
+       force plus r × F about the CoM;
+     - the drag-torque reaction −s·k_Q ω² (s = +1 CCW, −1 CW);
+     - the rotors' gyroscopic coupling −ω_body × Σ s·J·ω·a.
+  2. Rotors and battery advance (4.5's RK4: pack sag, charge used). The spin-up
+     reaction −s·J·Δω/dt is added exactly over the step.
+  3. Body drag −½ ρ C_d A v|v| per body axis, through the CoM. ρ is the caller's;
+     there is no default.
+  4. rapier steps the body, gravity included.
+  - Not modelled, and stated in the module: inflow, ground effect, blade flapping,
+    prop drag in forward flight, thermal limits, a battery cut-off.
+- **Protocol** (additive; PROTOCOL_VERSION stays 2):
+  - `sim.run` takes `throttle` (per motor, vehicle order, held over the run; absent =
+    motors off), `rotorSpeedsRadps` (start speeds) and `airDensityKgM3` (required with
+    body drag);
+  - it returns per-motor `motors` (throttle, rpm, thrust, drag torque) and `battery`
+    (voltage, current, charge used, state of charge);
+  - with propulsion, `stateHash` also covers the rotor speeds and the charge used;
+  - refused: throttle without propulsion, drag without the density, body loads with
+    propulsion, a throttle outside [0, 1] or of the wrong count.
+- **`src/domain/atmosphere.ts`**: ISA (USSA 1976, −5 km′ to 11 km′) density for the
+  drag.
+  - It takes its constants from the cited `database/reference/physics.v1.json`
+    (nothing retyped): T = T0 + L·H, P from eq. 33a, ρ = P·M0/(R*·T).
+  - A non-standard day uses the air temperature at the standard pressure of H.
+  - Altitude is geopotential (within 0.2 % of geometric below 11 km; stated).
+  - The user's altitude and temperature fields come with the flight view (4.8).
+
+**Tests**
+- engine-core `flight/tests.rs` (9 tests):
+  - rotor loads: thrust, r × F, the drag reaction for both spins and the gyroscopic
+    coupling against a hand calculation;
+  - hover trim: altitude and attitude held, a quarter of the weight per motor;
+  - full-throttle climb: v = a·t, and z = ½·a·t² + ½·a·t·h with h = dt/4, rapier's
+    substep;
+  - body + rotor angular momentum: conserved up to the prop's drag impulse, to 1e-12;
+  - fall with drag: against v_t·tanh(g·t/v_t), with first-order convergence measured
+    (error halves with dt);
+  - battery: V = V_oc − R_int·I and charge = I·t at steady hover;
+  - unequal thrust: roll, pitch and yaw follow r × F;
+  - the same inputs give the same hash, rotors included;
+  - refusals.
+- sidecar: a flight run through the protocol, including its readings, determinism and
+  every refusal.
+- vitest:
+  - `atmosphere.test.ts`: the cited ρ0 at 0 m; the hydrostatic equation dP/dH = −ρ g0
+    at 5 altitudes; a hot day; range checks;
+  - the supervisor flies a mass.ts quad with propulsion, drag and ISA density in the
+    real engine. Its GPS sits 40 mm aft, so equal thrust pitches it nose-up, as
+    r × F says. Holding it level is 4.7's job.
+
 ## 2026-11-22 — Phase 4, milestone 4.4 follow-ups: placement, hulls, environment, live drag, contact limits
 
 The 4.4 entry below left five issues open, and three e2e tests had hidden one of them with a 50 mm overlap tolerance. This entry fixes them; the workarounds are gone.

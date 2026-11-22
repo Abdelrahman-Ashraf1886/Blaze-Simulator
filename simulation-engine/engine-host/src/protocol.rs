@@ -61,6 +61,17 @@ pub enum Command {
         force_body_n: Option<[f64; 3]>,
         #[serde(default)]
         torque_body_nm: Option<[f64; 3]>,
+        /// With propulsion loaded (4.6): throttle per motor in [0, 1], in the
+        /// order of the vehicle's motors, held over the run; absent = motors off.
+        #[serde(default)]
+        throttle: Option<Vec<f64>>,
+        /// Rotor speeds at the start, rad/s (vehicle motor order); absent = at rest.
+        #[serde(default)]
+        rotor_speeds_radps: Option<Vec<f64>>,
+        /// Air density for the body drag, kg/m³ (ISA at the user's altitude,
+        /// computed by the app); required when the vehicle has body drag.
+        #[serde(default)]
+        air_density_kg_m3: Option<f64>,
     },
 }
 
@@ -169,7 +180,10 @@ mod tests {
                 start_position_m: None,
                 dt_s: None,
                 force_body_n: Some([0.0, 0.0, 9.0]),
-                torque_body_nm: None
+                torque_body_nm: None,
+                throttle: None,
+                rotor_speeds_radps: None,
+                air_density_kg_m3: None
             }
         );
         assert!(matches!(

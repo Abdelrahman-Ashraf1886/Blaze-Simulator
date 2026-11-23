@@ -134,6 +134,8 @@ Source read: MathWorks Aerospace Blockset documentation, which cites **MIL-F-878
 - gust, https://www.mathworks.com/help/aeroblks/discretewindgustmodel.html: 0 for x < 0,
   (V_m/2)(1 − cos(πx/d_m)) for 0 ≤ x ≤ d_m, V_m after; x the distance travelled.
 
+**6.0a result (2026-11-23).** MIL-F-8785C was obtained and read in part (EverySpec scan, page images; not re-checked by the reviewer). It confirms the shear formula and both z0 (§3.7.3.2, p. 51) and the 1 − cos gust (§3.7.1.3, p. 48), so these two citations are now primary. It states no height range for the shear (3–1000 ft is MathWorks only, so the 3 ft hold and the 1000 ft refusal stay labelled secondary), gives 10–1000 ft for the low-altitude turbulence lengths, gives turbulence spectra but no filters, and does not say whether the gust x is measured through the air. The paragraph below is the text as first written.
+
 Both are **secondary**: the primary text was not obtained (see Not found). The page does not
 define how x follows from time. Our reading, to verify in 6.0a: x is the distance through the
 air since the gust start, x = ∫|v − w_mean| dt. W20, the direction, z0 (one of the two cited values,

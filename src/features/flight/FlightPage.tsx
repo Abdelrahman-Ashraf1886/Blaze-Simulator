@@ -5,7 +5,6 @@ import { PageHeader } from '@/components/page-header'
 import { EmptyState, Section } from '@/components/section'
 import { Button } from '@/components/ui/button'
 import { runChecks } from '@/domain/checks'
-import { propulsionDefinition } from '@/domain/propulsion'
 import { getApi } from '@/services/api'
 import { useProjects } from '@/stores/projects'
 import { useComponents } from '@/stores/components'
@@ -15,17 +14,16 @@ import { useAssembly } from '../workshop/assembly-store'
 import { useAssets } from '../workshop/asset-store'
 import { useComponentIndex } from '../workshop/component-index'
 import { checkInput } from '../workshop/check-input'
-import { linkedComponent, resolveLinks, type ComponentIndex } from '../workshop/links'
+import { resolveLinks, type ComponentIndex } from '../workshop/links'
 import { massState, type MassState } from '../workshop/mass-input'
 import { useWorkshopView } from '../workshop/view-store'
-import { propulsionState } from '../workshop/propulsion-input'
 import { DebugPanel, endReason } from './DebugPanel'
 import { EngineFlightSource, idleFrame } from './EngineFlightSource'
 import { FlightSetup } from './FlightSetup'
 import { FlightViewport } from './FlightViewport'
 import type { FlightFrame } from './frame'
-import { collisionIndicator, instabilityIndicator, layoutIndicator, massIndicator, thrustIndicator } from './indicators'
-import { airDensityFor, conditionsOf, EMPTY_CONDITIONS, enginePayload, flightGate, type FlightConditions } from './readiness'
+import { assemblyThrust, collisionIndicator, instabilityIndicator, layoutIndicator, massIndicator } from './indicators'
+import { conditionsOf, EMPTY_CONDITIONS, enginePayload, flightGate, type FlightConditions } from './readiness'
 import { mapSticks, STICK_KEYS, updateHeadingHold, type HeadingHold } from './sticks'
 
 export default function FlightPage() {
@@ -199,13 +197,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     sticksRegion.current?.focus()
   }
   const findings = useMemo(() => runChecks(checkInput(doc, geo, components)), [doc, geo, components])
-  const thrust = useMemo(() => {
-    const propulsion = propulsionState(doc, geo, components)
-    const battery = doc.parts.find((p) => p.kind === 'battery')
-    const definition = propulsionDefinition(propulsion.motors, battery ? linkedComponent(battery, components) : null)
-    const air = conditions.ambientAltitudeM === null ? null : airDensityFor(conditions.ambientAltitudeM, conditions.temperatureC)
-    return thrustIndicator(definition, propulsion.ready, mass.mp.totalMassKg, !!mass.mp.com && mass.mp.missingMass.length === 0, air)
-  }, [doc, geo, components, mass, conditions])
+  const thrust = useMemo(() => assemblyThrust(doc, geo, components, mass, conditions).indicator, [doc, geo, components, mass, conditions])
   const indicators = {
     'Unbalanced mass': massIndicator(mass, tolerance),
     'Motor layout': layoutIndicator(findings, mass, doc.parts.filter((p) => p.kind === 'motor').length),

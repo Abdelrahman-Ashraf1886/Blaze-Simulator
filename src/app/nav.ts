@@ -26,7 +26,7 @@ export interface NavItem {
 }
 
 /** Phase in progress in this build; its sections are enabled as they are built. */
-export const CURRENT_PHASE = 3
+export const CURRENT_PHASE = 5
 
 /** Spec order (1–9). Groups only add visual separation; they never reorder. */
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -34,7 +34,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: '/workshop', label: 'Drone Workshop', icon: Box, group: 'engineering', phase: 2 },
   { path: '/components', label: 'Components', icon: Cpu, group: 'engineering', phase: 3, ready: true },
   { path: '/electrical', label: 'Electrical Designer', icon: Cable, group: 'engineering', phase: 3, ready: true },
-  { path: '/analysis', label: 'Engineering Analysis', icon: Gauge, group: 'engineering', phase: 4 },
+  { path: '/analysis', label: 'Engineering Analysis', icon: Gauge, group: 'engineering', phase: 4, ready: true },
   { path: '/flight', label: 'Flight test', icon: Plane, group: 'flight', phase: 4, ready: true },
   { path: '/scenarios', label: 'Scenarios', icon: ListChecks, group: 'flight', phase: 4, ready: true },
   { path: '/simulator', label: 'Flight Simulator', icon: Plane, group: 'flight', phase: 6 },

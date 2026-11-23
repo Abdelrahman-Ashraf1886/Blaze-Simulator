@@ -15,7 +15,7 @@ const optional = (min: number, max: number, unit: string, step: number) => (text
 const show = (v: number | null) => (v === null ? '' : String(v))
 
 /** Focuses `id` once the page that holds it has rendered (a link into the workshop). */
-function focusWhenPresent(id: string, tries = 60) {
+export function focusWhenPresent(id: string, tries = 60) {
   const el = document.getElementById(id)
   if (el) {
     el.scrollIntoView({ block: 'center' })
@@ -23,7 +23,8 @@ function focusWhenPresent(id: string, tries = 60) {
   } else if (tries > 0) requestAnimationFrame(() => focusWhenPresent(id, tries - 1))
 }
 
-function useFollow(projectId: string) {
+/** Follows a link to a field: on the flight page, in the workshop, on a part, or in the component library. Other pages share it. */
+export function useFollow(projectId: string) {
   const navigate = useNavigate()
   return (link: FlightLink) => {
     if (link.to === 'flight-field') return focusWhenPresent(link.elementId)

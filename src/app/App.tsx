@@ -15,6 +15,13 @@ const flight = (
   </Suspense>
 )
 
+const AnalysisPage = lazy(() => import('@/features/analysis/AnalysisPage'))
+const analysis = (
+  <Suspense fallback={<p className="px-6 pt-5 text-[12.5px] text-fg-subtle">Loading analysis…</p>}>
+    <AnalysisPage />
+  </Suspense>
+)
+
 const scenarios = (
   <Suspense fallback={<p className="px-6 pt-5 text-[12.5px] text-fg-subtle">Loading scenarios…</p>}>
     <ScenariosPage />
@@ -45,6 +52,8 @@ export function App() {
           <Route path="workshop/:projectId" element={workshop} />
           <Route path="flight" element={flight} />
           <Route path="flight/:projectId" element={flight} />
+          <Route path="analysis" element={analysis} />
+          <Route path="analysis/:projectId" element={analysis} />
           <Route path="scenarios" element={scenarios} />
           <Route path="scenarios/:projectId" element={scenarios} />
           <Route path="components" element={<ComponentsPage />} />

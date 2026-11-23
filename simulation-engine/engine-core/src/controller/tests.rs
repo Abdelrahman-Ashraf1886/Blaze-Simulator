@@ -640,3 +640,199 @@ fn vertical_integral_and_thrust_limits_block_windup() {
     c.reset();
     near(c.vertical_integral, 0.0); // Reset clears vertical trim as well as rate trim.
 }
+
+// Frozen Phase 4.7 allocation path for bitwise regression.
+impl Allocator {
+    fn allocate_phase_4_7(&mut self, demand: [f64; 4]) -> Allocation<'_> {
+        assert!(demand.iter().all(|x| x.is_finite()));
+        for (u, v) in self.commands.iter_mut().zip(&self.inverse) {
+            *u = v[0] * demand[0] + v[1] * demand[1] + v[3] * demand[3];
+        }
+        self.desaturate_actuators(3, 1.0, true);
+        self.desaturate_actuators(0, 1.0, false);
+        self.desaturate_actuators(1, 1.0, false);
+        for (u, v) in self.commands.iter_mut().zip(&self.inverse) {
+            *u += v[2] * demand[2];
+        }
+        self.desaturate_actuators(2, 1.15, false);
+        self.desaturate_actuators(3, 1.0, true);
+        for u in &mut self.commands {
+            *u = u.clamp(0.0, 1.0);
+        }
+        let achieved: [f64; 4] = std::array::from_fn(|r| {
+            self.commands
+                .iter()
+                .zip(&self.effectiveness)
+                .map(|(u, v)| u * v[r])
+                .sum()
+        });
+        let mut saturation = Saturation::default();
+        for r in 0..4 {
+            // Roundoff tolerance in normalized units prevents flag chatter.
+            saturation.positive[r] = demand[r] - achieved[r] > 1e-9;
+            saturation.negative[r] = achieved[r] - demand[r] > 1e-9;
+        }
+        Allocation {
+            commands: &self.commands,
+            achieved,
+            saturation,
+        }
+    }
+}
+
+#[test]
+fn airmode_zero_is_bit_identical_to_phase_4_7() {
+    // Replay a grid spanning feasible demands, both saturation directions,
+    // yaw headroom, and asymmetric/tilted geometries against the frozen path.
+    let mut tilted = quad();
+    tilted[0].thrust_axis = [0.5, 0.0, 3.0_f64.sqrt() / 2.0];
+    for geometry in [quad(), tilted] {
+        let mut legacy = Allocator::new(&geometry, 0.02).unwrap();
+        let mut current = legacy.clone();
+        assert_eq!(current.airmode, 0);
+        for mode in [None, Some(0)] {
+            if let Some(mode) = mode {
+                current.set_airmode(mode).unwrap();
+            }
+            for roll in [-10.0, -0.2, 0.0, 0.2, 10.0] {
+                for pitch in [-0.1, 0.0, 0.1] {
+                    for yaw in [-5.0, -0.2, 0.0, 0.2, 5.0] {
+                        for thrust in [0.0, 0.05, 0.5, 0.95, 1.0, 2.0] {
+                            let demand = [roll, pitch, yaw, thrust];
+                            let before = legacy.allocate_phase_4_7(demand);
+                            let after = current.allocate(demand);
+                            assert_eq!(
+                                before
+                                    .commands
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>(),
+                                after
+                                    .commands
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>()
+                            );
+                            assert_eq!(
+                                before.achieved.map(f64::to_bits),
+                                after.achieved.map(f64::to_bits)
+                            );
+                            assert_eq!(before.saturation.positive, after.saturation.positive);
+                            assert_eq!(before.saturation.negative, after.saturation.negative);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn airmode_zero_is_bit_identical_to_phase_4_7_on_random_demands() {
+    // Fixed-seed xorshift64*: deterministic, no new dependency. Demands reach
+    // well past the feasible range so every saturation branch is exercised.
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let mut uniform = move |lo: f64, hi: f64| {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        let r = state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11;
+        lo + (hi - lo) * (r as f64 / (1_u64 << 53) as f64)
+    };
+    let mut tilted = quad();
+    tilted[1].thrust_axis = [0.0, -0.4, (1.0_f64 - 0.16).sqrt()];
+    for geometry in [quad(), tilted] {
+        let mut legacy = Allocator::new(&geometry, 0.02).unwrap();
+        let mut current = legacy.clone();
+        for i in 0..20_000 {
+            let demand = [
+                uniform(-1.5, 1.5),
+                uniform(-1.5, 1.5),
+                uniform(-1.5, 1.5),
+                uniform(-0.2, 2.5),
+            ];
+            let before = legacy.allocate_phase_4_7(demand);
+            let after = current.allocate(demand);
+            let bits = |c: &[f64]| c.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(before.commands), bits(after.commands), "case {i}");
+            assert_eq!(before.achieved.map(f64::to_bits), after.achieved.map(f64::to_bits));
+            assert_eq!(before.saturation.positive, after.saturation.positive);
+            assert_eq!(before.saturation.negative, after.saturation.negative);
+        }
+    }
+}
+
+#[test]
+fn airmode_rp_raises_collective_for_both_attitude_axes_but_not_yaw() {
+    let mut a = Allocator::new(&quad(), 0.02).unwrap();
+    a.set_airmode(1).unwrap();
+    assert!(a.set_airmode(3).is_err());
+    assert_eq!(a.airmode, 1);
+    for axis in 0..2 {
+        for sign in [-1.0, 1.0] {
+            let mut demand = [0.0, 0.0, 0.0, 0.05];
+            demand[axis] = sign * 0.2;
+            let out = a.allocate(demand);
+            // Differential +/-d becomes [0,2d] by raising mean to d.
+            let d = 0.2 / 2.0_f64.sqrt();
+            near(out.achieved[axis], demand[axis]);
+            near(out.achieved[3], d);
+            assert_eq!(out.saturation.positive, [false; 4]);
+            assert_eq!(out.saturation.negative, [false, false, false, true]);
+            for u in out.commands {
+                assert!(u.abs() < EPS || (*u - 2.0 * d).abs() < EPS);
+            }
+        }
+    }
+    let out = a.allocate([0.0, 0.0, 0.2, 0.05]);
+    near(out.achieved[2], 0.05);
+    near(out.achieved[3], 0.05);
+    assert_eq!(out.saturation.positive, [false, false, true, false]);
+    assert_eq!(out.saturation.negative, [false; 4]);
+}
+
+#[test]
+fn airmode_rpy_raises_collective_for_yaw_and_prioritizes_roll_pitch() {
+    let mut a = Allocator::new(&quad(), 0.02).unwrap();
+    a.set_airmode(2).unwrap();
+    for sign in [-1.0, 1.0] {
+        let out = a.allocate([0.0, 0.0, sign * 0.2, 0.05]);
+        near(out.achieved[2], sign * 0.2);
+        near(out.achieved[3], 0.2);
+        assert_eq!(out.saturation.positive, [false; 4]);
+        assert_eq!(out.saturation.negative, [false, false, false, true]);
+        for (i, u) in out.commands.iter().enumerate() {
+            near(
+                *u,
+                if (i % 2 == 0) == (sign > 0.0) {
+                    0.4
+                } else {
+                    0.0
+                },
+            );
+        }
+    }
+    // Full mixing exceeds BOTH bounds: FL=.5+5+.1/sqrt(2),
+    // FR=.5-5-.3/sqrt(2). Collective centering raises the mean
+    // by .1/sqrt(2). Yaw then gives way until FL=1 and FR=0:
+    // yaw=.5-.2/sqrt(2). RP remain unchanged.
+    let out = a.allocate([0.2, 0.1, 5.0, 0.5]);
+    near(out.achieved[0], 0.2);
+    near(out.achieved[1], 0.1);
+    near(out.achieved[2], 0.5 - 0.2 / 2.0_f64.sqrt());
+    near(out.achieved[3], 0.5 + 0.1 / 2.0_f64.sqrt());
+    assert_eq!(out.saturation.positive, [false, false, true, false]);
+    assert_eq!(out.saturation.negative, [false, false, false, true]);
+    for mode in [1, 2] {
+        a.set_airmode(mode).unwrap();
+        let out = a.allocate([0.2, 0.0, 0.0, 0.95]);
+        near(out.achieved[0], 0.2);
+        near(out.achieved[3], 1.0 - 0.2 / 2.0_f64.sqrt());
+        assert_eq!(out.saturation.positive, [false, false, false, true]);
+        let out = a.allocate([-10.0, 0.0, 0.0, 0.5]);
+        assert!(out.saturation.negative[0]);
+        for u in out.commands {
+            assert!((0.0..=1.0).contains(u));
+        }
+    }
+}

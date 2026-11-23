@@ -11,6 +11,11 @@ const api: DesktopApi = {
     delete: (id) => ipcRenderer.invoke('projects:delete', { id }),
   },
   runs: { listRecent: (limit) => ipcRenderer.invoke('runs:listRecent', { limit }) },
+  tuning: {
+    get: (projectId) => ipcRenderer.invoke('tuning:get', { id: projectId }),
+    set: (input) => ipcRenderer.invoke('tuning:set', input),
+    reset: (projectId) => ipcRenderer.invoke('tuning:reset', { id: projectId }),
+  },
   assembly: {
     load: (projectId) => ipcRenderer.invoke('assembly:load', { id: projectId }),
     save: (input) => ipcRenderer.invoke('assembly:save', input),

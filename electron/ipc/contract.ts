@@ -8,6 +8,7 @@
  */
 
 import type { Component, ComponentCategory, ComponentInput, SpecValue } from './component-fields'
+import type { ControllerParam, ParamError, TuningOverrides } from '../../src/domain/controller-params'
 export type * from './component-fields'
 import type { FlightSessionEndResult, FlightSessionStartResult, FlightSessionStepParams, FlightSessionStepResult, ScenarioConfigParams, ScenarioRequest, ScenarioRunResult } from '../main/engine/protocol'
 
@@ -435,12 +436,24 @@ export interface RenameProjectInput {
   name: string
 }
 
+export interface TuningSettings {
+  table: readonly ControllerParam[]
+  overrides: TuningOverrides
+  effective: Record<string, number>
+}
+
+export interface SetTuningInput {
+  id: string
+  /** Replaces the complete saved set; omitted parameters use PX4 defaults. */
+  overrides: TuningOverrides
+}
+
 // ---- Result envelope --------------------------------------------------------
 
 export type IpcErrorCode = 'VALIDATION' | 'NOT_FOUND' | 'CONFLICT' | 'INTERNAL'
 export type IpcResult<T> =
   | { ok: true; data: T }
-  | { ok: false; error: { code: IpcErrorCode; message: string } }
+  | { ok: false; error: { code: IpcErrorCode; message: string; errors?: ParamError[] } }
 
 // ---- Channels ---------------------------------------------------------------
 
@@ -453,6 +466,9 @@ export const Channels = {
   systemStatus: 'system:status',
   assemblyLoad: 'assembly:load',
   assemblySave: 'assembly:save',
+  tuningGet: 'tuning:get',
+  tuningSet: 'tuning:set',
+  tuningReset: 'tuning:reset',
   /** Synchronous variant used only while the window unloads, so the last edit is never lost. */
   assemblySaveSync: 'assembly:saveSync',
   assetsList: 'assets:list',
@@ -493,6 +509,11 @@ export interface DesktopApi {
     delete(id: string): Promise<IpcResult<null>>
   }
   runs: { listRecent(limit: number): Promise<IpcResult<SimulationRun[]>> }
+  tuning: {
+    get(projectId: string): Promise<IpcResult<TuningSettings>>
+    set(input: SetTuningInput): Promise<IpcResult<TuningSettings>>
+    reset(projectId: string): Promise<IpcResult<TuningSettings>>
+  }
   assembly: {
     /** Loads the project's assembly, creating it with starting values on first open. */
     load(projectId: string): Promise<IpcResult<Assembly>>

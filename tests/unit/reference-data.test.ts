@@ -30,6 +30,8 @@ const px4SourceUnits: Record<string, string> = {
   MPC_VELD_LP: 'Hz', MPC_JERK_MAX: 'm/s^3', MPC_JERK_AUTO: 'm/s^3',
   HTE_HT_NOISE: 'normalized_thrust/s',
 }
+// MIL-F-8785C states its lengths in feet; src/domain/units.ts has no conversion for ft.
+const windShearSourceUnits: Record<string, string> = { z0CategoryC: 'ft', z0OtherPhases: 'ft' }
 const si = (e: Entry) => (e.unit ? toSI(e.value, e.unit as never) : e.value)
 
 describe('physics reference data (database/reference/physics.v1.json)', () => {
@@ -39,6 +41,7 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
     expect(ref.sets.map((s) => s.id)).toEqual([
       'isa', 'carbonFibrePlate', 'px4',
       'px4Position', 'px4Allocation', 'px4ThrustModel', 'px4HoverThrust',
+      'takeoffLandPx4', 'landDetectorConstantsPx4', 'windShear',
     ])
     for (const s of ref.sets) {
       const keys = s.values.map((v) => v.key)
@@ -52,7 +55,9 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
         const where = `${s.id}.${v.key}`
         expect(Number.isFinite(v.value), where).toBe(true)
         if (v.unit !== undefined) {
-          const retainedSourceUnit = s.id.startsWith('px4') && px4SourceUnits[v.key] === v.unit
+          const retainedSourceUnit =
+            (s.id.startsWith('px4') && px4SourceUnits[v.key] === v.unit) ||
+            (s.id === 'windShear' && windShearSourceUnits[v.key] === v.unit)
           expect(isUnit(v.unit) || retainedSourceUnit, `${where} unit ${v.unit}`).toBe(true)
         }
         expect(['standard', 'manufacturer', 'software-default', 'derived'], where).toContain(v.source)
@@ -75,13 +80,13 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
   })
 
   it('new PX4 sets cite v1.13.3 definition lines and respect every documented bound', () => {
-    const counts = { px4Position: 36, px4Allocation: 1, px4ThrustModel: 1, px4HoverThrust: 6 }
+    const counts = { px4Position: 36, px4Allocation: 1, px4ThrustModel: 1, px4HoverThrust: 6, takeoffLandPx4: 10 }
     for (const [id, count] of Object.entries(counts)) {
       expect(set(id).values, id).toHaveLength(count)
       for (const v of set(id).values) {
         const where = `${id}.${v.key}`
         expect(v.source, where).toBe('software-default')
-        expect(v.key, where).toMatch(/^(MC|MPC|HTE|THR)_[A-Z0-9_]+$/)
+        expect(v.key, where).toMatch(/^(MC|MPC|HTE|THR|LNDMC|MIS)_[A-Z0-9_]+$/)
         expect(v.reference?.url, where).toMatch(
           /^https:\/\/github\.com\/PX4\/PX4-Autopilot\/blob\/v1\.13\.3\/src\/.+\.c#L[1-9]\d*$/,
         )
@@ -99,6 +104,50 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
         }
         if (v.min !== undefined && v.max !== undefined) expect(v.min, where).toBeLessThanOrEqual(v.max)
       }
+    }
+  })
+
+  it('takeoffLandPx4 repeats no parameter of another set and leaves out the range-sensor and return parameters', () => {
+    const others = new Set(ref.sets.filter((s) => s.id !== 'takeoffLandPx4').flatMap((s) => s.values.map((v) => v.key)))
+    for (const v of set('takeoffLandPx4').values) expect(others.has(v.key), v.key).toBe(false)
+    const keys = set('takeoffLandPx4').values.map((v) => v.key)
+    expect(keys).toEqual([
+      'MPC_TKO_RAMP_T', 'MPC_SPOOLUP_TIME', 'MPC_Z_V_AUTO_UP', 'MPC_Z_V_AUTO_DN', 'MPC_YAWRAUTO_MAX',
+      'LNDMC_TRIG_TIME', 'LNDMC_Z_VEL_MAX', 'LNDMC_XY_VEL_MAX', 'LNDMC_ROT_MAX', 'MIS_TAKEOFF_ALT',
+    ])
+    for (const absent of ['MPC_LAND_CRWL', 'MPC_LAND_ALT3']) expect(others.has(absent) || keys.includes(absent), absent).toBe(false)
+    expect(keys.some((k) => k.startsWith('RTL_'))).toBe(false)
+    expect(get('takeoffLandPx4', 'MPC_TKO_RAMP_T')).toMatchObject({ value: 3, min: 0, max: 5 })
+    expect(get('takeoffLandPx4', 'MPC_TKO_RAMP_T')).not.toHaveProperty('unit')
+    expect(get('takeoffLandPx4', 'LNDMC_TRIG_TIME')).toMatchObject({ value: 1, unit: 's', min: 0.1, max: 10 })
+    expect(get('takeoffLandPx4', 'LNDMC_ROT_MAX')).toMatchObject({ value: 20, unit: 'deg/s' })
+    expect(get('takeoffLandPx4', 'LNDMC_ROT_MAX')).not.toHaveProperty('min')
+  })
+
+  it('land detector header constants cite their MulticopterLandDetector.h lines', () => {
+    const lines: Record<string, number> = { FREEFALL_TRIGGER_TIME_US: 84, LAND_DETECTOR_LAND_PHASE_TIME_US: 87, DIST_FROM_GROUND_THRESHOLD: 90 }
+    expect(set('landDetectorConstantsPx4').values.map((v) => v.key)).toEqual(Object.keys(lines))
+    for (const v of set('landDetectorConstantsPx4').values) {
+      expect(v.source, v.key).toBe('software-default')
+      expect(v.reference?.url, v.key).toBe(
+        `https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/land_detector/MulticopterLandDetector.h#L${lines[v.key]}`,
+      )
+      expect(v.reference?.locator, v.key).toContain(`line ${lines[v.key]}: static constexpr`)
+    }
+    expect(get('landDetectorConstantsPx4', 'FREEFALL_TRIGGER_TIME_US')).toMatchObject({ value: 300, unit: 'ms' })
+    expect(get('landDetectorConstantsPx4', 'LAND_DETECTOR_LAND_PHASE_TIME_US')).toMatchObject({ value: 2, unit: 's' })
+  })
+
+  it('wind shear z0 values cite MIL-F-8785C 3.7.3.2 as the primary text', () => {
+    expect(set('windShear').values.map((v) => v.key)).toEqual(['z0CategoryC', 'z0OtherPhases'])
+    expect(get('windShear', 'z0CategoryC')).toMatchObject({ value: 0.15, unit: 'ft', source: 'standard' })
+    expect(get('windShear', 'z0OtherPhases')).toMatchObject({ value: 2, unit: 'ft', source: 'standard' })
+    for (const v of set('windShear').values) {
+      expect(v.reference?.document, v.key).toContain('MIL-F-8785C')
+      expect(v.reference?.locator, v.key).toContain('3.7.3.2')
+      expect(v.reference?.locator, v.key).toContain('p. 51')
+      expect(v.condition, v.key).toContain('Primary text')
+      expect(v.value, v.key).toBeGreaterThan(0)
     }
   })
 

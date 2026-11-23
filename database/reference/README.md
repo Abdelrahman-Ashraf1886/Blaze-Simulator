@@ -51,11 +51,17 @@ equation of state.
 - `px4ThrustModel` (1): `THR_MDL_FAC`, with the source's static thrust model quoted in `condition`. This is the firmware default; a vehicle-specific fit is not reference data.
 - `px4HoverThrust` (6): all six `HTE_*` estimator parameters. `MPC_USE_HTE` and `MPC_THR_HOVER` are reused from `px4`.
 
+- `takeoffLandPx4` (10): PX4 v1.13.3 takeoff ramp and spool-up, automatic ascent/descent speed and yaw-rate limits, the multicopter land-detector parameters `LNDMC_*` and `MIS_TAKEOFF_ALT`. `MPC_TKO_SPEED`, `MPC_LAND_SPEED`, `MPC_LAND_ALT1/2`, `MPC_TILTMAX_LND` and `MPC_JERK_AUTO` already live in `px4Position` and are not repeated. `MPC_LAND_CRWL` and `MPC_LAND_ALT3` (range sensor only) and the return (`RTL_*`) parameters are not recorded.
+- `landDetectorConstantsPx4` (3): compile-time constants of `MulticopterLandDetector.h` (300 ms free-fall time, 2 s landed-phase time, 1 m distance). They are not parameters: the locator quotes the `static constexpr` line instead of a `PARAM_DEFINE` line, and the keys are the C++ names.
+- `windShear` (2): the roughness length z0 of the mean-wind profile u = u20·ln(h/z0)/ln(20/z0): 0.15 ft for Category C flight phases, 2.0 ft for the others. Source: MIL-F-8785C (5 November 1980), 3.7.3.2, printed p. 51, read from the EverySpec scan as page images (primary text, `source: "standard"`). Its unit `ft` has no conversion in `src/domain/units.ts`; it is retained as the source states it, and consumers check `isUnit` before `toSI`. A value known only from a secondary source (for example a vendor's documentation of a standard) is not given `source: "standard"`; its `condition` says it is secondary.
+
+Set ids starting with `px4` are read as tunable controller parameters (`src/domain/controller-params.ts`), so other PX4 sets must not use that prefix; that is why the two sets above end in `Px4`.
+
 The original `px4` set is frozen at 38 entries for the Phase 4.7 Rust `Gains`
 conformance test. New parameters belong in the separate sets above; exact PX4
-parameter keys must be unique across all `px4*` sets.
+parameter keys must be unique across all `px4*` sets (`landDetectorConstantsPx4` keys are C++ constant names, not parameters).
 
-For these new sets, defaults come from the actual `PARAM_DEFINE_*` line in the
+For the PX4 parameter sets, defaults come from the actual `PARAM_DEFINE_*` line in the
 raw file at tag v1.13.3, cited with its GitHub line anchor. Units and bounds come
 from the immediately preceding doc comment, not inferred physical dimensions or
 enum values. `norm`, `normalized_thrust` and `SD` are represented by `"1"`, and

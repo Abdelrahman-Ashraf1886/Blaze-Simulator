@@ -1203,6 +1203,222 @@
           "condition": "Source unit \"normalized_thrust\". Max deviation from MPC_THR_HOVER Defines the range of the hover thrust estimate around MPC_THR_HOVER. A value of 0.2 with MPC_THR_HOVER at 0.5 results in a range of [0.3, 0.7]. Set to a large value if the vehicle operates in varying physical conditions that affect the required hover thrust strongly (e.g. differently sized payloads)."
         }
       ]
+    },
+    {
+      "id": "takeoffLandPx4",
+      "title": "PX4 v1.13.3 takeoff, landing and land-detector parameters (Phase 6)",
+      "note": "Parameters read for the takeoff ramp, spool-up, automatic descent/ascent limits and the multicopter land detector. MPC_TKO_SPEED, MPC_LAND_SPEED, MPC_LAND_ALT1, MPC_LAND_ALT2, MPC_TILTMAX_LND and MPC_JERK_AUTO are already in px4Position and are not repeated. MPC_LAND_CRWL and MPC_LAND_ALT3 are not recorded: they apply only with a range sensor, which the vehicle does not have. Return (RTL) parameters are not recorded.",
+      "values": [
+        {
+          "key": "MPC_TKO_RAMP_T",
+          "value": 3.0,
+          "min": 0,
+          "max": 5,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L764",
+            "locator": "mc_pos_control_params.c line 764: PARAM_DEFINE_FLOAT(MPC_TKO_RAMP_T, 3.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Source gives no unit. Position control smooth takeoff ramp time constant. Increasing this value will make automatic and manual takeoff slower. If it's too slow the drone might scratch the ground and tip over. A time constant of 0 disables the ramp"
+        },
+        {
+          "key": "MPC_SPOOLUP_TIME",
+          "value": 1.0,
+          "unit": "s",
+          "min": 0,
+          "max": 10,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L797",
+            "locator": "mc_pos_control_params.c line 797: PARAM_DEFINE_FLOAT(MPC_SPOOLUP_TIME, 1.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Enforced delay between arming and takeoff. For altitude controlled modes the time from arming the motors until a takeoff is possible gets forced to be at least MPC_SPOOLUP_TIME seconds to ensure the motors and propellers can sppol up and reach idle speed before getting commanded to spin faster. This delay is particularly useful for vehicles with slow motor spin-up e.g. because of large propellers."
+        },
+        {
+          "key": "MPC_Z_V_AUTO_UP",
+          "value": 3,
+          "unit": "m/s",
+          "min": 0.5,
+          "max": 8.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L215",
+            "locator": "mc_pos_control_params.c line 215: PARAM_DEFINE_FLOAT(MPC_Z_V_AUTO_UP, 3.f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Automatic ascent velocity. Ascent velocity in auto modes. For manual modes and offboard, see MPC_Z_VEL_MAX_UP"
+        },
+        {
+          "key": "MPC_Z_V_AUTO_DN",
+          "value": 1,
+          "unit": "m/s",
+          "min": 0.5,
+          "max": 4.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L245",
+            "locator": "mc_pos_control_params.c line 245: PARAM_DEFINE_FLOAT(MPC_Z_V_AUTO_DN, 1.f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Automatic descent velocity. Descent velocity in auto modes. For manual modes and offboard, see MPC_Z_VEL_MAX_DN"
+        },
+        {
+          "key": "MPC_YAWRAUTO_MAX",
+          "value": 45,
+          "unit": "deg/s",
+          "min": 0.0,
+          "max": 360.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L706",
+            "locator": "mc_pos_control_params.c line 706: PARAM_DEFINE_FLOAT(MPC_YAWRAUTO_MAX, 45.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Max yaw rate in auto mode. Limit the rate of change of the yaw setpoint in autonomous mode to avoid large control output and mixer saturation."
+        },
+        {
+          "key": "LNDMC_TRIG_TIME",
+          "value": 1.0,
+          "unit": "s",
+          "min": 0.1,
+          "max": 10.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/land_detector/land_detector_params_mc.c#L48",
+            "locator": "land_detector_params_mc.c line 48: PARAM_DEFINE_FLOAT(LNDMC_TRIG_TIME, 1.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Multicopter land detection trigger time. Total time it takes to go through all three land detection stages: ground contact, maybe landed, landed when all necessary conditions are constantly met."
+        },
+        {
+          "key": "LNDMC_Z_VEL_MAX",
+          "value": 0.5,
+          "unit": "m/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/land_detector/land_detector_params_mc.c#L60",
+            "locator": "land_detector_params_mc.c line 60: PARAM_DEFINE_FLOAT(LNDMC_Z_VEL_MAX, 0.50f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Multicopter max climb rate. Maximum vertical velocity allowed in the landed state"
+        },
+        {
+          "key": "LNDMC_XY_VEL_MAX",
+          "value": 1.5,
+          "unit": "m/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/land_detector/land_detector_params_mc.c#L72",
+            "locator": "land_detector_params_mc.c line 72: PARAM_DEFINE_FLOAT(LNDMC_XY_VEL_MAX, 1.5f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Multicopter max horizontal velocity. Maximum horizontal velocity allowed in the landed state"
+        },
+        {
+          "key": "LNDMC_ROT_MAX",
+          "value": 20,
+          "unit": "deg/s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/land_detector/land_detector_params_mc.c#L84",
+            "locator": "land_detector_params_mc.c line 84: PARAM_DEFINE_FLOAT(LNDMC_ROT_MAX, 20.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Multicopter max rotation. Maximum allowed angular velocity around each axis allowed in the landed state."
+        },
+        {
+          "key": "MIS_TAKEOFF_ALT",
+          "value": 2.5,
+          "unit": "m",
+          "min": 0,
+          "max": 80,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/navigator/mission_params.c#L58",
+            "locator": "mission_params.c line 58: PARAM_DEFINE_FLOAT(MIS_TAKEOFF_ALT, 2.5f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Take-off altitude. This is the minimum altitude the system will take off to."
+        }
+      ]
+    },
+    {
+      "id": "landDetectorConstantsPx4",
+      "title": "PX4 v1.13.3 multicopter land detector header constants",
+      "note": "Compile-time constants of MulticopterLandDetector, not parameters, so they carry no PARAM_DEFINE line. Values are given in the source's units written as in the source (_ms, _s).",
+      "values": [
+        {
+          "key": "FREEFALL_TRIGGER_TIME_US",
+          "value": 300,
+          "unit": "ms",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/land_detector/MulticopterLandDetector.h#L84",
+            "locator": "MulticopterLandDetector.h line 84: static constexpr hrt_abstime FREEFALL_TRIGGER_TIME_US = 300_ms;",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Compile-time constant, not a parameter. Source unit is microseconds (the _US suffix), written in the source as 300_ms. Time in us that freefall has to hold before triggering freefall"
+        },
+        {
+          "key": "LAND_DETECTOR_LAND_PHASE_TIME_US",
+          "value": 2,
+          "unit": "s",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/land_detector/MulticopterLandDetector.h#L87",
+            "locator": "MulticopterLandDetector.h line 87: static constexpr hrt_abstime LAND_DETECTOR_LAND_PHASE_TIME_US = 2_s;",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Compile-time constant, not a parameter. Source unit is microseconds (the _US suffix), written in the source as 2_s. Time interval in us in which wider acceptance thresholds are used after landed."
+        },
+        {
+          "key": "DIST_FROM_GROUND_THRESHOLD",
+          "value": 1.0,
+          "unit": "m",
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/land_detector/MulticopterLandDetector.h#L90",
+            "locator": "MulticopterLandDetector.h line 90: static constexpr float DIST_FROM_GROUND_THRESHOLD = 1.0f;",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Compile-time constant, not a parameter. Distance above ground below which entering ground contact state is possible when distance to ground is available."
+        }
+      ]
+    },
+    {
+      "id": "windShear",
+      "title": "Wind shear roughness length (MIL-F-8785C)",
+      "note": "Primary text read: MIL-F-8785C, 5 November 1980, from the EverySpec scan (the scan's text layer is poor; equations were read from page images). The unit ft is the specification's own and has no conversion in src/domain/units.ts: check isUnit before calling toSI (1 ft = 0.3048 m, exact). MIL-HDBK-1797 and 1797B were not obtained.",
+      "values": [
+        {
+          "key": "z0CategoryC",
+          "value": 0.15,
+          "unit": "ft",
+          "source": "standard",
+          "reference": {
+            "url": "https://everyspec.com/MIL-SPECS/MIL-SPECS-MIL-F/MIL-F-8785C_5295/",
+            "document": "MIL-F-8785C, Military Specification: Flying Qualities of Piloted Airplanes, 5 November 1980",
+            "locator": "3.7.3.2 Wind shear, printed p. 51 (PDF p. 51, page image read): u_w = u20 ln(h/z0)/ln(20/z0), where z0 = 0.15 feet for Category C Flight Phase, = 2.0 feet for other Flight Phases",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Primary text (EverySpec scan of the specification, read as page images). Roughness length z0 in the mean-wind profile u_w = u20 ln(h/z0)/ln(20/z0), h and z0 in feet, u20 the wind speed 20 feet above the ground (3.7.3.1). Applies to Category C Flight Phase. The text of 3.7.3.2 states no range of h; the range 3 ft < h < 1000 ft appears only in the secondary MathWorks page. The low-altitude model of 3.7.3 is specified for all Category C operations."
+        },
+        {
+          "key": "z0OtherPhases",
+          "value": 2.0,
+          "unit": "ft",
+          "source": "standard",
+          "reference": {
+            "url": "https://everyspec.com/MIL-SPECS/MIL-SPECS-MIL-F/MIL-F-8785C_5295/",
+            "document": "MIL-F-8785C, Military Specification: Flying Qualities of Piloted Airplanes, 5 November 1980",
+            "locator": "3.7.3.2 Wind shear, printed p. 51 (PDF p. 51, page image read): u_w = u20 ln(h/z0)/ln(20/z0), where z0 = 0.15 feet for Category C Flight Phase, = 2.0 feet for other Flight Phases",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Primary text (EverySpec scan of the specification, read as page images). Roughness length z0 in the mean-wind profile u_w = u20 ln(h/z0)/ln(20/z0), h and z0 in feet, u20 the wind speed 20 feet above the ground (3.7.3.1). Applies to flight phases other than Category C. The text of 3.7.3.2 states no range of h; the range 3 ft < h < 1000 ft appears only in the secondary MathWorks page. The low-altitude model of 3.7.3 is specified for all Category C operations."
+        }
+      ]
     }
   ]
 }

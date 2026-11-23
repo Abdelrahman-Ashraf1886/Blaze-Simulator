@@ -1,5 +1,6 @@
 /** zod validation for IPC request payloads. Main process only. */
 import { z } from 'zod'
+import { validateOverrides } from '../../src/domain/controller-params'
 import { overridableField, type SpecValue } from './component-fields'
 import { userSpecSchema } from './component-schemas'
 import { inertiaProblem } from './inertia'
@@ -28,6 +29,18 @@ export const createProjectSchema = z.object({ name: projectName, frameType: z.en
 export const renameProjectSchema = z.object({ id: z.uuid(), name: projectName })
 export const projectIdSchema = z.object({ id: z.uuid() })
 export const listRunsSchema = z.object({ limit: z.int().min(1).max(200) })
+
+export const setTuningSchema = z.object({
+  id: z.uuid(),
+  overrides: z.record(z.string(), z.unknown()).superRefine((overrides, ctx) => {
+    const result = validateOverrides(overrides)
+    if (!result.ok) {
+      for (const error of result.errors) {
+        ctx.addIssue({ code: 'custom', path: [error.name], message: error.message, params: { related: error.related } })
+      }
+    }
+  }).pipe(z.record(z.string(), z.number())),
+})
 
 // ---- Assembly ---------------------------------------------------------------
 

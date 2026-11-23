@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+import { CONTROLLER_PARAMS, effectiveParams } from '../../src/domain/controller-params'
 import { Channels, type IpcResult, type SystemStatus } from './contract'
 import {
   createProjectSchema,
@@ -6,6 +7,7 @@ import {
   projectIdSchema,
   renameProjectSchema,
   saveAssemblySchema,
+  setTuningSchema,
 } from './schemas'
 import {
   componentIdSchema,
@@ -17,7 +19,7 @@ import {
   userSpecSchema,
 } from './component-schemas'
 import { fieldDef, isOverridable, type SpecValue } from './component-fields'
-import { ConflictError, NotFoundError, ValidationError, type Repositories } from '../main/db/repositories'
+import { ConflictError, NotFoundError, TuningValidationError, ValidationError, type Repositories } from '../main/db/repositories'
 
 /**
  * Pure handler table (channel → function). Kept free of Electron imports so it
@@ -28,6 +30,10 @@ export function createHandlers(
   repos: Repositories,
   getSystemStatus: () => Omit<SystemStatus, 'componentCount'>,
 ): Record<string, (payload: unknown) => IpcResult<unknown>> {
+  const tuningSettings = (id: string) => {
+    const overrides = repos.tuning.get(id)
+    return { table: CONTROLLER_PARAMS, overrides, effective: effectiveParams(overrides) }
+  }
   return {
     [Channels.projectsList]: () => run(() => repos.projects.list()),
     [Channels.projectsCreate]: (p) => validated(createProjectSchema, p, (i) => repos.projects.create(i)),
@@ -42,6 +48,26 @@ export function createHandlers(
       run(() => ({ ...getSystemStatus(), componentCount: repos.components.count() })),
     [Channels.assemblyLoad]: (p) => validated(projectIdSchema, p, (i) => repos.assemblies.load(i.id)),
     [Channels.assemblySave]: (p) => validated(saveAssemblySchema, p, (i) => repos.assemblies.save(i)),
+    [Channels.tuningGet]: (p) => validated(projectIdSchema, p, (i) => tuningSettings(i.id)),
+    [Channels.tuningSet]: (p) => {
+      const parsed = setTuningSchema.safeParse(p)
+      if (!parsed.success) {
+        const errors = parsed.error.issues.map((issue) => ({
+          name: String(issue.path[0] === 'overrides' ? (issue.path[1] ?? '') : (issue.path[0] ?? '')),
+          message: issue.message,
+          ...(issue.code === 'custom' && issue.params?.related ? { related: issue.params.related as string[] } : {}),
+        }))
+        return { ok: false, error: { code: 'VALIDATION', message: errors.map((e) => e.message).join('; '), errors } }
+      }
+      return run(() => {
+        repos.tuning.set(parsed.data.id, parsed.data.overrides)
+        return tuningSettings(parsed.data.id)
+      })
+    },
+    [Channels.tuningReset]: (p) => validated(projectIdSchema, p, (i) => {
+      repos.tuning.clear(i.id)
+      return tuningSettings(i.id)
+    }),
     [Channels.assetsList]: () => run(() => repos.assets.list()),
     [Channels.componentsList]: (p) => componentValidated(listComponentsSchema, p, (i) => repos.components.list(i.category)),
     [Channels.componentsGet]: (p) => componentValidated(componentIdSchema, p, (i) => repos.components.get(i.id)),
@@ -93,6 +119,7 @@ function run<T>(fn: () => T): IpcResult<T> {
   } catch (e) {
     if (e instanceof NotFoundError) return { ok: false, error: { code: 'NOT_FOUND', message: e.message } }
     if (e instanceof ConflictError) return { ok: false, error: { code: 'CONFLICT', message: e.message } }
+    if (e instanceof TuningValidationError) return { ok: false, error: { code: 'VALIDATION', message: e.message, errors: e.errors } }
     if (e instanceof ValidationError) return { ok: false, error: { code: 'VALIDATION', message: e.message } }
     console.error('[ipc] handler failed', e)
     return { ok: false, error: { code: 'INTERNAL', message: 'Unexpected error. See application log.' } }

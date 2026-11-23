@@ -90,6 +90,10 @@ describe('IPC handlers', () => {
     ]
     const requestChannels = Object.values(Channels).filter((c) => !mainOnly.includes(c))
     expect(Object.keys(handlers).sort()).toEqual([...requestChannels].sort())
+    for (const channel of [Channels.tuningGet, Channels.tuningSet, Channels.tuningReset]) {
+      expect(requestChannels).toContain(channel)
+      expect(handlers[channel]).toBeTypeOf('function')
+    }
   })
 
   it('preload uses exactly the contract channel names', () => {

@@ -61,9 +61,9 @@ test('engine connects, projects persist across restarts, unbuilt sections are di
   await expect(page.getByTestId('recent-projects')).toContainText('Hex X')
 
   // Disabled roadmap sections are not links and do not navigate.
-  const analysis = page.getByTestId('nav-/analysis')
-  await expect(analysis).toHaveAttribute('aria-disabled', 'true')
-  await analysis.click({ force: true }) // force: Playwright treats aria-disabled as not clickable
+  const simulator = page.getByTestId('nav-/simulator')
+  await expect(simulator).toHaveAttribute('aria-disabled', 'true')
+  await simulator.click({ force: true }) // force: Playwright treats aria-disabled as not clickable
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible()
   expect(errors).toEqual([])
 

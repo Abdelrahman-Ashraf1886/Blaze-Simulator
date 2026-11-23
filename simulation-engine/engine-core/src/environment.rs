@@ -368,6 +368,10 @@ impl Placed {
         self.events.push(ContactEvent { part_id: self.part_ids[*part].clone(), with: object.label(), start_s, end_s });
     }
 
+    pub fn touching_ground(&self) -> bool {
+        self.open.keys().any(|(_, object)| matches!(object, Object::Ground))
+    }
+
     /// Every event so far, open ones with `end_s = None`, ordered by start time; and the number dropped.
     pub fn events(&self) -> (Vec<ContactEvent>, u64) {
         let mut all = self.events.clone();

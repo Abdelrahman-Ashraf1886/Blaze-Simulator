@@ -223,3 +223,25 @@ fn refuses_to_start_inside_the_ground_and_runs_deterministically() {
     };
     assert_eq!(run(), run());
 }
+
+#[test]
+fn open_ground_contact_survives_a_full_event_log() {
+    let mut placed = Placed {
+        objects: Vec::new(), part_ids: vec!["brick".into()], open: BTreeMap::new(),
+        events: Vec::new(), dropped: 0,
+    };
+    let ground = (0, Object::Ground);
+    let obstacle = (0, Object::Obstacle("box".into()));
+    for _ in 0..MAX_CONTACT_EVENTS {
+        placed.push(&ground, 0.0, Some(0.0));
+    }
+    placed.open.insert(obstacle, 0.0);
+    assert!(!placed.touching_ground());
+    placed.open.insert(ground.clone(), 0.0);
+    assert_eq!(placed.events().1, 2);
+    assert!(placed.touching_ground());
+    placed.open.remove(&ground);
+    placed.push(&ground, 0.0, Some(0.0));
+    assert_eq!(placed.dropped, 1);
+    assert!(!placed.touching_ground());
+}

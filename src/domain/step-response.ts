@@ -5,7 +5,8 @@
  * "Definitions of Transient-Response Specifications", p. 170: fractional rise,
  * peak, percent overshoot and entry into a band that is never subsequently left.
  * Section 5-8, p. 226 defines error as reference minus output and its steady-state
- * limit. Text available at https://www.ux.uis.no/~hirpa/1Courses/DMS6021/e-books/Modern%20control%20engineering-5th_edition-Ogata.pdf
+ * limit. (Section and page checked against the 5th edition text when this was
+ * written; re-check against your own copy if the edition differs.)
  *
  * D12 conventions: normalize by the commanded step (not an estimated asymptote),
  * use the largest directional peak in the window (Ogata uses the first peak),

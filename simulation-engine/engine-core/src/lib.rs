@@ -12,6 +12,7 @@
 
 pub mod aero;
 pub mod thrust_model;
+pub mod ground_effect;
 pub mod closed_loop;
 pub mod environment;
 pub mod flight;

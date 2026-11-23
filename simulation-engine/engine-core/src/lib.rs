@@ -16,6 +16,7 @@ pub mod environment;
 pub mod flight;
 pub mod math;
 pub mod propulsion;
+pub mod scenario;
 pub mod sim;
 pub mod vehicle;
 pub mod controller;

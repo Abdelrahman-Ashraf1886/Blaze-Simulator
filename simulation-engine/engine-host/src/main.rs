@@ -3,6 +3,7 @@
 mod engine;
 mod flight_session;
 mod protocol;
+mod scenario_run;
 
 use protocol::{parse_request, PROTOCOL_VERSION};
 use std::io::{self, BufRead, Write};

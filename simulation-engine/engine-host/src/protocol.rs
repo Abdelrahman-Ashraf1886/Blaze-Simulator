@@ -41,6 +41,12 @@ pub enum Command {
     },
     #[serde(rename = "flight.session.end")]
     FlightSessionEnd,
+    /// A scripted scenario on the loaded vehicle (4.9 part B), validated in scenario_run.
+    #[serde(rename = "scenario.run")]
+    ScenarioRun {
+        #[serde(flatten)]
+        params: serde_json::Map<String, Value>,
+    },
     /// Validates a `VehicleDefinition` and, if valid, makes it the vehicle
     /// that `sim.run` simulates. An invalid one clears the loaded vehicle.
     /// `propulsion` (optional, additive in 4.5) carries the per-motor
@@ -157,6 +163,12 @@ pub enum ErrorCode {
     CutoffRequired,
     /// `flight.session.step` before `flight.session.start`.
     NoSession,
+    /// `scenario.run` on a vehicle loaded without propulsion.
+    NoPropulsion,
+    /// `scenario.run` with a motor whose propeller data has no reference density (none is assumed).
+    ReferenceDensityRequired,
+    /// `scenario.run` with a scenario the engine refuses (invalid, too long, or not buildable for this vehicle).
+    InvalidScenario,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

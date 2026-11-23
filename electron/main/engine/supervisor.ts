@@ -15,6 +15,8 @@ import {
   type FlightSessionStartResult,
   type FlightSessionStepParams,
   type FlightSessionStepResult,
+  ScenarioRunParamsSchema,
+  ScenarioRunResultSchema,
   SimRunParamsSchema,
   SimRunResultSchema,
   BodyDragSchema,
@@ -26,6 +28,8 @@ import {
   type BodyDrag,
   type HelloResult,
   type PropulsionDefinition,
+  type ScenarioRunParams,
+  type ScenarioRunResult,
   type SimRunParams,
   type SimRunResult,
   type VehicleDefinition,
@@ -177,6 +181,15 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
 
   async endFlightSession(): Promise<FlightSessionEndResult> {
     return FlightSessionEndResultSchema.parse(await this.request({ type: 'flight.session.end' }))
+  }
+
+  /**
+   * A scripted scenario (4.9 part B) on the loaded vehicle, which needs propulsion. The engine bounds it
+   * (60 s, or 10 s with a ground), so the default timeout is enough.
+   */
+  async runScenario(params: ScenarioRunParams): Promise<ScenarioRunResult> {
+    const checked = ScenarioRunParamsSchema.parse(params)
+    return ScenarioRunResultSchema.parse(await this.request({ type: 'scenario.run', ...checked }))
   }
 
   private launch(state: 'starting' | 'restarting'): void {

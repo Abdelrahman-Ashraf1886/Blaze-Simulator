@@ -9,7 +9,7 @@
 
 import type { Component, ComponentCategory, ComponentInput, SpecValue } from './component-fields'
 export type * from './component-fields'
-import type { FlightSessionEndResult, FlightSessionStartResult, FlightSessionStepParams, FlightSessionStepResult } from '../main/engine/protocol'
+import type { FlightSessionEndResult, FlightSessionStartResult, FlightSessionStepParams, FlightSessionStepResult, ScenarioConfigParams, ScenarioRequest, ScenarioRunResult } from '../main/engine/protocol'
 
 // ---- Domain types -----------------------------------------------------------
 
@@ -370,6 +370,25 @@ export type FlightStepInput = FlightSessionStepParams
 export type FlightStepResult = FlightSessionStepResult
 export type FlightEndResult = FlightSessionEndResult
 
+/**
+ * A scripted scenario (4.9 part B) flown on the build. As for a flight, the renderer builds the vehicle, propulsion
+ * and aero payloads from the assembly; main validates all of it with the protocol schemas, loads the vehicle and
+ * runs the scenario. Nothing is filled in: the air density, the cut-off and a built-in's parameters are the caller's.
+ */
+export interface ScenarioRunInput {
+  /** The pinned VehicleDefinition (src/domain/mass.ts). */
+  vehicle: unknown
+  /** The motors' coefficients and the battery (src/domain/propulsion.ts `propulsionDefinition`). */
+  propulsion: unknown
+  /** Body drag: per-axis C_d (entered) and projected areas (derived, src/domain/aero.ts). */
+  aero: unknown
+  /** A built-in with its parameters, or a full scenario. */
+  scenario: ScenarioRequest
+  /** Air density, the user's cut-off, gain overrides, optionally a ground and its start position. */
+  config: ScenarioConfigParams
+}
+export type ScenarioRunOutput = ScenarioRunResult
+
 /** Id an allowed pair uses for the parametric frame (its plate and arms are one part). */
 export const FRAME_PART_ID = 'frame'
 
@@ -461,6 +480,8 @@ export const Channels = {
   /** Advances the session N fixed 1 ms steps with the setpoint held. */
   engineFlightStep: 'engine:flightStep',
   engineFlightEnd: 'engine:flightEnd',
+  /** Loads the vehicle and flies a scripted scenario; answers with its report. */
+  engineScenarioRun: 'engine:scenarioRun',
 } as const
 
 /** Shape exposed on `window.api` by the preload script. */
@@ -509,6 +530,7 @@ export interface DesktopApi {
     flightStart(input: FlightStartInput): Promise<IpcResult<FlightStartResult>>
     flightStep(input: FlightStepInput): Promise<IpcResult<FlightStepResult>>
     flightEnd(): Promise<IpcResult<FlightEndResult>>
+    scenarioRun(input: ScenarioRunInput): Promise<IpcResult<ScenarioRunOutput>>
   }
   /** True when main was started for end-to-end tests (BLAZE_UAV_TEST_HOOKS=1); never in normal use. */
   testHooks: boolean

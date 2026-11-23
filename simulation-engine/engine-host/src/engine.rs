@@ -158,6 +158,7 @@ impl Engine {
             ),
             Command::FlightSessionStep { params } => (crate::flight_session::step(id, params, &mut self.session), false),
             Command::FlightSessionEnd => (crate::flight_session::end(id, &mut self.session), false),
+            Command::ScenarioRun { params } => (crate::scenario_run::handle(id, params, self.vehicle.as_ref(), self.propulsion.as_ref(), self.aero), false),
             Command::VehicleLoad { vehicle, propulsion, aero } => (self.load(id, vehicle, propulsion, aero), false),
             Command::SimRun {
                 duration_s,

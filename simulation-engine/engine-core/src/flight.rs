@@ -124,6 +124,36 @@ fn arr(v: Vector) -> [f64; 3] {
     [v.x, v.y, v.z]
 }
 
+/// Why `Flight::scale_to_air_density` refused. Nothing changed when it does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScaleToAirDensityError {
+    /// A motor's propulsion data has no reference density, and none is assumed.
+    MissingReferenceDensity { part_id: String },
+    /// The air density is not a positive finite number, kg/m³.
+    InvalidDensity(f64),
+}
+
+impl std::fmt::Display for ScaleToAirDensityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingReferenceDensity { part_id } => write!(
+                f,
+                "motor \"{part_id}\" has no reference density (referenceDensityKgM3): the air density its thrust and torque data was measured or computed at"
+            ),
+            Self::InvalidDensity(air) => write!(f, "the air density must be a positive number (got {air})"),
+        }
+    }
+}
+
+impl std::error::Error for ScaleToAirDensityError {}
+
+/// Callers that return `String` (the scenario builders) keep their `?`; the text is the same.
+impl From<ScaleToAirDensityError> for String {
+    fn from(e: ScaleToAirDensityError) -> String {
+        e.to_string()
+    }
+}
+
 #[derive(Debug)]
 pub struct Flight {
     motors: Vec<FlightMotor>,
@@ -193,20 +223,15 @@ impl Flight {
     /// every motor must have its reference density: none is assumed. Scaling is from the
     /// loaded coefficients, so calling it again replaces the scaling (k = k_base · ρ/ρ_ref)
     /// instead of compounding it. Nothing changes if it fails.
-    pub fn scale_to_air_density(&mut self, air_kg_m3: f64) -> Result<(), String> {
+    pub fn scale_to_air_density(&mut self, air_kg_m3: f64) -> Result<(), ScaleToAirDensityError> {
         if !(air_kg_m3.is_finite() && air_kg_m3 > 0.0) {
-            return Err(format!("the air density must be a positive number (got {air_kg_m3})"));
+            return Err(ScaleToAirDensityError::InvalidDensity(air_kg_m3));
         }
         let mut ratios = Vec::with_capacity(self.propulsion.motors.len());
         for (m, def) in self.propulsion.motors.iter().zip(&self.propulsion.definition.motors) {
             match m.reference_density {
                 Some(rho) if rho.is_finite() && rho > 0.0 => ratios.push(air_kg_m3 / rho),
-                _ => {
-                    return Err(format!(
-                        "motor \"{}\" has no reference density (referenceDensityKgM3): the air density its thrust and torque data was measured or computed at",
-                        def.part_id
-                    ))
-                }
+                _ => return Err(ScaleToAirDensityError::MissingReferenceDensity { part_id: def.part_id.clone() }),
             }
         }
         for ((m, (k_thrust, k_torque)), ratio) in self.propulsion.motors.iter_mut().zip(&self.base_coefficients).zip(ratios) {

@@ -146,7 +146,7 @@ pub fn start(
         CutoffRequest::ChargeMah(q) => Cutoff::ChargeMah(q),
     };
     if let Err(e) = flight.scale_to_air_density(rho) {
-        return bad(e);
+        return bad(e.to_string());
     }
     if let Err(e) = flight.set_cutoff(cutoff) {
         return bad(format!("cutoff: {e}"));

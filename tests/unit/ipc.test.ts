@@ -74,12 +74,13 @@ describe('IPC handlers', () => {
     // the import and the image save need native file dialogs, so main binds them
     // (their logic is tested in assets.test.ts and screenshot.test.ts); the drop test needs the
     // engine supervisor, so main binds it (drop-test.ts, tested in environment and supervisor tests);
-    // so do the live flight channels (flight-session.ts, tested in flight-live.test.ts).
+    // so do the live flight channels (flight-session.ts, tested in flight-live.test.ts), and the scenario run (scenario-run.ts, tested in scenario-protocol.test.ts).
     const mainOnly: string[] = [
       Channels.engineDropTest,
       Channels.engineFlightStart,
       Channels.engineFlightStep,
       Channels.engineFlightEnd,
+      Channels.engineScenarioRun,
       Channels.engineStatusChanged,
       Channels.assemblySaveSync,
       Channels.assetsImport,

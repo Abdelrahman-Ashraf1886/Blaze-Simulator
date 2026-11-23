@@ -384,16 +384,6 @@ fn steps_for(t: f64) -> u64 {
     (if (q - r).abs() < 1e-9 { r } else { q.ceil() }) as u64
 }
 
-/// The two air densities of a scenario (no defaults, `Flight::scale_to_air_density`).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Air {
-    /// Density of the air the flight is in, kg/m³ (also the body drag's ρ).
-    pub air_kg_m3: f64,
-    /// Density the motor data (k_T, k_Q) were fitted at: the user's entry where
-    /// the data do not state it.
-    pub reference_kg_m3: f64,
-}
-
 /// A ground and obstacles to start in (4.4), with the body origin's start
 /// position (identity attitude, at rest). Without it the run is in free space,
 /// starting at the world origin.
@@ -404,34 +394,31 @@ pub struct Ground {
 }
 
 /// What a scenario runs with, besides the vehicle: the controller gains, the
-/// air, an optional battery cut-off the user chose (none is assumed) and an
+/// air density, an optional battery cut-off the user chose (none is assumed) and an
 /// optional ground. Fixed 1 ms step; perfect estimate. Setpoint changes apply
 /// at the first step starting at or after `from_s`; gains and geometry are
 /// never recalibrated for modified mass properties.
 #[derive(Debug, Clone)]
 pub struct ScenarioConfig {
     pub gains: Gains,
-    pub air: Air,
+    /// Density of the air the flight is in, kg/m³ (also the body drag's ρ). The
+    /// density each motor's data was fitted at is the motor's own
+    /// (`MotorPropulsion::reference_density_kg_m3`): none is assumed here.
+    pub air_density_kg_m3: f64,
     pub cutoff: Option<Cutoff>,
     pub ground: Option<Ground>,
 }
 
-fn check_air(air: Air) -> Result<(), String> {
-    for (name, rho) in [("reference density", air.reference_kg_m3), ("air density", air.air_kg_m3)] {
-        if !positive(rho) {
-            return Err(format!("the {name} must be a positive number (got {rho})"));
-        }
-    }
-    Ok(())
-}
-
-/// The nominal propulsion scaled from its reference density to the flight's
-/// (the same scaling `run` applies to the plant), for predictions.
-pub fn scaled_propulsion(propulsion: &Propulsion, air: Air) -> Result<Propulsion, String> {
-    check_air(air)?;
-    let ratio = air.air_kg_m3 / air.reference_kg_m3;
+/// The propulsion scaled from each motor's reference density to the flight's
+/// air density (T = k_T ω² and Q = k_Q ω² both scale as ρ/ρ_ref), as `run`
+/// scales the plant, for predictions. A motor without a reference density (or an
+/// invalid air density) is refused with the engine's own error, never defaulted:
+/// `Flight::scale_to_air_density` is asked first.
+pub fn scaled_propulsion(vehicle: &Vehicle, propulsion: &Propulsion, air_kg_m3: f64) -> Result<Propulsion, String> {
+    Flight::new(vehicle, propulsion.clone(), None, None)?.scale_to_air_density(air_kg_m3)?;
     let mut p = propulsion.clone();
     for m in &mut p.motors {
+        let ratio = air_kg_m3 / m.reference_density.expect("checked by scale_to_air_density");
         m.k_thrust *= ratio;
         m.k_torque *= ratio;
     }
@@ -439,7 +426,7 @@ pub fn scaled_propulsion(propulsion: &Propulsion, air: Air) -> Result<Propulsion
 }
 
 /// Runs a scenario on `vehicle` (nominal) with `propulsion` (the motor and
-/// battery data at the reference density) and optional body `drag`.
+/// battery data, each motor at its own reference density) and optional body `drag`.
 pub fn run(
     vehicle: &Vehicle,
     propulsion: Propulsion,
@@ -449,11 +436,10 @@ pub fn run(
 ) -> Result<ScenarioReport, String> {
     scenario.validate(propulsion.motors.len())?;
     config.gains.validate()?;
-    check_air(config.air)?;
     let plant = modified_vehicle(vehicle, scenario)?;
     let yaw_ratio = propulsion.yaw_ratio();
-    let mut flight = Flight::new(&plant, propulsion, drag, Some(config.air.air_kg_m3))?;
-    flight.scale_to_air_density(config.air.reference_kg_m3, config.air.air_kg_m3)?;
+    let mut flight = Flight::new(&plant, propulsion, drag, Some(config.air_density_kg_m3))?;
+    flight.scale_to_air_density(config.air_density_kg_m3)?;
     if let Some(cutoff) = config.cutoff {
         flight.set_cutoff(cutoff)?;
     }

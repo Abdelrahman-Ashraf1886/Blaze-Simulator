@@ -19,7 +19,8 @@ fn validate_models(v: &Vehicle, p: &Propulsion) -> Result<(), String> {
     Ok(())
 }
 /// Equal-command steady total thrust, including mapped duty and shared battery
-/// sag. `p` is the propulsion at the flight's air density (`scaled_propulsion`). Bisection solves V + Rint sum(e Im(steady_omega(e V))) = Voc.
+/// sag. `p` is the propulsion at the flight's air density (`scaled_propulsion`).
+/// Bisection solves V + Rint sum(e Im(steady_omega(e V))) = Voc.
 pub fn steady_thrust(v: &Vehicle, p: &Propulsion, throttle: f64) -> Result<f64, String> {
     validate_models(v, p)?;
     if !throttle.is_finite() || !(0.0..=1.0).contains(&throttle) {
@@ -117,7 +118,7 @@ fn throttle_check(s: &mut Scenario, v: &Vehicle, p: &Propulsion, mass: f64) -> R
 }
 /// Centred, equal-command hover. Refuses a nominal CoM off the thrust centre.
 pub fn balanced_hover(v: &Vehicle, p: &Propulsion, config: &ScenarioConfig) -> Result<Scenario, String> {
-    let p = &scaled_propulsion(p, config.air)?;
+    let p = &scaled_propulsion(v, p, config.air_density_kg_m3)?;
     let mut s = base("balanced_hover", v);
     let centre: [f64; 2] = std::array::from_fn(|i| {
         v.definition
@@ -139,7 +140,7 @@ pub fn payload(v: &Vehicle, p: &Propulsion, config: &ScenarioConfig, mass_kg: f6
     if !positive(mass_kg) {
         return Err("payload mass must be finite and positive".into());
     }
-    let p = &scaled_propulsion(p, config.air)?;
+    let p = &scaled_propulsion(v, p, config.air_density_kg_m3)?;
     let mut s = base("payload", v);
     let mut id = "scenario:payload".to_string();
     while v.definition.parts.iter().any(|part| part.part_id == id) {
@@ -157,7 +158,7 @@ pub fn payload(v: &Vehicle, p: &Propulsion, config: &ScenarioConfig, mass_kg: f6
 /// Weight is twice max(Voc, full-duty, zero-sag) thrust, a conservative upper
 /// bound even during spin-up. Thus upward acceleration is impossible at rest.
 pub fn overweight_payload(v: &Vehicle, p: &Propulsion, config: &ScenarioConfig) -> Result<Scenario, String> {
-    let p = &scaled_propulsion(p, config.air)?;
+    let p = &scaled_propulsion(v, p, config.air_density_kg_m3)?;
     validate_models(v, p)?;
     let upper = p
         .motors
@@ -196,7 +197,7 @@ pub fn overweight_payload(v: &Vehicle, p: &Propulsion, config: &ScenarioConfig) 
 /// Convert each F to omega, Im and Vm, solve V²-Voc V+Rint sum(Vm Im)=0,
 /// invert the duty map; normalized B times these commands predicts PID trim.
 pub fn com_offset(v: &Vehicle, p: &Propulsion, config: &ScenarioConfig, offset_m: f64) -> Result<Scenario, String> {
-    let p = &scaled_propulsion(p, config.air)?;
+    let p = &scaled_propulsion(v, p, config.air_density_kg_m3)?;
     validate_models(v, p)?;
     if !offset_m.is_finite() {
         return Err("CoM offset must be finite".into());
@@ -333,7 +334,7 @@ pub fn com_offset(v: &Vehicle, p: &Propulsion, config: &ScenarioConfig, offset_m
 /// the support-polygon violation, not a linearized motor model, proves failure.
 /// 30deg (pi/6) marks loss of attitude, matching flight area8's ~29deg test.
 pub fn com_offset_beyond_authority(v: &Vehicle, p: &Propulsion, config: &ScenarioConfig) -> Result<Scenario, String> {
-    let p = &scaled_propulsion(p, config.air)?;
+    let p = &scaled_propulsion(v, p, config.air_density_kg_m3)?;
     let u = predicted_hover_throttle(v, p, v.totals.mass_kg)?;
     let arm = v
         .definition

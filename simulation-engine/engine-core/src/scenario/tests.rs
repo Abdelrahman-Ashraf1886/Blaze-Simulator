@@ -20,7 +20,15 @@ use crate::{
 
 const A: f64 = 0.15;
 
+/// Each motor's data are taken to be fitted at the standard sea-level density
+/// (its `referenceDensityKgM3` entry, as the 4.8 flight scaling requires).
+const REF_RHO: f64 = 1.225;
+
 fn quad() -> (Vehicle, Propulsion) {
+    quad_with(Some(REF_RHO))
+}
+
+fn quad_with(reference_density: Option<f64>) -> (Vehicle, Propulsion) {
     let mut def = with_totals(vec![box_part("body", 1.0, [0.0; 3], [0.01, 0.01, 0.02, 0.0, 0.0, 0.0])]);
     let m = |i: usize, x: f64, y: f64, s: Spin| MotorBody {
         part_id: format!("m{i}"),
@@ -44,6 +52,7 @@ fn quad() -> (Vehicle, Propulsion) {
                     torque_coef_nms2: 1e-7,
                     inertia_kg_m2: 2e-5,
                     throttle_map: None,
+                    reference_density_kg_m3: reference_density,
                 })
                 .collect(),
             battery: BatteryParams { open_circuit_voltage_v: 10.0, internal_resistance_ohm: 0.01, capacity_c: 18_720.0 },
@@ -56,11 +65,11 @@ fn quad() -> (Vehicle, Propulsion) {
 
 const DRAG: BodyDrag = BodyDrag { cd_body: [1.0; 3], area_m2: [0.01; 3] };
 
-/// The motor data are taken to be fitted at the flight's density: ρ = ρ_ref.
+/// Flying at the motors' own reference density: ρ = ρ_ref, ratio 1.
 fn config() -> ScenarioConfig {
     ScenarioConfig {
         gains: Gains::px4_v1_13_3(),
-        air: Air { air_kg_m3: 1.225, reference_kg_m3: 1.225 },
+        air_density_kg_m3: REF_RHO,
         cutoff: None,
         ground: None,
     }
@@ -259,12 +268,18 @@ fn invalid_inputs_are_errors_not_panics() {
         run(&v, p.clone(), Some(DRAG), &c, &base).unwrap_err()
     };
     for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-        assert!(with(&|c| c.air.air_kg_m3 = bad).contains("density"));
-        assert!(with(&|c| c.air.reference_kg_m3 = bad).contains("density"));
+        assert!(with(&|c| c.air_density_kg_m3 = bad).to_lowercase().contains("density"));
         assert!(with(&|c| c.cutoff = Some(Cutoff::VoltageV(bad))).contains("cut-off"));
-        assert!(balanced_hover(&v, &p, &ScenarioConfig { air: Air { air_kg_m3: bad, reference_kg_m3: 1.225 }, ..config() }).is_err());
+        assert!(balanced_hover(&v, &p, &ScenarioConfig { air_density_kg_m3: bad, ..config() }).is_err());
     }
     assert!(with(&|c| c.gains.mc_roll_p = -1.0).contains("MC_ROLL_P"));
+    // A motor without a reference density is refused with the engine's error,
+    // by the run and by every built-in (no default is assumed).
+    let (v0, p0) = quad_with(None);
+    let e = run(&v0, p0.clone(), Some(DRAG), &config(), &base).unwrap_err();
+    assert!(e.contains("reference density") && e.contains("m1"), "{e}");
+    assert!(balanced_hover(&v0, &p0, &config()).unwrap_err().contains("reference density"));
+    assert!(overweight_payload(&v0, &p0, &config()).is_err());
     // A start inside the ground is refused, naming the part.
     let ground = Ground {
         environment: Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), obstacles: vec![] },
@@ -340,17 +355,17 @@ fn a_cutoff_ends_the_run_and_fails_acceptance() {
     assert!(!r.passed);
 }
 
-/// Thinner air lowers k_T and k_Q by ρ/ρ_ref, so the same weight needs a higher
+/// Thinner air lowers k_T and k_Q by ρ/ρ_ref (each motor's own), so the same weight needs a higher
 /// throttle: the builtin's prediction uses the scaled propulsion and the run
 /// agrees, while the unscaled prediction would not. ρ = 0.9, ρ_ref = 1.225.
 #[test]
 fn the_air_density_scales_the_prediction_and_the_flight() {
     let (v, p) = quad();
-    let c = ScenarioConfig { air: Air { air_kg_m3: 0.9, reference_kg_m3: 1.225 }, ..config() };
+    let c = ScenarioConfig { air_density_kg_m3: 0.9, ..config() };
     let s = balanced_hover(&v, &p, &c).unwrap();
     let r = execute_with(&v, &p, &c, &s);
     assert!(r.passed, "{:#?}", r.checks);
-    let thin = predicted_hover_throttle(&v, &scaled_propulsion(&p, c.air).unwrap(), 1.0).unwrap();
+    let thin = predicted_hover_throttle(&v, &scaled_propulsion(&v, &p, c.air_density_kg_m3).unwrap(), 1.0).unwrap();
     let sea = predicted_hover_throttle(&v, &p, 1.0).unwrap();
     assert!(thin > sea + 0.02, "{thin} vs {sea}");
     let h = check(&r, |c| matches!(c, Check::HoverThrottle { .. }));
@@ -390,4 +405,19 @@ fn a_scenario_can_start_in_an_environment() {
     let r = execute_with(&v, &p, &c, &s);
     assert_eq!(r.elapsed_s, 2.0);
     assert!(r.checks[0].passed, "{:?}", r.checks[0]);
+}
+
+/// Only the ratio ρ_air/ρ_ref reaches the flight: the same ratio from a different
+/// reference density (every motor 1.0 at air 1.0, against 1.225 at 1.225, ratio 1)
+/// gives a bit-identical run (without body drag, which uses ρ_air itself).
+#[test]
+fn only_the_ratio_to_the_motors_reference_density_matters() {
+    let (v, p) = quad();
+    let (v1, p1) = quad_with(Some(1.0));
+    let mut s = balanced_hover(&v, &p, &config()).unwrap();
+    s.duration_s = 1.0;
+    s.checks.clear();
+    let a = run(&v, p.clone(), None, &config(), &s).unwrap();
+    let b = run(&v1, p1, None, &ScenarioConfig { air_density_kg_m3: 1.0, ..config() }, &s).unwrap();
+    assert_eq!(a.final_state_hash, b.final_state_hash);
 }

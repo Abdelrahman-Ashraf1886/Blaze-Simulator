@@ -37,6 +37,7 @@ const api: DesktopApi = {
     flightStart: (input) => ipcRenderer.invoke('engine:flightStart', input),
     flightStep: (input) => ipcRenderer.invoke('engine:flightStep', input),
     flightEnd: () => ipcRenderer.invoke('engine:flightEnd'),
+    scenarioRun: (input) => ipcRenderer.invoke('engine:scenarioRun', input),
   },
   // Main adds this argument only when started for end-to-end tests (BLAZE_UAV_TEST_HOOKS=1).
   testHooks: process.argv.includes('--blaze-test-hooks'),

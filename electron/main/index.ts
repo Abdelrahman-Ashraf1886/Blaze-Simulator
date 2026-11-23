@@ -14,6 +14,7 @@ import { openDatabase, schemaVersion, type Db } from './db/database'
 import { createRepositories } from './db/repositories'
 import { dropTest } from './engine/drop-test'
 import { flightEnd, flightStart, flightStep } from './engine/flight-session'
+import { scenarioRun } from './engine/scenario-run'
 import { EngineSupervisor } from './engine/supervisor'
 
 const APP_ID = 'com.blazeuav.app'
@@ -319,6 +320,7 @@ function start(): void {
   ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => flightStart(engine!, payload))
   ipcMain.handle(Channels.engineFlightStep, (_event, payload: unknown) => flightStep(engine!, payload))
   ipcMain.handle(Channels.engineFlightEnd, () => flightEnd(engine!))
+  ipcMain.handle(Channels.engineScenarioRun, (_event, payload: unknown) => scenarioRun(engine!, payload))
 
   engine.on('status', (status) => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(Channels.engineStatusChanged, status)

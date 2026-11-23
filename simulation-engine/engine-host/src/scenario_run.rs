@@ -30,11 +30,11 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 /// Longest scenario, s of simulated time: 60 000 steps of 1 ms. Free-space steps cost
-/// about 7 µs (DEVLOG 4.3), so this stays well inside the supervisor's 3 s; the longest
-/// built-in is 20 s.
+/// about 7 µs (DEVLOG 4.3): a 60 s scenario of the 4.7 test quad took 0.41 s in a release
+/// build on the development machine (a 20 s built-in 0.14 s), well inside the supervisor's 3 s.
 pub const MAX_SCENARIO_S: f64 = 60.0;
 /// Longest scenario started on a ground, s: a step with contacts costs up to ≈0.2 ms
-/// (DEVLOG 4.4), so 10 000 steps stay near 2 s.
+/// (DEVLOG 4.4), so 10 000 steps stay near 2 s (the test quad on a box ground: 10 s in 0.25 s).
 pub const MAX_SCENARIO_WITH_GROUND_S: f64 = 10.0;
 
 #[derive(Deserialize)]

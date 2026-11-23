@@ -158,6 +158,7 @@ export type EngineCommand =
   | ({ type: 'flight.session.start' } & FlightSessionStartParams)
   | ({ type: 'flight.session.step' } & FlightSessionStepParams)
   | { type: 'flight.session.end' }
+  | ({ type: 'scenario.run' } & ScenarioRunParams)
 
 // ---------------------------------------------------------------------------
 // Results
@@ -226,7 +227,7 @@ export const SimRunResultSchema = z.strictObject({
 export type SimRunResult = z.infer<typeof SimRunResultSchema>
 
 export interface EngineErrorBody {
-  code: 'INVALID_JSON' | 'INVALID_REQUEST' | 'INVALID_PARAMS' | 'NO_VEHICLE' | 'VEHICLE_INCOMPLETE' | 'ENVIRONMENT_INCOMPLETE' | 'RUN_TOO_LONG' | 'CUTOFF_REQUIRED' | 'NO_SESSION'
+  code: 'INVALID_JSON' | 'INVALID_REQUEST' | 'INVALID_PARAMS' | 'NO_VEHICLE' | 'VEHICLE_INCOMPLETE' | 'ENVIRONMENT_INCOMPLETE' | 'RUN_TOO_LONG' | 'CUTOFF_REQUIRED' | 'NO_SESSION' | 'NO_PROPULSION' | 'REFERENCE_DENSITY_REQUIRED' | 'INVALID_SCENARIO'
   message: string
 }
 
@@ -330,3 +331,124 @@ export type FlightSessionStepResult = z.infer<typeof FlightSessionStepResultSche
 
 export const FlightSessionEndResultSchema = z.strictObject({ ended: z.boolean() })
 export type FlightSessionEndResult = z.infer<typeof FlightSessionEndResultSchema>
+
+// ---------------------------------------------------------------------------
+// Scripted scenarios (4.9 part B): `scenario.run` flies one of engine-core's scenarios (`scenario.rs`) on the
+// loaded vehicle, which needs propulsion. The scenario is a built-in with its parameters, built for this
+// vehicle by the engine, or a full scenario. The config carries what a scenario does not own: the air density
+// (from the flight conditions), the battery cut-off (the user's entry; no default), gain overrides, and
+// optionally a ground with its start position (absent = free space from the origin). Longest scenario: 60 s,
+// or 10 s with a ground (engine-host `scenario_run.rs`).
+
+export const MAX_SCENARIO_S = 60
+export const MAX_SCENARIO_WITH_GROUND_S = 10
+
+export const BUILTIN_SCENARIO_NAMES = ['balanced_hover', 'payload', 'overweight_payload', 'com_offset', 'com_offset_beyond_authority'] as const
+export type BuiltinScenarioName = (typeof BUILTIN_SCENARIO_NAMES)[number]
+
+const afterS = num.refine((v) => v >= 0, 'cannot be negative')
+/** A check of a scenario, camelCase as engine-core serialises it. */
+export const ScenarioCheckSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('altitude'), afterS, toleranceM: num }),
+  z.strictObject({ type: z.literal('attitude'), afterS, maxDeg: num }),
+  z.strictObject({ type: z.literal('noSustainedSaturation'), afterS, maxDurationS: num }),
+  z.strictObject({ type: z.literal('saturationObserved'), afterS }),
+  z.strictObject({ type: z.literal('attitudeLost'), afterS, aboveDeg: num }),
+  z.strictObject({ type: z.literal('cannotClimb'), afterS, minThrottle: num }),
+  z.strictObject({ type: z.literal('hoverThrottle'), afterS, min: num, max: num }),
+  z.strictObject({ type: z.literal('rateTrim'), afterS, axis: z.number().int().min(0).max(2), expected: num, tolerance: num }),
+  z.strictObject({ type: z.literal('thrustBalance'), afterS, weights: z.array(num), expectedN: num, toleranceN: num }),
+])
+export type ScenarioCheck = z.infer<typeof ScenarioCheckSchema>
+
+export const ScenarioSchema = z.strictObject({
+  name: z.string().min(1),
+  durationS: num,
+  modifications: z.array(
+    z.discriminatedUnion('type', [
+      z.strictObject({ type: z.literal('payload'), partId: z.string().min(1), massKg: num, positionM: vec3, boxSizeM: vec3.nullable().optional() }),
+      z.strictObject({ type: z.literal('shiftPart'), partId: z.string().min(1), deltaM: vec3 }),
+    ]),
+  ),
+  script: z.array(
+    z.strictObject({
+      fromS: num,
+      attitude: z.discriminatedUnion('type', [
+        z.strictObject({ type: z.literal('quaternion'), xyzw: quat }),
+        z.strictObject({ type: z.literal('euler'), roll: num, pitch: num, yaw: num }),
+      ]),
+      yawRateRadps: num,
+      zM: num.nullable().optional(),
+      zVelocityMps: num,
+    }),
+  ),
+  checks: z.array(ScenarioCheckSchema),
+})
+export type Scenario = z.infer<typeof ScenarioSchema>
+
+export const ScenarioRequestSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('builtin'),
+    name: z.enum(BUILTIN_SCENARIO_NAMES),
+    /** `payload` only: the mass added at the CoM, kg (the user's entry). */
+    massKg: positive.optional(),
+    /** `com_offset` only: the CoM's displacement along +x, m (the user's entry). */
+    offsetM: num.optional(),
+  }),
+  z.strictObject({ type: z.literal('custom'), scenario: ScenarioSchema }),
+])
+export type ScenarioRequest = z.infer<typeof ScenarioRequestSchema>
+
+export const ScenarioConfigSchema = z.strictObject({
+  /** ISA density at the user's altitude (src/domain/atmosphere.ts), kg/m³. */
+  airDensityKgM3: positive,
+  /** The user's choice; no default. */
+  cutoff: z.discriminatedUnion('type', [
+    z.strictObject({ type: z.literal('voltageV'), value: positive }),
+    z.strictObject({ type: z.literal('chargeMah'), value: positive }),
+  ]),
+  gains: ControllerRequestSchema.shape.gains,
+  environment: EnvironmentSchema.optional(),
+  /** With an environment: the body origin at the start, world frame. */
+  startPositionM: vec3.optional(),
+})
+export type ScenarioConfigParams = z.infer<typeof ScenarioConfigSchema>
+
+export const ScenarioRunParamsSchema = z.strictObject({ scenario: ScenarioRequestSchema, config: ScenarioConfigSchema })
+export type ScenarioRunParams = z.infer<typeof ScenarioRunParamsSchema>
+
+export const ScenarioReportSchema = z.strictObject({
+  name: z.string(),
+  passed: z.boolean(),
+  checks: z.array(
+    z.strictObject({
+      check: ScenarioCheckSchema,
+      /** null = the check's observation window was never reached. */
+      measured: num.nullable(),
+      limits: z.tuple([num, num]),
+      passed: z.boolean(),
+      samples: z.number().int().nonnegative(),
+    }),
+  ),
+  elapsedS: num,
+  maxAttitudeErrorDeg: num,
+  finalAltitudeErrorM: num.nullable(),
+  meanThrottle: z.array(num),
+  maxThrottle: z.array(num),
+  firstThrottle: z.array(num),
+  saturatedFraction: num,
+  chargeUsedMah: num,
+  endReason: z.enum(['duration', 'voltageCutoff', 'chargeCutoff']),
+  /** FNV-1a of the rigid body, rotor speeds and charge used; 16 hex digits. */
+  finalStateHash: z.string().regex(/^[0-9a-f]{16}$/),
+})
+export type ScenarioReport = z.infer<typeof ScenarioReportSchema>
+
+export const ScenarioRunResultSchema = z.strictObject({
+  /** What was flown: the built-in as built for this vehicle (its derived values), or the scenario given. */
+  scenario: ScenarioSchema,
+  report: ScenarioReportSchema,
+  /** The report's `finalStateHash`. */
+  stateHash: z.string().regex(/^[0-9a-f]{16}$/),
+})
+export type ScenarioRunResult = z.infer<typeof ScenarioRunResultSchema>

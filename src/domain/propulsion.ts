@@ -431,7 +431,22 @@ export interface Validation {
   mapIndependent: boolean
 }
 
+/**
+ * The air density the pair's k_T and k_Q data was measured or computed at. A property of the data's source,
+ * never assumed: a value entered or stated on the table's component (field `referenceDensity`, by the
+ * source, a catalog fill or the user), else the one density the table's condition text names (APC's
+ * "sea-level Standard Atmosphere, 1.225 kg/m³", cited from its FAQ in the seed), else missing.
+ */
+export interface ReferenceDensity {
+  kgM3: number
+  from: 'field' | 'condition'
+  /** What the value comes from, to show with it: the component's name, or the condition text verbatim. */
+  source: string
+}
+
 export interface PairFit {
+  /** Null when no source states the density: it is then the user's entry for the table's component. */
+  referenceDensity: ReferenceDensity | null
   origin: DataOrigin
   /** In-sample fit. */
   kT: SquareLawFit
@@ -540,6 +555,25 @@ function validate(
  * neither component has data for the pair: k_T is then a user input.
  */
 export function fitPair(motor: Component, prop: Component, supplyVoltage: number | null = null): PairFit | null {
+  const fit = fitPairData(motor, prop, supplyVoltage)
+  if (!fit) return null
+  const owner = fit.origin.kind === 'motor-table' ? motor : prop
+  return { ...fit, referenceDensity: referenceDensity(fit.origin, owner) }
+}
+
+/** Densities named in a table condition, as in "1.225 kg/m³" or "1.2 kg/m3". */
+const DENSITY_IN_TEXT = /(\d+(?:[.,]\d+)?)\s*kg\s*\/\s*m(?:³|3)/gi
+
+/** The reference density of a table: the owner component's field, else the single density its condition names. */
+export function referenceDensity(origin: DataOrigin, owner: Component): ReferenceDensity | null {
+  const stated = si(owner, 'referenceDensity')
+  if (stated !== null && stated > 0) return { kgM3: stated, from: 'field', source: owner.name }
+  const named = [...new Set([...(origin.condition ?? '').matchAll(DENSITY_IN_TEXT)].map((m) => Number(m[1]!.replace(',', '.'))))]
+  if (named.length === 1 && named[0]! > 0) return { kgM3: named[0]!, from: 'condition', source: origin.condition! }
+  return null
+}
+
+function fitPairData(motor: Component, prop: Component, supplyVoltage: number | null): Omit<PairFit, 'referenceDensity'> | null {
   const elec = motorElectrical(motor)
   const mt = motorTableRows(motor, prop)
   const motorMap = benchThrottleMap(motor) ?? IDEAL_MAP
@@ -870,6 +904,16 @@ export function readyToFly(input: ReadyInput): ReadyItem[] {
           link: { to: 'component', componentId: fit.origin.componentId, field: fit.origin.kind === 'motor-table' ? 'thrustTable' : 'performanceTable' },
         })
       }
+      if (fit && !fit.referenceDensity) {
+        const owner = fit.origin.kind === 'motor-table' ? mc : pc
+        add({
+          id: `reference-density:${fit.origin.componentId}`,
+          label: `Air density of the ${fit.origin.kind === 'motor-table' ? 'test data' : 'performance data'} of ${owner.name}`,
+          detail: `${owner.name}'s k_T and k_Q come from data taken at one air density, and its condition text names none. The flight scales thrust and torque by its own air density relative to it: state it from the source, or enter yours (for APC data it is 1.225 kg/m³).`,
+          link: { to: 'component', componentId: fit.origin.componentId, field: 'referenceDensity' },
+          parts: [{ id: slot.motor.partId, name: slot.motor.name }],
+        })
+      }
     }
   }
 
@@ -949,6 +993,11 @@ export interface PropulsionDefinition {
     /** J_rotor + J_prop, kg·m². */
     inertiaKgM2: number
     /**
+     * The air density (kg/m³) the k_T and k_Q data was measured or computed at (`ReferenceDensity`):
+     * a flight scales both by its own air density relative to it, per motor.
+     */
+    referenceDensityKgM3: number
+    /**
      * Throttle → effective duty pairs [d, e] (sorted, e non-decreasing, in (0, 1]); the
      * engine interpolates like `effectiveDuty`. Absent = ideal ESC (e = d).
      */
@@ -967,7 +1016,7 @@ export function propulsionDefinition(motors: readonly MotorPropulsion[], battery
   if (!b?.ok || motors.length === 0) return null
   const out: PropulsionDefinition['motors'] = []
   for (const m of motors) {
-    if (!m.electrical || !m.fit?.kQ || m.propInertia === null || !m.rotor?.ok || !m.slot.motor) return null
+    if (!m.electrical || !m.fit?.kQ || !m.fit.referenceDensity || m.propInertia === null || !m.rotor?.ok || !m.slot.motor) return null
     out.push({
       partId: m.slot.partId,
       kvRadPerSV: m.electrical.kv,
@@ -976,6 +1025,7 @@ export function propulsionDefinition(motors: readonly MotorPropulsion[], battery
       thrustCoefNs2: m.fit.kT.k,
       torqueCoefNms2: m.fit.kQ.k,
       inertiaKgM2: m.rotor.value + m.propInertia,
+      referenceDensityKgM3: m.fit.referenceDensity.kgM3,
       ...(m.fit.map.points.length > 0 ? { throttleMap: m.fit.map.points.map((x): [number, number] => [x.throttle, x.effectiveDuty]) } : {}),
     })
   }

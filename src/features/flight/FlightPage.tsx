@@ -25,7 +25,7 @@ import { FlightSetup } from './FlightSetup'
 import { FlightViewport } from './FlightViewport'
 import type { FlightFrame } from './frame'
 import { collisionIndicator, instabilityIndicator, layoutIndicator, massIndicator, thrustIndicator } from './indicators'
-import { enginePayload, flightGate, useFlightConditions } from './readiness'
+import { airDensityFor, conditionsOf, EMPTY_CONDITIONS, enginePayload, flightGate, type FlightConditions } from './readiness'
 import { mapSticks, STICK_KEYS, updateHeadingHold, type HeadingHold } from './sticks'
 
 export default function FlightPage() {
@@ -86,7 +86,9 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
 }) {
   const assets = useAssets((s) => s.assets)
   const engineState = useSystem((s) => s.engine?.state)
-  const conditions = useFlightConditions()
+  const conditions = conditionsOf(doc)
+  const setConditions = (label: string, patch: Partial<FlightConditions>) =>
+    useAssembly.getState().edit(label, (d) => ({ ...d, flight: { ...(d.flight ?? EMPTY_CONDITIONS), ...patch } }))
   // The assembly's engine payload (or what is still missing), then the user's flight conditions on top.
   const payload = useMemo(() => enginePayload(doc, geo, components, assets), [doc, geo, components, assets])
   const gate = useMemo(() => flightGate(payload, conditions), [payload, conditions])
@@ -151,7 +153,13 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     const visibility = () => { if (document.hidden) blur() }
     window.addEventListener('blur', blur)
     document.addEventListener('visibilitychange', visibility)
+    // The flight conditions are saved with the project: like the workshop, save pending edits when
+    // leaving (the workshop reloads the assembly on entry) and synchronously when the window closes.
+    const onUnload = () => useAssembly.getState().flushSync()
+    window.addEventListener('beforeunload', onUnload)
     return () => {
+      window.removeEventListener('beforeunload', onUnload)
+      void useAssembly.getState().flush()
       source.current?.stop()
       teardown.current?.()
       if (flushHandle.current !== null) cancelAnimationFrame(flushHandle.current)
@@ -195,8 +203,9 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     const propulsion = propulsionState(doc, geo, components)
     const battery = doc.parts.find((p) => p.kind === 'battery')
     const definition = propulsionDefinition(propulsion.motors, battery ? linkedComponent(battery, components) : null)
-    return thrustIndicator(definition, propulsion.ready, mass.mp.totalMassKg, !!mass.mp.com && mass.mp.missingMass.length === 0)
-  }, [doc, geo, components, mass])
+    const air = conditions.ambientAltitudeM === null ? null : airDensityFor(conditions.ambientAltitudeM, conditions.temperatureC)
+    return thrustIndicator(definition, propulsion.ready, mass.mp.totalMassKg, !!mass.mp.com && mass.mp.missingMass.length === 0, air)
+  }, [doc, geo, components, mass, conditions])
   const indicators = {
     'Unbalanced mass': massIndicator(mass, tolerance),
     'Motor layout': layoutIndicator(findings, mass, doc.parts.filter((p) => p.kind === 'motor').length),
@@ -249,7 +258,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
         </div>
         <aside aria-label="Physics debug panel" className="w-full shrink-0 overflow-y-auto border-t border-line bg-chrome px-4 py-3 @min-[1000px]:w-[400px] @min-[1000px]:border-l @min-[1000px]:border-t-0">
           <div className="mb-5">
-            <FlightSetup projectId={project.id} blockers={blockers} engineBlock={engineBlock} locked={running} />
+            <FlightSetup projectId={project.id} conditions={conditions} onChange={setConditions} blockers={blockers} engineBlock={engineBlock} locked={running} />
           </div>
           <DebugPanel frame={frame} mass={mass.mp} indicators={indicators} source="live" />
         </aside>

@@ -29,7 +29,7 @@ const quad = {
   },
   propulsion: {
     version: 1,
-    motors: ['m1', 'm2', 'm3', 'm4'].map((partId) => ({ partId, kvRadPerSV: 100, resistanceOhm: 0.1, noLoadCurrentA: 0.5, thrustCoefNs2: 2e-5, torqueCoefNms2: 1e-7, inertiaKgM2: 2e-5 })),
+    motors: ['m1', 'm2', 'm3', 'm4'].map((partId) => ({ partId, kvRadPerSV: 100, resistanceOhm: 0.1, noLoadCurrentA: 0.5, thrustCoefNs2: 2e-5, torqueCoefNms2: 1e-7, inertiaKgM2: 2e-5, referenceDensityKgM3: 1.225 })),
     battery: { openCircuitVoltageV: 10, internalResistanceOhm: 0.01, capacityC: 18720 },
   },
   aero: { cdBody: [1, 1, 1], areaM2: [0.01, 0.01, 0.01] },
@@ -160,7 +160,6 @@ const startInput = (): FlightStartInput => ({
   aero: quad.aero,
   environment: { ground: { friction: 0.5, restitution: 0 }, obstacles: [] },
   airDensityKgM3: 1.225,
-  referenceDensityKgM3: 1.225,
   cutoff: { type: 'chargeMah', value: 1000 },
   startPositionM: [0, 0, REST_Z],
 })
@@ -332,7 +331,7 @@ describe('EngineFlightSource', () => {
 
 // ---- readiness gating ---------------------------------------------------------------------------------
 
-const readyConditions: FlightConditions = { ambientAltitudeM: 120, referenceDensityKgM3: 1.225, temperatureC: null, cutoffType: 'voltageV', cutoffValue: 13.2 }
+const readyConditions: FlightConditions = { ambientAltitudeM: 120, temperatureC: null, cutoffType: 'voltageV', cutoffValue: 13.2 }
 const payload = (): EnginePayload => ({
   vehicle: quad.vehicle as unknown as EnginePayload['vehicle'],
   propulsion: quad.propulsion as unknown as EnginePayload['propulsion'],
@@ -345,7 +344,6 @@ describe('readiness gating', () => {
   it('lists the flight conditions that are not entered, linked to their fields', () => {
     expect(conditionBlockers(EMPTY_CONDITIONS).map((b) => [b.id, b.link])).toEqual([
       ['flight-altitude', { to: 'flight-field', elementId: 'flight-altitude' }],
-      ['flight-reference-density', { to: 'flight-field', elementId: 'flight-reference-density' }],
       ['flight-cutoff', { to: 'flight-field', elementId: 'flight-cutoff-value' }],
     ])
     expect(conditionBlockers({ ...readyConditions, cutoffValue: null }).map((b) => b.id)).toEqual(['flight-cutoff'])
@@ -359,7 +357,6 @@ describe('readiness gating', () => {
     expect(gate.input).toMatchObject({ cutoff: { type: 'voltageV', value: 13.2 }, startPositionM: [0, 0, REST_Z] })
     expect('ambientAltitudeM' in gate.input).toBe(false) // the engine takes the density, not the altitude
     expect(gate.input.airDensityKgM3).toBe(airDensityFor(120, null))
-    expect(gate.input.referenceDensityKgM3).toBe(1.225) // the user's entry, passed through
     const hot = flightGate({ ok: true, payload: payload() }, { ...readyConditions, temperatureC: 35 })
     expect(hot.ok && hot.input.airDensityKgM3).toBeLessThan(airDensityFor(120, null))
   })
@@ -371,7 +368,7 @@ describe('readiness gating', () => {
   })
 
   it('a missing cut-off or altitude blocks a complete build', () => {
-    for (const [missing, id] of [[{ cutoffValue: null }, 'flight-cutoff'], [{ ambientAltitudeM: null }, 'flight-altitude'], [{ referenceDensityKgM3: null }, 'flight-reference-density']] as const) {
+    for (const [missing, id] of [[{ cutoffValue: null }, 'flight-cutoff'], [{ ambientAltitudeM: null }, 'flight-altitude']] as const) {
       const gate = flightGate({ ok: true, payload: payload() }, { ...readyConditions, ...missing })
       expect(gate.ok).toBe(false)
       expect(gate.ok ? [] : gate.blockers.map((b) => b.id)).toEqual([id])
@@ -382,7 +379,7 @@ describe('readiness gating', () => {
     const item: ReadyItem = { id: 'ground-friction', label: 'Ground friction coefficient', detail: 'x', link: { to: 'environment', elementId: 'ground-friction' } }
     const gate = flightGate({ ok: false, blockers: [item] }, EMPTY_CONDITIONS)
     expect(gate.ok).toBe(false)
-    expect(gate.ok ? [] : gate.blockers.map((b) => b.id)).toEqual(['ground-friction', 'flight-altitude', 'flight-reference-density', 'flight-cutoff'])
+    expect(gate.ok ? [] : gate.blockers.map((b) => b.id)).toEqual(['ground-friction', 'flight-altitude', 'flight-cutoff'])
   })
 
   it('a real, empty assembly is not ready: the checklist, not a payload', () => {
@@ -422,7 +419,6 @@ describe('IPC validation', () => {
       environment: { ground: { friction: 0.5, restitution: 0 }, obstacles: [] },
       startPositionM: [0, 0, REST_Z],
       airDensityKgM3: 1.225,
-      referenceDensityKgM3: 1.225,
       cutoff: { type: 'chargeMah', value: 1000 },
       gains: { MC_ROLL_P: 7 },
     })
@@ -434,8 +430,7 @@ describe('IPC validation', () => {
     ['a zero cut-off', (p: Record<string, unknown>) => { p.cutoff = { type: 'voltageV', value: 0 } }],
     ['an unknown cut-off type', (p: Record<string, unknown>) => { p.cutoff = { type: 'capacity', value: 5 } }],
     ['no air density', (p: Record<string, unknown>) => { delete p.airDensityKgM3 }],
-    ['no reference density', (p: Record<string, unknown>) => { delete p.referenceDensityKgM3 }],
-    ['a zero reference density', (p: Record<string, unknown>) => { p.referenceDensityKgM3 = 0 }],
+    ['a motor with a zero reference density', (p: Record<string, unknown>) => { ((p.propulsion as { motors: Record<string, unknown>[] }).motors[0]!).referenceDensityKgM3 = 0 }],
     ['a zero air density', (p: Record<string, unknown>) => { p.airDensityKgM3 = 0 }],
     ['a gain that is not a PX4 name', (p: Record<string, unknown>) => { p.gains = { mc_roll_p: 7 } }],
     ['no start position', (p: Record<string, unknown>) => { delete p.startPositionM }],
@@ -512,7 +507,8 @@ describe('a real engine session', () => {
     const input = startInput()
     expect(err(await flightStart(sup, { ...input, startPositionM: [0, 0, 0] }))?.message).toMatch(/^INVALID_PARAMS/) // inside the ground
     expect(err(await flightStep(sup, { steps: 1, setpoint }))?.message).toMatch(/^NO_SESSION/) // a refused start leaves no session
-    const started = await flightStart(sup, input)
+    // 2000 m: not the density of the propeller data, so the scaled coefficients are flown in both paths.
+    const started = await flightStart(sup, { ...input, airDensityKgM3: 1.0066 })
     expect(started.ok).toBe(true)
     if (!started.ok) return
     expect(started.data.diagnostic.state.steps).toBe(0)
@@ -529,13 +525,13 @@ describe('a real engine session', () => {
     expect(frame.motors).toHaveLength(4)
     expect(frame.totalThrustN).toBeGreaterThan(0)
     expect(frame.packVoltageV).toBeLessThan(10)
-    expect(frame.densityKgM3).toBe(1.225)
+    expect(frame.densityKgM3).toBe(1.0066)
     expect(await flightEnd(sup)).toEqual({ ok: true, data: { ended: true } })
     // The same 100 steps in one batch run (sim.run in controller mode) end in the same state hash.
     await sup.loadVehicle(quad.vehicle as never, { propulsion: quad.propulsion as never, aero: quad.aero as never })
     const batch = await sup.runSim(SimRunParamsSchema.parse({
       durationS: 0.1, environment: { ground: { friction: 0.5, restitution: 0 }, obstacles: [] }, startPositionM: [0, 0, REST_Z],
-      airDensityKgM3: 1.225, controller: { climbRateMps: 0 },
+      airDensityKgM3: 1.0066, controller: { climbRateMps: 0 },
     }))
     expect(batch.stateHash).toBe(last!.stateHash)
   }, 20000)

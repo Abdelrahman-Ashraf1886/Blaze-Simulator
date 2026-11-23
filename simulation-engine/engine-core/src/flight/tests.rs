@@ -24,6 +24,8 @@ fn motor(id: &str) -> MotorPropulsion {
         torque_coef_nms2: 1e-7,
         inertia_kg_m2: 2e-5,
         throttle_map: None,
+        // APC states the sea-level standard atmosphere for its data; the other tests fly at that density.
+        reference_density_kg_m3: Some(1.225),
     }
 }
 
@@ -367,28 +369,57 @@ fn a_cutoff_ends_the_run_and_freezes_it() {
     }
 }
 
-/// Thrust T = k_T w^2 and drag torque Q = k_Q w^2 scale as rho / rho_ref (4.8): at half the reference
-/// density the same rotor speed gives half the thrust and half the torque, the reaction torque on the body
-/// follows, and a density equal to the reference changes nothing. Invalid densities are refused.
+/// Thrust T = k_T w^2 and drag torque Q = k_Q w^2 scale as rho / rho_ref,i per motor (4.8): at half the
+/// reference density the same rotor speed gives half the thrust and half the torque, the reaction torque on the
+/// body follows, a density equal to the reference changes nothing, and each motor uses its own reference density.
+/// A motor without one, or an invalid density, is refused and changes nothing.
 #[test]
 fn the_coefficients_scale_with_the_air_density_ratio() {
     let v = vehicle(1.0, &[([0.2, 0.0, 0.0], Spin::Ccw)]);
-    let loads = |rho: f64, rho_ref: f64| {
+    let loads = |rho: f64| {
         let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
-        f.scale_to_air_density(rho_ref, rho).unwrap();
+        f.scale_to_air_density(rho).unwrap();
         f.set_rotor_speeds(&[500.0]).unwrap();
         (f.rotor_loads(Vector::ZERO), f.motors()[0].thrust_n, f.motors()[0].drag_torque_nm)
     };
-    let (base, t1, q1) = loads(1.225, 1.225);
+    let (base, t1, q1) = loads(1.225);
     close(t1, 5.0, 1e-12, "unchanged at the reference density");
     close(q1, 0.025, 1e-15, "drag torque unchanged");
-    let (thin, t2, q2) = loads(0.6125, 1.225);
+    let (thin, t2, q2) = loads(0.6125);
     close(t2, 2.5, 1e-12, "half the density, half the thrust");
     close(q2, 0.0125, 1e-15, "half the drag torque");
     close(thin.force_body_n.z, 0.5 * base.force_body_n.z, 1e-12, "thrust on the body");
     close(thin.torque_body_nm.z, 0.5 * base.torque_body_nm.z, 1e-15, "reaction torque on the body");
+
+    // Scaling twice replaces the scaling, it does not compound it.
     let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
-    for (reference, air) in [(0.0, 1.2), (1.2, 0.0), (-1.0, 1.2), (f64::NAN, 1.2), (1.2, f64::INFINITY)] {
-        assert!(f.scale_to_air_density(reference, air).is_err(), "{reference} {air}");
+    f.scale_to_air_density(0.6125).unwrap();
+    f.scale_to_air_density(0.6125).unwrap();
+    f.set_rotor_speeds(&[500.0]).unwrap();
+    close(f.motors()[0].thrust_n, 2.5, 1e-12, "the second call with the same density changes nothing");
+    f.scale_to_air_density(1.225).unwrap();
+    close(f.motors()[0].thrust_n, 5.0, 1e-12, "and a later call starts from the data's coefficients");
+
+    // Each motor scales by its own reference density: a motor whose data was taken at 0.6125 kg/m³ is unchanged at 0.6125.
+    let q = quad(1.0);
+    let mut p = propulsion(&q);
+    p.motors[1].reference_density = Some(0.6125);
+    let mut f = Flight::new(&q, p, None, None).unwrap();
+    f.scale_to_air_density(0.6125).unwrap();
+    f.set_rotor_speeds(&[500.0; 4]).unwrap();
+    let t: Vec<f64> = f.motors().iter().map(|m| m.thrust_n).collect();
+    close(t[0], 2.5, 1e-12, "m1: data at 1.225, flown at 0.6125");
+    close(t[1], 5.0, 1e-12, "m2: its own data was taken at 0.6125");
+
+    // A motor without a reference density, and invalid densities, are refused and leave the scaling as it was.
+    let mut p = propulsion(&q);
+    p.motors[2].reference_density = None;
+    let mut f = Flight::new(&q, p, None, None).unwrap();
+    f.set_rotor_speeds(&[500.0; 4]).unwrap();
+    let err = f.scale_to_air_density(1.225).unwrap_err();
+    assert!(err.contains("m3") && err.contains("reference density"), "{err}");
+    close(f.motors()[0].thrust_n, 5.0, 1e-12, "nothing changed");
+    for air in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(Flight::new(&q, propulsion(&q), None, None).unwrap().scale_to_air_density(air).is_err(), "{air}");
     }
 }

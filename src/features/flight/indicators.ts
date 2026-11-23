@@ -36,18 +36,21 @@ export function collisionIndicator(frame: FlightFrame): Indicator {
 }
 
 /** Full-throttle steady-state capability with all motors sharing the sagging pack. */
-export function thrustIndicator(propulsion: PropulsionDefinition | null, ready: readonly ReadyItem[], massKg: number, complete: boolean): Indicator {
+export function thrustIndicator(propulsion: PropulsionDefinition | null, ready: readonly ReadyItem[], massKg: number, complete: boolean, airKgM3: number | null): Indicator {
   // Mass, body drag and surface coefficients have separate checks. All remaining
   // Ready-to-fly items concern propulsion (including rotor/prop inertia and capacity).
   const missing = ready.filter((item) => item.id !== 'frame-mass' && !item.id.startsWith('part-mass:') && item.link?.to !== 'body-drag' && item.link?.to !== 'environment')
   if (missing.length) return { state: 'unknown', detail: missing.map((item) => `${item.label}: ${item.detail}`).join(' ') }
   if (!propulsion || !propulsion.motors.length) return { state: 'unknown', detail: 'Complete motor, propeller and battery data needed for maximum T/W.' }
   if (!complete || !(massKg > 0)) return { state: 'unknown', detail: 'Complete mass needed for T/W.' }
+  // The engine flies each motor's k_T and k_Q scaled by ρ / ρ_ref,i (flight.rs `scale_to_air_density`), with ρ_ref,i
+  // the air density that motor's data was taken at (in the propulsion definition): so does this.
+  if (airKgM3 === null) return { state: 'unknown', detail: 'Enter the ambient altitude (Flight setup): thrust and torque scale with the air density of the flight relative to the density of the propeller data.' }
   const { battery, motors } = propulsion
   const models = motors.map((m) => ({
     electrical: { kv: m.kvRadPerSV, kt: 1 / m.kvRadPerSV, resistance: m.resistanceOhm, noLoadCurrent: m.noLoadCurrentA, noLoadCondition: null },
-    kT: m.thrustCoefNs2,
-    kQ: m.torqueCoefNms2,
+    kT: m.thrustCoefNs2 * (airKgM3 / m.referenceDensityKgM3),
+    kQ: m.torqueCoefNms2 * (airKgM3 / m.referenceDensityKgM3),
     map: m.throttleMap ? { ...IDEAL_MAP, points: m.throttleMap.map(([throttle, effectiveDuty]) => ({ throttle, effectiveDuty })) } : IDEAL_MAP,
   }))
   const atVoltage = (voltage: number) => models.map((m) => steadyState(m.electrical, m.kQ, voltage, 1, 0, m.map))
@@ -63,7 +66,7 @@ export function thrustIndicator(propulsion: PropulsionDefinition | null, ready: 
   }
   const maxThrustN = atVoltage((low + high) / 2).reduce((sum, s, i) => sum + models[i]!.kT * s.omega ** 2, 0)
   const ratio = maxThrustN / (massKg * STANDARD_GRAVITY)
-  return result(ratio < MIN_THRUST_TO_WEIGHT, `Maximum T/W ${ratio.toFixed(2)} at full throttle with pack voltage sag (physical hover floor ${MIN_THRUST_TO_WEIGHT.toFixed(1)}; below this cannot hover).`)
+  return result(ratio < MIN_THRUST_TO_WEIGHT, `Maximum T/W ${ratio.toFixed(2)} at full throttle with pack voltage sag, air density ${airKgM3.toFixed(3)} kg/m³ (physical hover floor ${MIN_THRUST_TO_WEIGHT.toFixed(1)}; below this cannot hover).`)
 }
 
 /** Warning iff any allocation axis is saturated continuously for >=1 s.

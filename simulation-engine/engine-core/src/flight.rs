@@ -134,6 +134,9 @@ pub struct Flight {
     cutoff: Option<Cutoff>,
     ended: Option<EndReason>,
     loads: StepLoads,
+    /// (k_T, k_Q) of each propulsion motor as loaded, the data's own coefficients;
+    /// `scale_to_air_density` always scales from these, never from a scaled value.
+    base_coefficients: Vec<(f64, f64)>,
 }
 
 impl Flight {
@@ -167,7 +170,8 @@ impl Flight {
         };
         let state = propulsion.rest();
         let n = motors.len();
-        Ok(Flight { motors, propulsion, state, drag, throttle: vec![0.0; n], cutoff: None, ended: None, loads: StepLoads::default() })
+        let base_coefficients = propulsion.motors.iter().map(|m| (m.k_thrust, m.k_torque)).collect();
+        Ok(Flight { motors, propulsion, state, drag, throttle: vec![0.0; n], cutoff: None, ended: None, loads: StepLoads::default(), base_coefficients })
     }
 
     /// Ends the run when the battery reaches `cutoff` (checked after each step,
@@ -181,22 +185,33 @@ impl Flight {
         Ok(())
     }
 
-    /// Scales the rotors' thrust and torque coefficients from the density of the data
-    /// they were fitted at (`reference_kg_m3`) to the density of this flight
-    /// (`air_kg_m3`): T = k_T ω² and Q = k_Q ω² both scale as ρ/ρ_ref (4.8). The
-    /// motor model then gives ω, current and battery use at the new loading. Both
-    /// densities must be given and positive: no source states ρ_ref for every data
-    /// set, so it is the user's entry where none does, never assumed.
-    pub fn scale_to_air_density(&mut self, reference_kg_m3: f64, air_kg_m3: f64) -> Result<(), String> {
-        for (name, rho) in [("reference density", reference_kg_m3), ("air density", air_kg_m3)] {
-            if !(rho.is_finite() && rho > 0.0) {
-                return Err(format!("the {name} must be a positive number (got {rho})"));
+    /// Scales each motor's thrust and torque coefficients from the air density its data was
+    /// fitted at (`MotorPropulsion::reference_density_kg_m3`: stated by the data's source, or
+    /// the user's entry for it, per motor) to the density of this flight (`air_kg_m3`):
+    /// T = k_T ω² and Q = k_Q ω² both scale as ρ/ρ_ref,i (4.8). The motor model then gives
+    /// ω, current and battery use at the new loading. Every density must be positive, and
+    /// every motor must have its reference density: none is assumed. Scaling is from the
+    /// loaded coefficients, so calling it again replaces the scaling (k = k_base · ρ/ρ_ref)
+    /// instead of compounding it. Nothing changes if it fails.
+    pub fn scale_to_air_density(&mut self, air_kg_m3: f64) -> Result<(), String> {
+        if !(air_kg_m3.is_finite() && air_kg_m3 > 0.0) {
+            return Err(format!("the air density must be a positive number (got {air_kg_m3})"));
+        }
+        let mut ratios = Vec::with_capacity(self.propulsion.motors.len());
+        for (m, def) in self.propulsion.motors.iter().zip(&self.propulsion.definition.motors) {
+            match m.reference_density {
+                Some(rho) if rho.is_finite() && rho > 0.0 => ratios.push(air_kg_m3 / rho),
+                _ => {
+                    return Err(format!(
+                        "motor \"{}\" has no reference density (referenceDensityKgM3): the air density its thrust and torque data was measured or computed at",
+                        def.part_id
+                    ))
+                }
             }
         }
-        let ratio = air_kg_m3 / reference_kg_m3;
-        for m in &mut self.propulsion.motors {
-            m.k_thrust *= ratio;
-            m.k_torque *= ratio;
+        for ((m, (k_thrust, k_torque)), ratio) in self.propulsion.motors.iter_mut().zip(&self.base_coefficients).zip(ratios) {
+            m.k_thrust = k_thrust * ratio;
+            m.k_torque = k_torque * ratio;
         }
         Ok(())
     }

@@ -7,7 +7,8 @@ import type { MassState } from '../../src/features/workshop/mass-input'
 import { demoFrame, FakeFlightSource } from '../../src/features/flight/FakeFlightSource'
 import { frameToPose, type FlightFrame } from '../../src/features/flight/frame'
 import { mapSticks, MAX_TILT_RAD, MAX_VERTICAL_SPEED_MPS, MAX_YAW_RATE_RADPS, updateHeadingHold } from '../../src/features/flight/sticks'
-import { collisionIndicator, instabilityIndicator, layoutIndicator, massIndicator, thrustIndicator } from '../../src/features/flight/indicators'
+import { airDensityFor } from '../../src/features/flight/readiness'
+import { collisionIndicator, instabilityIndicator, layoutIndicator, massIndicator, thrustIndicator, type Indicator } from '../../src/features/flight/indicators'
 
 const motors: MotorInput[] = [[1, 1], [-1, 1], [-1, -1], [1, -1]].map(([x, y], i) => ({
   partId: `motor-${i}`, name: `Motor ${i}`, position: [x!, y!, 0], thrustAxis: [0, 0, 1], spin: i % 2 ? 'cw' : 'ccw',
@@ -132,17 +133,51 @@ describe('flight indicators', () => {
   // closed-form reference: each motor sees N times the pack resistance.
   const propulsion: PropulsionDefinition = {
     version: 1,
-    motors: Array.from({ length: 4 }, (_, i) => ({ partId: `m${i}`, kvRadPerSV: 50, resistanceOhm: 0.2, noLoadCurrentA: 0.1, thrustCoefNs2: 1e-4, torqueCoefNms2: 1e-5, inertiaKgM2: 1e-4, throttleMap: [[1, 0.8]] })),
+    motors: Array.from({ length: 4 }, (_, i) => ({ partId: `m${i}`, kvRadPerSV: 50, resistanceOhm: 0.2, noLoadCurrentA: 0.1, thrustCoefNs2: 1e-4, torqueCoefNms2: 1e-5, inertiaKgM2: 1e-4, referenceDensityKgM3: 1.225, throttleMap: [[1, 0.8]] })),
     battery: { openCircuitVoltageV: 12, internalResistanceOhm: 0.05, capacityC: 1000 },
   }
   const reference = steadyState({ kv: 50, kt: 0.02, resistance: 0.2, noLoadCurrent: 0.1, noLoadCondition: null }, 1e-5, 12, 1, 4 * 0.05, { ...IDEAL_MAP, points: [{ throttle: 1, effectiveDuty: 0.8 }] })
   const supportedMass = 4 * 1e-4 * reference.omega ** 2 / STANDARD_GRAVITY
   it('uses full-throttle capability above/below the physical hover floor with shared sag and throttle maps', () => {
-    expect(thrustIndicator(propulsion, [], supportedMass / 1.1, true)).toMatchObject({ state: 'ok', detail: expect.stringContaining('Maximum T/W 1.10') })
-    expect(thrustIndicator(propulsion, [], supportedMass / 0.9, true)).toMatchObject({ state: 'warning', detail: expect.stringContaining('Maximum T/W 0.90') })
-    expect(thrustIndicator(propulsion, [], supportedMass / 1.1, true).detail).toContain('physical hover floor 1.0')
+    expect(thrustIndicator(propulsion, [], supportedMass / 1.1, true, 1.225)).toMatchObject({ state: 'ok', detail: expect.stringContaining('Maximum T/W 1.10') })
+    expect(thrustIndicator(propulsion, [], supportedMass / 0.9, true, 1.225)).toMatchObject({ state: 'warning', detail: expect.stringContaining('Maximum T/W 0.90') })
+    expect(thrustIndicator(propulsion, [], supportedMass / 1.1, true, 1.225).detail).toContain('physical hover floor 1.0')
     const highSag = { ...propulsion, battery: { ...propulsion.battery, internalResistanceOhm: 0.5 } }
-    expect(thrustIndicator(highSag, [], supportedMass / 1.1, true).state).toBe('warning')
+    expect(thrustIndicator(highSag, [], supportedMass / 1.1, true, 1.225).state).toBe('warning')
+  })
+  it('uses the coefficients the engine flies: at 3000 m, k_T and k_Q scale by the density ratio and the steady solver finds the new speed', () => {
+    const rho0 = 1.225 // the motors' reference density in this fixture
+    const rho3 = airDensityFor(3000, null) // ISA at 3000 m
+    const ratio = rho3 / rho0
+    const massKg = supportedMass
+    const at = (rho: number) => thrustIndicator(propulsion, [], massKg, true, rho)
+    const tw = (d: Indicator) => Number(/Maximum T\/W (\d+\.\d+)/.exec(d.detail)![1])
+    expect(tw(at(rho0))).toBeCloseTo(1.0, 2) // sea level: the unscaled capability
+    // Independent: the same pack with both coefficients scaled by r, solved with the steady-state solver.
+    const scaled = steadyState({ kv: 50, kt: 0.02, resistance: 0.2, noLoadCurrent: 0.1, noLoadCondition: null }, 1e-5 * ratio, 12, 1, 4 * 0.05, { ...IDEAL_MAP, points: [{ throttle: 1, effectiveDuty: 0.8 }] })
+    const expected = (4 * 1e-4 * ratio * scaled.omega ** 2) / (massKg * STANDARD_GRAVITY)
+    expect(tw(at(rho3))).toBeCloseTo(expected, 2)
+    // Thin air costs thrust, but less than the density ratio: the rotors spin faster (the torque load fell too).
+    expect(scaled.omega).toBeGreaterThan(reference.omega)
+    expect(tw(at(rho3))).toBeLessThan(0.95) // ≈ 0.92 here: well under sea level's 1.0
+    expect(tw(at(rho3))).toBeGreaterThan(ratio)
+    expect(at(rho3).detail).toContain(`air density ${rho3.toFixed(3)} kg/m³`)
+  })
+  it('scales each motor by its own reference density', () => {
+    // Motors whose data was taken at 0.9 kg/m³ lose nothing at 0.9 kg/m³, whatever the others were taken at.
+    const own = structuredClone(propulsion)
+    for (const m of own.motors) m.referenceDensityKgM3 = 0.9
+    const tw = (d: Indicator) => Number(/Maximum T\/W (\d+\.\d+)/.exec(d.detail)![1])
+    expect(tw(thrustIndicator(own, [], supportedMass, true, 0.9))).toBeCloseTo(tw(thrustIndicator(propulsion, [], supportedMass, true, 1.225)), 6)
+    const mixed = structuredClone(own)
+    mixed.motors[0]!.referenceDensityKgM3 = 1.225
+    expect(tw(thrustIndicator(mixed, [], supportedMass, true, 0.9))).toBeLessThan(tw(thrustIndicator(own, [], supportedMass, true, 0.9)))
+  })
+  it('is unknown, saying why, when the flight air density is not entered', () => {
+    const d = thrustIndicator(propulsion, [], supportedMass, true, null)
+    expect(d.state).toBe('unknown')
+    expect(d.detail).toContain('ambient altitude')
+    expect(d.detail).toContain('propeller data')
   })
   it('sums unlike motors at one shared pack voltage', () => {
     const mixed = structuredClone(propulsion)
@@ -152,19 +187,19 @@ describe('flight indicators', () => {
     const states = mixed.motors.map((m) => steadyState({ kv: m.kvRadPerSV, kt: 1 / m.kvRadPerSV, resistance: m.resistanceOhm, noLoadCurrent: m.noLoadCurrentA, noLoadCondition: null }, m.torqueCoefNms2, terminalV, 1, 0, { ...IDEAL_MAP, points: m.throttleMap!.map(([throttle, effectiveDuty]) => ({ throttle, effectiveDuty })) }))
     mixed.battery.openCircuitVoltageV = terminalV + mixed.battery.internalResistanceOhm * states.reduce((sum, s) => sum + s.supplyCurrent, 0)
     const thrustN = states.reduce((sum, s, i) => sum + mixed.motors[i]!.thrustCoefNs2 * s.omega ** 2, 0)
-    expect(thrustIndicator(mixed, [], thrustN / STANDARD_GRAVITY / 1.2, true).detail).toContain('Maximum T/W 1.20')
+    expect(thrustIndicator(mixed, [], thrustN / STANDARD_GRAVITY / 1.2, true, 1.225).detail).toContain('Maximum T/W 1.20')
   })
   it('reports incomplete propulsion as unknown with the checklist reason, and requires complete mass', () => {
     const missing: ReadyItem = { id: 'component:pack:internalResistance', label: 'Battery internal resistance', detail: 'Enter measured pack resistance.', link: { to: 'component', componentId: 'pack', field: 'internalResistance' } }
-    expect(thrustIndicator(propulsion, [missing], 1, true)).toEqual({ state: 'unknown', detail: 'Battery internal resistance: Enter measured pack resistance.' })
-    expect(thrustIndicator(null, [], 1, true).state).toBe('unknown')
-    expect(thrustIndicator(propulsion, [], 1, false).state).toBe('unknown')
-    expect(thrustIndicator(propulsion, [], 0, true).state).toBe('unknown')
+    expect(thrustIndicator(propulsion, [missing], 1, true, 1.225)).toEqual({ state: 'unknown', detail: 'Battery internal resistance: Enter measured pack resistance.' })
+    expect(thrustIndicator(null, [], 1, true, 1.225).state).toBe('unknown')
+    expect(thrustIndicator(propulsion, [], 1, false, 1.225).state).toBe('unknown')
+    expect(thrustIndicator(propulsion, [], 0, true, 1.225).state).toBe('unknown')
     const unrelated: ReadyItem[] = [
       { id: 'body-cd', label: 'Drag', detail: 'Missing', link: { to: 'body-drag', axis: 'x' } },
       { id: 'ground-friction', label: 'Friction', detail: 'Missing', link: { to: 'environment', elementId: 'ground-friction' } },
     ]
-    expect(thrustIndicator(propulsion, unrelated, supportedMass / 1.1, true).state).toBe('ok')
+    expect(thrustIndicator(propulsion, unrelated, supportedMass / 1.1, true, 1.225).state).toBe('ok')
   })
   it('requires at least one second of contiguous saturation, including negative axes', () => {
     expect(instabilityIndicator(sustained(0, 0.95)).state).toBe('ok')

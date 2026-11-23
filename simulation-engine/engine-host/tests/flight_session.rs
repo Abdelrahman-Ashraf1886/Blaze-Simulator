@@ -68,7 +68,7 @@ fn load() -> Value {
         "motors": [motor("m1", A, -A, "ccw"), motor("m2", -A, A, "ccw"), motor("m3", A, A, "cw"), motor("m4", -A, -A, "cw")],
         "totalMassKg": 1.0, "com": [0.0, 0.0, 0.0], "inertia": [0.01, 0.01, 0.02, 0.0, 0.0, 0.0], "missingMass": []
     });
-    let m = |id: &str| json!({ "partId": id, "kvRadPerSV": 100.0, "resistanceOhm": 0.1, "noLoadCurrentA": 0.5, "thrustCoefNs2": 2e-5, "torqueCoefNms2": 1e-7, "inertiaKgM2": 2e-5 });
+    let m = |id: &str| json!({ "partId": id, "kvRadPerSV": 100.0, "resistanceOhm": 0.1, "noLoadCurrentA": 0.5, "thrustCoefNs2": 2e-5, "torqueCoefNms2": 1e-7, "inertiaKgM2": 2e-5, "referenceDensityKgM3": 1.225 });
     json!({
         "type": "vehicle.load",
         "vehicle": vehicle,
@@ -79,13 +79,18 @@ fn load() -> Value {
 fn ground() -> Value {
     json!({"ground": {"friction": 0.5, "restitution": 0.0}, "obstacles": []})
 }
+/// The air density of 2000 m in the standard atmosphere (USSA 1976 Table I), kg/m³: not the data's 1.225.
+const RHO_2000_M: f64 = 1.0066;
+
 fn start() -> Value {
+    start_at(1.225)
+}
+fn start_at(rho: f64) -> Value {
     json!({
         "type": "flight.session.start",
         "environment": ground(),
         "startPositionM": [0.0, 0.0, REST_Z],
-        "airDensityKgM3": 1.225,
-        "referenceDensityKgM3": 1.225,
+        "airDensityKgM3": rho,
         "cutoff": {"type": "chargeMah", "value": 1000.0},
     })
 }
@@ -96,10 +101,10 @@ fn step(steps: u64, setpoint: Value) -> Value {
     json!({"type": "flight.session.step", "steps": steps, "setpoint": setpoint})
 }
 /// The same flight as one `sim.run` in controller mode, from the ground.
-fn sim_run(duration_s: f64, rate: f64) -> Value {
+fn sim_run(duration_s: f64, rate: f64, rho: f64) -> Value {
     json!({
         "type": "sim.run", "durationS": duration_s, "environment": ground(), "startPositionM": [0.0, 0.0, REST_Z],
-        "airDensityKgM3": 1.225, "controller": climb(rate),
+        "airDensityKgM3": rho, "controller": climb(rate),
     })
 }
 
@@ -215,11 +220,21 @@ fn refusals_keep_the_sidecar_alive() {
         r["cutoff"] = cutoff;
         e.refused(r, "INVALID_PARAMS", "");
     }
-    let mut r = start();
-    r.as_object_mut().unwrap().remove("referenceDensityKgM3");
-    e.refused(r.clone(), "INVALID_PARAMS", "referenceDensityKgM3");
-    r["referenceDensityKgM3"] = json!(-1.0);
-    e.refused(r, "INVALID_PARAMS", "referenceDensityKgM3");
+    // A motor whose propeller data has no reference density cannot be scaled to the flight's air: refused,
+    // naming the motor (the density is stated by the data's source or entered by the user, never assumed).
+    let mut no_reference = load();
+    for m in no_reference["propulsion"]["motors"].as_array_mut().unwrap() {
+        m.as_object_mut().unwrap().remove("referenceDensityKgM3");
+    }
+    assert_eq!(e.call(no_reference.clone())["result"]["valid"], true, "a definition without it still loads");
+    e.refused(start(), "INVALID_PARAMS", "reference density");
+    e.refused(sim_run(0.1, 0.0, 1.225), "INVALID_PARAMS", "reference density");
+    let mut invalid = load();
+    invalid["propulsion"]["motors"][0]["referenceDensityKgM3"] = json!(-1.0);
+    let r = e.call(invalid);
+    assert_eq!(r["result"]["valid"], false);
+    assert_eq!(r["result"]["errors"][0]["path"], "propulsion.motors[0].referenceDensityKgM3");
+    assert_eq!(e.call(load())["result"]["valid"], true);
     let mut r = start();
     r.as_object_mut().unwrap().remove("airDensityKgM3");
     e.refused(r.clone(), "INVALID_PARAMS", "airDensityKgM3");
@@ -303,9 +318,9 @@ fn merge(into: &mut BTreeMap<String, Value>, contacts: &Value) {
 }
 
 /// Runs a session in chunks of `k` steps (then the remainder) for `total` steps.
-fn chunked(k: u64, total: u64, rate: f64) -> (Value, Vec<Value>, Vec<Value>) {
+fn chunked(k: u64, total: u64, rate: f64, rho: f64) -> (Value, Vec<Value>, Vec<Value>) {
     let mut e = Engine::loaded();
-    e.ok(start());
+    e.ok(start_at(rho));
     let (mut merged, mut per_request, mut last) = (BTreeMap::new(), Vec::new(), Value::Null);
     let mut done = 0;
     while done < total {
@@ -322,25 +337,44 @@ fn chunked(k: u64, total: u64, rate: f64) -> (Value, Vec<Value>, Vec<Value>) {
 
 #[test]
 fn chunked_stepping_matches_one_sim_run_in_controller_mode() {
-    // A lift-off from the ground at 2 m/s: contact starts at 0 and ends once airborne.
+    // A lift-off from the ground at 2 m/s: contact starts at 0 and ends once airborne. Flown at 2000 m
+    // (rho != rho_ref), so the scaled coefficients of the session and of sim.run are what is compared.
     const TOTAL: u64 = 700;
     let mut reference_engine = Engine::loaded();
-    let reference = reference_engine.ok(sim_run(TOTAL as f64 / 1000.0, 2.0));
+    let reference = reference_engine.ok(sim_run(TOTAL as f64 / 1000.0, 2.0, RHO_2000_M));
     let expected = reference["stateHash"].as_str().unwrap();
     let reference_contacts = reference["contacts"].as_array().unwrap();
     assert!(reference_contacts.iter().any(|c| c["endS"].is_number()), "the quad lifts off: {reference_contacts:?}");
+    // The scaling is really applied: at the data's own density the flight is another one.
+    let at_reference = reference_engine.ok(sim_run(TOTAL as f64 / 1000.0, 2.0, 1.225));
+    assert_ne!(at_reference["stateHash"].as_str().unwrap(), expected, "2000 m is not sea level");
+    assert!(
+        at_reference["motors"][0]["thrustN"].as_f64().unwrap() != reference["motors"][0]["thrustN"].as_f64().unwrap(),
+        "the motors load differently"
+    );
 
     for k in [1, 7, 33, 100] {
-        let (last, contacts, _) = chunked(k, TOTAL, 2.0);
+        let (last, contacts, _) = chunked(k, TOTAL, 2.0, RHO_2000_M);
         assert_eq!(last["stateHash"], expected, "chunks of {k}");
         assert_eq!(&contacts, reference_contacts, "contacts, chunks of {k}");
         assert_eq!(last["diagnostic"]["state"]["positionM"], reference["state"]["positionM"], "chunks of {k}");
     }
 }
 
+/// `sim.run` flies the same physics as a session: with propulsion loaded it needs the air density (no default),
+/// and each motor's coefficients are scaled by rho / rho_ref,i in it too.
+#[test]
+fn sim_run_with_propulsion_needs_the_air_density() {
+    let mut e = Engine::loaded();
+    let mut r = sim_run(0.1, 0.0, 1.225);
+    r.as_object_mut().unwrap().remove("airDensityKgM3");
+    e.refused(r, "INVALID_PARAMS", "air density");
+    assert_eq!(e.ok(sim_run(0.1, 0.0, 1.225))["steps"], 100);
+}
+
 #[test]
 fn contacts_start_and_end_appear_in_the_request_that_has_them() {
-    let (_, contacts, per_request) = chunked(50, 700, 2.0);
+    let (_, contacts, per_request) = chunked(50, 700, 2.0, 1.225);
     let first_end = contacts.iter().filter_map(|c| c["endS"].as_f64()).fold(f64::INFINITY, f64::min);
     assert!(first_end.is_finite(), "the quad lifts off: {contacts:?}");
     assert!(per_request[0].as_array().unwrap().iter().any(|c| c["startS"] == 0.0 && c["with"] == "ground"));

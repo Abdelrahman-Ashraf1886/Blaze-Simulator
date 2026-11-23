@@ -212,6 +212,11 @@ function PairDetails({
         From the {source}.
         {o.condition && <span className={cn('block', o.kind === 'prop-table' ? 'text-warn' : 'text-fg-subtle')}>{o.condition}</span>}
       </p>
+      <p className="border-b border-line/60 py-1.5 text-[12px] leading-relaxed text-fg-muted" data-testid="pair-density" data-from={fit.referenceDensity?.from ?? 'missing'}>
+        {fit.referenceDensity
+          ? `Data taken at ${fit.referenceDensity.kgM3.toPrecision(4)} kg/m³ (${fit.referenceDensity.from === 'condition' ? 'named in the condition above' : `entered for ${fit.referenceDensity.source}`}); a flight scales thrust and torque by its own air density relative to it.`
+          : 'No air density is stated for this data: enter it (see Ready to fly); a flight scales thrust and torque by its own air density relative to it.'}
+      </p>
       <Readouts>
         <Readout label="k_T (thrust)" value={<span data-testid="pair-kt">{sci(fit.kT.k)}</span>} unit="N·s²" title={fitText(fit.kT)} />
         <div className="-mt-1 border-b border-line/60 pb-1 text-right text-[11.5px] text-fg-subtle" data-testid="pair-kt-error">

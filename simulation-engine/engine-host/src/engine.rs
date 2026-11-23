@@ -285,6 +285,14 @@ impl Engine {
                     Ok(fl) => fl,
                     Err(e) => return bad(e),
                 };
+                // Thrust and torque scale as rho / rho_ref,i per motor, the same as in a flight session: the air
+                // density is the caller's, each motor's reference density is in the propulsion definition.
+                let Some(rho) = air_density else {
+                    return bad("with propulsion give the air density (airDensityKgM3): thrust and torque scale with it relative to the density of the propeller data".into());
+                };
+                if let Err(e) = fl.scale_to_air_density(rho) {
+                    return bad(e);
+                }
                 if let Some(w) = &rotor_speeds {
                     if let Err(e) = fl.set_rotor_speeds(w) {
                         return bad(format!("rotorSpeedsRadps: {e}"));

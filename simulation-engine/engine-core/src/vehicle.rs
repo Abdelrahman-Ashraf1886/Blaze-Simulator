@@ -18,9 +18,9 @@
 //!   (λa + λb ≥ λc), which any real mass distribution does;
 //! - quaternions and thrust axes must be unit length;
 //! - the totals are recomputed from `parts` and compared with the sent ones:
-//!     m = Σ mᵢ
-//!     c = Σ mᵢ rᵢ / m
-//!     I = Σ (Iᵢ + mᵢ (|dᵢ|² E − dᵢ dᵢᵀ)),  dᵢ = rᵢ − c   (parallel axis theorem)
+//!   m = Σ mᵢ
+//!   c = Σ mᵢ rᵢ / m
+//!   I = Σ (Iᵢ + mᵢ (|dᵢ|² E − dᵢ dᵢᵀ)),  dᵢ = rᵢ − c   (parallel axis theorem)
 //!   `Iᵢ` is already in body axes (the app applied the part's rotation), so no
 //!   rotation appears here. A difference beyond [`TOTALS_REL_TOL`] is an error,
 //!   never a silent correction.
@@ -225,10 +225,10 @@ pub fn principal_axes(a: &Matrix) -> (Vector, Rotation) {
             let s = t * c;
             // A ← Jᵀ A J and V ← V J, with J the identity except
             // J_pp = J_qq = c, J_pq = s, J_qp = −s.
-            for k in 0..3 {
-                let (akp, akq) = (m[k][p], m[k][q]);
-                m[k][p] = c * akp - s * akq;
-                m[k][q] = s * akp + c * akq;
+            for row in &mut m {
+                let (akp, akq) = (row[p], row[q]);
+                row[p] = c * akp - s * akq;
+                row[q] = s * akp + c * akq;
             }
             for k in 0..3 {
                 let (apk, aqk) = (m[p][k], m[q][k]);
@@ -325,7 +325,8 @@ fn collider_shape(part: &PartBody) -> Result<(SharedShape, Pose), String> {
             let volume = shape.mass_properties(1.0).mass();
             let aabb = shape.compute_local_aabb();
             let side = (aabb.maxs - aabb.mins).max_element();
-            if !(volume > 1e-9 * side * side * side) {
+            // Accept only strictly greater: unordered (NaN) comparisons must still be rejected.
+            if volume.partial_cmp(&(1e-9 * side * side * side)) != Some(std::cmp::Ordering::Greater) {
                 return Err(degenerate());
             }
             Ok((shape, pose))

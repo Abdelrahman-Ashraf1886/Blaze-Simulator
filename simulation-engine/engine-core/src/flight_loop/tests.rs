@@ -79,7 +79,7 @@ fn run(command: FlightCommand, pos_mode: f64) -> (Simulation, FlightLoop) {
     };
     // MC_AIRMODE, physics.v1.json:1084-1089.
     let mut controller =
-        FlightLoop::new(&v, flight, yaw_ratio, Gains::px4_v1_13_3(), g, 0).unwrap();
+        FlightLoop::new(&v, flight, yaw_ratio, Gains::px4_v1_13_3(), g, 0, HoverThrustParams::default()).unwrap();
     controller.step(&mut sim, command).unwrap();
     // Give the locked controller a horizontal disturbance. A one-weight
     // lateral force for one physics step produces a nonzero displacement.
@@ -125,4 +125,103 @@ fn repeated_inputs_reproduce_the_plant_and_rotor_hash() {
         sim.state_hash_with(&controller.flight().hash_words())
     };
     assert_eq!(hash(), hash());
+}
+
+// closed_loop/tests.rs:131-153 fixes the payload mass, bisection depth and
+// 0.5% tolerance. Solve for zero motor acceleration at quarter-weight thrust,
+// including pack sag (propulsion.rs:145-151,170-172,283-286).
+fn predicted_hover(p: &Propulsion, mass: f64) -> f64 {
+    let omega = (mass * crate::math::STANDARD_GRAVITY / (4.0 * KT)).sqrt();
+    let (mut lo, mut hi) = (0.0, 1.0);
+    for _ in 0..40 {
+        let duty = (lo + hi) / 2.0;
+        let volts = p.pack_voltage(&[omega; 4], &[duty; 4]);
+        if p.motors[0].omega_dot(omega, duty * volts) < 0.0 {
+            lo = duty;
+        } else {
+            hi = duty;
+        }
+    }
+    (lo + hi) / 2.0
+}
+
+fn hover_fixture(enabled: bool, config: SimConfig) -> (Simulation, FlightLoop, f64) {
+    use crate::environment::{Environment, Surface};
+    let mass = 1.4;
+    let v = quad(mass, [0.0; 3]);
+    let p = propulsion(&v);
+    let predicted = predicted_hover(&p, mass);
+    let yaw_ratio = p.yaw_ratio();
+    let flight = Flight::new(&v, p, None, None).unwrap();
+    let hover = HoverThrustParams { mpc_use_hte: enabled, ..Default::default() };
+    let g = PositionGains { mpc_use_hte: u8::from(enabled) as f64, ..PositionGains::px4_v1_13_3() };
+    // Ground surface from environment/tests.rs:115-118. Start at the lower
+    // slowdown altitude, above the estimator's in-air gate (hover_thrust.rs:187-191).
+    let env = Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), obstacles: vec![] };
+    let sim = Simulation::with_environment(&v, config, &env, [0.0, 0.0, g.mpc_land_alt2]).unwrap();
+    let controller = FlightLoop::new(&v, flight, yaw_ratio, Gains::px4_v1_13_3(), g, 0, hover).unwrap();
+    (sim, controller, predicted)
+}
+
+#[test]
+fn hover_estimate_converges_and_ground_contact_freezes_it() {
+    for enabled in [true, false] {
+        let (mut sim, mut controller, target) = hover_fixture(enabled, SimConfig::default());
+        let initial = controller.position.hover_thrust();
+        let tolerance = 0.005 * target;
+        assert!((controller.hover_thrust_estimate().hover_thrust - target).abs() > tolerance);
+        let hold = FlightCommand::Position(Sticks::default());
+        // closed_loop/tests.rs:72-84 settles this quad for ten seconds.
+        let settle_steps = (10.0 / sim.config().dt_s).round() as usize;
+        for _ in 0..settle_steps {
+            controller.step(&mut sim, hold).unwrap();
+            if !enabled {
+                assert_eq!(controller.position.hover_thrust(), initial);
+            }
+        }
+        let airborne = controller.hover_thrust_estimate();
+        assert!(airborne.valid);
+        assert!((airborne.hover_thrust - target).abs() < tolerance, "{airborne:?} vs {target}");
+        let retained = controller.position.hover_thrust();
+        if enabled {
+            assert_eq!(retained, airborne.hover_thrust);
+        }
+        let idle = FlightCommand::Rates { body_radps: [0.0; 3], collective: 0.0 };
+        for _ in 0..settle_steps {
+            controller.step(&mut sim, idle).unwrap();
+        }
+        assert!(sim.touching_ground());
+        let landed = controller.hover_thrust_estimate();
+        assert!(!landed.valid);
+        assert_eq!(landed.hover_thrust, airborne.hover_thrust);
+        assert!(landed.variance > airborne.variance); // prediction during descent
+        for _ in 0..settle_steps {
+            controller.step(&mut sim, idle).unwrap();
+        }
+        assert_eq!(controller.hover_thrust_estimate(), landed);
+        assert_eq!(controller.position.hover_thrust(), retained);
+    }
+}
+
+#[test]
+fn airborne_estimation_replays_the_same_hash() {
+    let replay = || {
+        let (mut sim, mut controller, _) = hover_fixture(true, SimConfig::default());
+        for _ in 0..(10.0 / sim.config().dt_s).round() as usize {
+            controller.step(&mut sim, FlightCommand::Position(Sticks::default())).unwrap();
+        }
+        let estimate = controller.hover_thrust_estimate();
+        assert!(estimate.valid);
+        (sim.state_hash_with(&controller.flight().hash_words()), estimate)
+    };
+    assert_eq!(replay(), replay());
+}
+
+#[test]
+fn estimator_refuses_an_indivisible_step_before_advancing() {
+    let config = SimConfig { dt_s: ESTIMATE_INTERVAL_S * 2.0 / 3.0, ..SimConfig::default() };
+    let (mut sim, mut controller, _) = hover_fixture(true, config);
+    let before = sim.state_hash();
+    assert!(controller.step(&mut sim, FlightCommand::Position(Sticks::default())).unwrap_err().contains("divide"));
+    assert_eq!(before, sim.state_hash());
 }

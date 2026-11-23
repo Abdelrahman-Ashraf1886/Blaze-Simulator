@@ -112,8 +112,7 @@ fn heading_frame(v: Xy, heading: f64) -> Xy {
     Xy::from_angle(heading).rotate(v)
 }
 
-// Threshold inherited from the WIP's Vector.hpp:119-128 transcription.
-// The supplied v1.13.3 snapshot lacks this matrix header.
+// lib/matrix/matrix/Vector.hpp:119-128.
 fn unit_or_zero(v: Xy) -> Xy {
     if v.length() > 1e-5 {
         v / v.length()
@@ -336,6 +335,24 @@ impl FlightModes {
             } else {
                 g.mpc_z_vel_max_up
             };
+        // FlightTask.cpp:188-200 uses local height without a range sensor or home.
+        // FlightTaskManualAltitude.cpp:274-285,361 limits the shaped command
+        // before ManualAltitudeSmoothVel updates its trajectory.
+        let height = state.position[2];
+        let gradual = |low: f64, high: f64| {
+            // lib/mathlib/math/Functions.hpp:152-165, including coincident altitudes.
+            if height <= g.mpc_land_alt2 {
+                low
+            } else if height > g.mpc_land_alt1 {
+                high
+            } else {
+                low + (high - low) * ((height - g.mpc_land_alt2) / (g.mpc_land_alt1 - g.mpc_land_alt2))
+            }
+        };
+        let vz = vz.clamp(
+            -gradual(g.mpc_land_speed, g.mpc_z_vel_max_dn),
+            gradual(g.mpc_tko_speed, g.mpc_z_vel_max_up),
+        );
         let yaw_target =
             shaped(-s.yaw_right, g.mpc_yaw_expo, g.mpc_hold_dz) * g.mpc_man_y_max.to_radians();
 
@@ -481,10 +498,8 @@ impl AccelerationXy {
     }
 }
 
-// The WIP's one-dimensional minimum-time trajectory used by manual mode 4.
-// ManualVelocitySmoothingZ.cpp:52-76 confirms the call order. The supplied
-// source snapshot lacks VelocitySmoothing.cpp and ManualVelocitySmoothingZ.hpp,
-// so the inner trajectory and output accessors still need source verification.
+// ManualVelocitySmoothingZ.cpp:52-76,91-119 and .hpp:75-94 provide the
+// locked position and trajectory velocity/acceleration to manual mode 4.
 // Durations are planned at the END of each sample for evaluation on the next.
 #[derive(Clone, Default, Debug)]
 struct SmoothZ {
@@ -514,6 +529,9 @@ impl SmoothZ {
             sp.position[2] = self.x;
         } else {
             if self.locked {
+                // ManualVelocitySmoothingZ.cpp:110-114 copies the feedback on unlock.
+                // PX4 would copy a missing (NaN) feedback too and poison the trajectory;
+                // ours keeps its own velocity then. FlightLoop always has feedback here.
                 self.v = feedback.filter(|v| v.is_finite()).unwrap_or(self.v);
             }
             self.x = position;

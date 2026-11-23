@@ -217,28 +217,72 @@ fn acceleration_mode_vertical_step_starts_with_bounded_jerk_and_reaches_stick_sp
     // ManualVelocitySmoothingZ.cpp:52-76 advances the old trajectory first.
     // From rest at full stick, constant jerk J gives a=Jt, v=Jt²/2 on
     // the first moving sample. The final speed is the shaped endpoint.
+    let mut state = rest();
+    state.position[2] = PositionGains::px4_v1_13_3().mpc_land_alt1;
     for (throttle, terminal) in [(1.0, 3.0), (-1.0, -1.0)] {
         let mut m = modes(4.0);
         let cmd = FlightCommand::Position(Sticks {
             throttle,
             ..Default::default()
         });
-        let initial = position(&mut m, cmd, &rest());
+        let initial = position(&mut m, cmd, &state);
         near(initial.velocity[2], 0.0);
         near(initial.acceleration[2], 0.0);
-        let next = position(&mut m, cmd, &rest());
+        let next = position(&mut m, cmd, &state);
         near(next.acceleration[2], throttle * 8.0 * DT);
         near(next.velocity[2], throttle * 4.0 * DT * DT);
         let mut previous = next;
         // J=8, configured accelerations 4 up/3 down. Ten seconds is the
         // closed_loop/tests.rs:72-84 settling window for this plant.
         for _ in 0..(10.0 / DT) as usize {
-            let sp = position(&mut m, cmd, &rest());
+            let sp = position(&mut m, cmd, &state);
             assert!((sp.acceleration[2] - previous.acceleration[2]).abs() <= 8.0 * DT + 1e-12);
             assert!(sp.acceleration[2] <= 4.0 + 1e-12 && sp.acceleration[2] >= -3.0 - 1e-12);
             previous = sp;
         }
         near(previous.velocity[2], terminal);
         near(previous.acceleration[2], 0.0);
+    }
+}
+
+#[test]
+fn ground_slowdown_limits_climb_and_descent_at_each_height() {
+    // position_control.rs:236-239,248-249. At 7.5 m both limits are halfway
+    // between the 5 m endpoint (1.5/0.7) and the 10 m endpoint (3/1).
+    for (height, up, down) in [(0.0, 1.5, -0.7), (5.0, 1.5, -0.7),
+                                (7.5, 2.25, -0.85), (10.0, 3.0, -1.0)] {
+        let mut state = rest();
+        state.position[2] = height;
+        for (throttle, expected) in [(1.0, up), (-1.0, down)] {
+            let sticks = Sticks { throttle, ..Default::default() };
+            for (mode, cmd) in [(0.0, FlightCommand::Altitude(sticks)),
+                                (0.0, FlightCommand::Position(sticks)),
+                                (4.0, FlightCommand::Position(sticks))] {
+                let mut m = modes(mode);
+                let mut sp = position(&mut m, cmd, &state);
+                if mode == 4.0 {
+                    near(sp.velocity[2], 0.0);
+                    // Same settling window as the bounded-jerk test above.
+                    for _ in 0..(10.0 / DT) as usize {
+                        sp = position(&mut m, cmd, &state);
+                    }
+                }
+                near(sp.velocity[2], expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn vertical_unlock_copies_position_controller_feedback() {
+    for feedback in [Some(1.0), None] {
+        let mut m = modes(4.0);
+        position(&mut m, FlightCommand::Position(Sticks::default()), &rest());
+        let cmd = FlightCommand::Position(Sticks { throttle: 1.0, ..Default::default() });
+        let ModeSetpoint::Position(sp) = m.step(
+            cmd, &rest(), feedback.map(|vz| [0.0, 0.0, vz]), false, DT,
+        ).unwrap() else { panic!("expected position control") };
+        // Missing feedback keeps the trajectory's own (zero) velocity, never NaN.
+        near(sp.velocity[2], feedback.unwrap_or(0.0));
     }
 }

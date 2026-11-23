@@ -146,6 +146,10 @@ impl Simulation {
         self.env.as_ref().map_or((Vec::new(), 0), Placed::events)
     }
 
+    pub fn touching_ground(&self) -> bool {
+        self.env.as_ref().is_some_and(Placed::touching_ground)
+    }
+
     pub fn config(&self) -> SimConfig {
         self.config
     }

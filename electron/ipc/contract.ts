@@ -272,6 +272,22 @@ export interface AssemblyDocument {
    * entered: the simulation then lists the ground's friction and restitution as missing.
    */
   environment?: EnvironmentDoc | null
+  /**
+   * The project's flight conditions (4.8 part B): the user's entries the flight test needs and no
+   * source states. Absent or null = nothing entered; the flight test then lists each as missing.
+   */
+  flight?: FlightConditionsDoc | null
+}
+
+/** The flight conditions, the user's entries (no defaults; null = not entered). */
+export interface FlightConditionsDoc {
+  /** Height above sea level, m; sets the air density (standard atmosphere). */
+  ambientAltitudeM: number | null
+  /** Air temperature, °C; null = the standard atmosphere's at that altitude (not a missing value). */
+  temperatureC: number | null
+  /** The battery cut-off: the pack voltage (V) or the charge drawn (mAh) at which the run ends. */
+  cutoffType: 'voltageV' | 'chargeMah'
+  cutoffValue: number | null
 }
 
 /**
@@ -342,8 +358,6 @@ export interface FlightStartInput {
   environment: unknown
   /** ISA density at the user's altitude and temperature (src/domain/atmosphere.ts), kg/m³. */
   airDensityKgM3: number
-  /** The density the propeller data was measured or computed at, kg/m³ (the user's entry; thrust and torque scale as ρ / ρ_ref). */
-  referenceDensityKgM3: number
   /** The user's battery cut-off: no default. */
   cutoff: { type: 'voltageV' | 'chargeMah'; value: number }
   /** Body origin at the start, world frame, m. */

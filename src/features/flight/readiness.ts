@@ -6,8 +6,7 @@
  * run ends), are the user's entries. While anything is missing there is no payload, only the list.
  * Pure (no React, no IPC); the engine refuses an incomplete request too.
  */
-import { create } from 'zustand'
-import type { AssemblyDocument, FlightStartInput } from '../../../electron/ipc/contract'
+import type { AssemblyDocument, FlightConditionsDoc, FlightStartInput } from '../../../electron/ipc/contract'
 import physics from '../../../database/reference/physics.v1.json'
 import { airDensity, isaConstants } from '../../domain/atmosphere'
 import { lowestPoint } from '../../domain/collisions'
@@ -25,28 +24,17 @@ import { propulsionState } from '../workshop/propulsion-input'
 
 export type CutoffType = FlightStartInput['cutoff']['type']
 
-export interface FlightConditions {
-  /** Height above sea level, m; sets the air density (ISA, USSA 1976). Null = not entered. */
-  ambientAltitudeM: number | null
-  /**
-   * The air density the propeller data (k_T, k_Q) was measured or computed at, kg/m³. APC states 1.225 kg/m³
-   * for its files (its FAQ), a thrust table may state none: where no source does, it is the user's entry.
-   */
-  referenceDensityKgM3: number | null
-  /** Air temperature, °C. Null = the standard atmosphere's at that altitude (not a missing value). */
-  temperatureC: number | null
-  /** The run ends when the pack voltage falls to this, or the charge drawn reaches it. The type is a choice; the value is the user's. */
-  cutoffType: CutoffType
-  cutoffValue: number | null
-}
+/**
+ * The user's flight conditions, saved with the project (`assembly.flight`, schema v12). No defaults; null =
+ * not entered. (The air density each motor's propeller data was taken at is not here: it belongs to that
+ * data, `ReferenceDensity` in src/domain/propulsion.ts, and rides in the propulsion definition per motor.)
+ */
+export type FlightConditions = FlightConditionsDoc
 
-export const EMPTY_CONDITIONS: FlightConditions = { ambientAltitudeM: null, referenceDensityKgM3: null, temperatureC: null, cutoffType: 'voltageV', cutoffValue: null }
+export const EMPTY_CONDITIONS: FlightConditions = { ambientAltitudeM: null, temperatureC: null, cutoffType: 'voltageV', cutoffValue: null }
 
-interface ConditionsStore extends FlightConditions {
-  set(patch: Partial<FlightConditions>): void
-}
-/** Held for the session (not saved with the project). */
-export const useFlightConditions = create<ConditionsStore>((set) => ({ ...EMPTY_CONDITIONS, set: (patch) => set(patch) }))
+/** The project's flight conditions, or nothing entered. */
+export const conditionsOf = (doc: AssemblyDocument): FlightConditions => doc.flight ?? EMPTY_CONDITIONS
 
 const ISA = isaConstants(physics)
 /** Air density for the user's altitude and temperature (`src/domain/atmosphere.ts`). */
@@ -67,14 +55,6 @@ export function conditionBlockers(c: FlightConditions): FlightBlocker[] {
   const items: FlightBlocker[] = []
   if (c.ambientAltitudeM === null) {
     items.push({ id: 'flight-altitude', label: 'Ambient altitude', detail: 'Sets the air density (standard atmosphere); enter it under Flight setup.', link: { to: 'flight-field', elementId: 'flight-altitude' } })
-  }
-  if (c.referenceDensityKgM3 === null) {
-    items.push({
-      id: 'flight-reference-density',
-      label: 'Air density of the propeller data',
-      detail: 'Thrust and torque scale with the air density relative to the density the propeller data was measured or computed at. State it from your data (APC states 1.225 kg/m³ for its files) or enter your own, under Flight setup.',
-      link: { to: 'flight-field', elementId: 'flight-reference-density' },
-    })
   }
   if (c.cutoffValue === null) {
     items.push({
@@ -139,7 +119,7 @@ export type FlightGate = { ok: true; input: FlightStartInput } | { ok: false; bl
 export function flightGate(result: PayloadResult, c: FlightConditions): FlightGate {
   const missing = conditionBlockers(c)
   if (!result.ok) return { ok: false, blockers: [...result.blockers, ...missing] }
-  if (missing.length > 0 || c.ambientAltitudeM === null || c.referenceDensityKgM3 === null || c.cutoffValue === null) return { ok: false, blockers: missing }
+  if (missing.length > 0 || c.ambientAltitudeM === null || c.cutoffValue === null) return { ok: false, blockers: missing }
   const { payload } = result
   return {
     ok: true,
@@ -149,7 +129,6 @@ export function flightGate(result: PayloadResult, c: FlightConditions): FlightGa
       aero: payload.aero,
       environment: payload.environment,
       airDensityKgM3: airDensityFor(c.ambientAltitudeM, c.temperatureC),
-      referenceDensityKgM3: c.referenceDensityKgM3,
       cutoff: { type: c.cutoffType, value: c.cutoffValue },
       startPositionM: payload.startPositionM,
     },

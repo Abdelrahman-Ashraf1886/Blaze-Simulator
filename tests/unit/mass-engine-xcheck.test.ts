@@ -87,13 +87,14 @@ it('mass.ts output loads in the real engine, and the engine totals agree to 1e-9
 it('flies throttles through the supervisor: motor and battery readings, ISA density for the drag', async () => {
   const { readFileSync } = await import('node:fs')
   const { airDensity, isaConstants } = await import('../../src/domain/atmosphere')
+  const rho = airDensity(isaConstants(JSON.parse(readFileSync(join(__dirname, '../../database/reference/physics.v1.json'), 'utf8'))), 500)
+  // The motor data is taken to be from the flight's own density here, so the coefficients stay as stated.
   const def = quad(0, 0)
-  const motor = (partId: string) => ({ partId, kvRadPerSV: 100, resistanceOhm: 0.1, noLoadCurrentA: 0.5, thrustCoefNs2: 2e-5, torqueCoefNms2: 1e-7, inertiaKgM2: 2e-5 })
+  const motor = (partId: string) => ({ partId, kvRadPerSV: 100, resistanceOhm: 0.1, noLoadCurrentA: 0.5, thrustCoefNs2: 2e-5, torqueCoefNms2: 1e-7, inertiaKgM2: 2e-5, referenceDensityKgM3: rho })
   const propulsion = { version: 1 as const, motors: def.motors.map((m) => motor(m.partId)), battery: { openCircuitVoltageV: 10, internalResistanceOhm: 0.01, capacityC: 18720 } }
   const aero = { cdBody: [1.1, 1.1, 1.2] as Vec3, areaM2: [0.02, 0.02, 0.05] as Vec3 }
   const loaded = await sup.loadVehicle(def, { propulsion, aero })
   expect(loaded.valid).toBe(true)
-  const rho = airDensity(isaConstants(JSON.parse(readFileSync(join(__dirname, '../../database/reference/physics.v1.json'), 'utf8'))), 500)
   const run = await sup.runSim({ environment: FREE, durationS: 0.5, throttle: [0.7, 0.7, 0.7, 0.7], airDensityKgM3: rho })
   expect(run.motors!.map((m) => m.partId)).toEqual(def.motors.map((m) => m.partId))
   for (const m of run.motors!) {
@@ -121,14 +122,14 @@ it('flies throttles through the supervisor: motor and battery readings, ISA dens
  */
 it('the controller holds the offset-CoM quad level at the altitude setpoint', async () => {
   const def = quad(0, 0)
-  const motor = (partId: string) => ({ partId, kvRadPerSV: 100, resistanceOhm: 0.1, noLoadCurrentA: 0.5, thrustCoefNs2: 2e-5, torqueCoefNms2: 1e-7, inertiaKgM2: 2e-5 })
+  const motor = (partId: string) => ({ partId, kvRadPerSV: 100, resistanceOhm: 0.1, noLoadCurrentA: 0.5, thrustCoefNs2: 2e-5, torqueCoefNms2: 1e-7, inertiaKgM2: 2e-5, referenceDensityKgM3: 1.225 })
   const propulsion = { version: 1 as const, motors: def.motors.map((m) => motor(m.partId)), battery: { openCircuitVoltageV: 10, internalResistanceOhm: 0.01, capacityC: 18720 } }
   expect((await sup.loadVehicle(def, { propulsion })).valid).toBe(true)
-  const run = await sup.runSim({ environment: FREE, durationS: 10, controller: { altitudeM: 1 } })
+  const run = await sup.runSim({ environment: FREE, durationS: 10, controller: { altitudeM: 1 }, airDensityKgM3: 1.225 })
   expect(Math.abs(run.state.comM[2] - 1)).toBeLessThan(0.01)
   const tilt = 2 * Math.acos(Math.min(1, Math.abs(run.state.quaternion[3])))
   expect(tilt).toBeLessThan((0.1 * Math.PI) / 180)
   expect(def.com[0]).toBeLessThan(0)
   expect(Math.abs(run.controller!.rateIntegral[1])).toBeGreaterThan(1e-3)
-  await expect(sup.runSim({ environment: FREE, durationS: 0.1, controller: { gains: { MC_NOPE: 1 } } })).rejects.toThrow(/unknown PX4 parameter/)
+  await expect(sup.runSim({ environment: FREE, durationS: 0.1, controller: { gains: { MC_NOPE: 1 } }, airDensityKgM3: 1.225 })).rejects.toThrow(/unknown PX4 parameter/)
 }, 20_000)

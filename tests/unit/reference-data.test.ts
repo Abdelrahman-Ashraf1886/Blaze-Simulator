@@ -6,6 +6,8 @@ import { isUnit, toSI } from '../../src/domain/units'
 interface Entry {
   key: string
   value: number
+  min?: number
+  max?: number
   unit?: string
   source: string
   reference?: { url?: string; document?: string; locator?: string; retrieved?: string }
@@ -22,25 +24,37 @@ interface RefFile {
 const ref = JSON.parse(readFileSync(join(__dirname, '../../database/reference/physics.v1.json'), 'utf8')) as RefFile
 const set = (id: string) => ref.sets.find((s) => s.id === id)!
 const get = (id: string, key: string) => set(id).values.find((v) => v.key === key)!
+// Source units without a conversion in src/domain/units.ts; limited to their cited parameters.
+const px4SourceUnits: Record<string, string> = {
+  MPC_TILTMAX_AIR: 'deg', MPC_TILTMAX_LND: 'deg', MPC_MAN_TILT_MAX: 'deg',
+  MPC_VELD_LP: 'Hz', MPC_JERK_MAX: 'm/s^3', MPC_JERK_AUTO: 'm/s^3',
+  HTE_HT_NOISE: 'normalized_thrust/s',
+}
 const si = (e: Entry) => (e.unit ? toSI(e.value, e.unit as never) : e.value)
 
 describe('physics reference data (database/reference/physics.v1.json)', () => {
   it('has the expected format and unique keys per set', () => {
     expect(ref.format).toBe('blaze-uav.reference')
     expect(ref.version).toBe(1)
-    expect(ref.sets.map((s) => s.id)).toEqual(['isa', 'carbonFibrePlate', 'px4'])
+    expect(ref.sets.map((s) => s.id)).toEqual([
+      'isa', 'carbonFibrePlate', 'px4',
+      'px4Position', 'px4Allocation', 'px4ThrustModel', 'px4HoverThrust',
+    ])
     for (const s of ref.sets) {
       const keys = s.values.map((v) => v.key)
       expect(new Set(keys).size, s.id).toBe(keys.length)
     }
   })
 
-  it('every value is a finite number with a known unit (or none) and a complete citation', () => {
+  it('every value is a finite number with a known or documented source unit (or none) and a complete citation', () => {
     for (const s of ref.sets) {
       for (const v of s.values) {
         const where = `${s.id}.${v.key}`
         expect(Number.isFinite(v.value), where).toBe(true)
-        if (v.unit !== undefined) expect(isUnit(v.unit), `${where} unit ${v.unit}`).toBe(true)
+        if (v.unit !== undefined) {
+          const retainedSourceUnit = s.id.startsWith('px4') && px4SourceUnits[v.key] === v.unit
+          expect(isUnit(v.unit) || retainedSourceUnit, `${where} unit ${v.unit}`).toBe(true)
+        }
         expect(['standard', 'manufacturer', 'software-default', 'derived'], where).toContain(v.source)
         expect(v.condition?.trim(), `${where} needs a condition`).toBeTruthy()
         if (v.source === 'derived') {
@@ -58,6 +72,51 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
         expect(v.reference?.retrieved, where).toMatch(/^\d{4}-\d{2}-\d{2}$/)
       }
     }
+  })
+
+  it('new PX4 sets cite v1.13.3 definition lines and respect every documented bound', () => {
+    const counts = { px4Position: 36, px4Allocation: 1, px4ThrustModel: 1, px4HoverThrust: 6 }
+    for (const [id, count] of Object.entries(counts)) {
+      expect(set(id).values, id).toHaveLength(count)
+      for (const v of set(id).values) {
+        const where = `${id}.${v.key}`
+        expect(v.source, where).toBe('software-default')
+        expect(v.key, where).toMatch(/^(MC|MPC|HTE|THR)_[A-Z0-9_]+$/)
+        expect(v.reference?.url, where).toMatch(
+          /^https:\/\/github\.com\/PX4\/PX4-Autopilot\/blob\/v1\.13\.3\/src\/.+\.c#L[1-9]\d*$/,
+        )
+        expect(v.reference?.locator, where).toMatch(new RegExp(`PARAM_DEFINE_(FLOAT|INT32)\\(${v.key}, `))
+        const line = v.reference!.url!.split('#L')[1]
+        expect(v.reference?.locator, where).toContain(`line ${line}:`)
+        expect(Number.isFinite(v.value), where).toBe(true)
+        if (v.min !== undefined) {
+          expect(Number.isFinite(v.min), where).toBe(true)
+          expect(v.value, where).toBeGreaterThanOrEqual(v.min)
+        }
+        if (v.max !== undefined) {
+          expect(Number.isFinite(v.max), where).toBe(true)
+          expect(v.value, where).toBeLessThanOrEqual(v.max)
+        }
+        if (v.min !== undefined && v.max !== undefined) expect(v.min, where).toBeLessThanOrEqual(v.max)
+      }
+    }
+  })
+
+  it('keeps the 38-field Gains set separate and PX4 keys unique across sets', () => {
+    expect(set('px4').values).toHaveLength(38)
+    const keys = ref.sets.filter((s) => s.id.startsWith('px4')).flatMap((s) => s.values.map((v) => v.key))
+    expect(new Set(keys).size).toBe(keys.length)
+    expect(get('px4Allocation', 'MC_AIRMODE')).not.toHaveProperty('min')
+    expect(get('px4Allocation', 'MC_AIRMODE')).not.toHaveProperty('max')
+    expect(get('px4Position', 'MPC_POS_MODE')).not.toHaveProperty('min')
+    expect(get('px4Position', 'MPC_POS_MODE')).not.toHaveProperty('max')
+    expect(get('px4Position', 'MPC_XY_VEL_ALL').value).toBe(-10)
+    expect(get('px4Position', 'MPC_Z_VEL_ALL').value).toBe(-3)
+    expect(get('px4Position', 'MPC_LAND_SPEED')).toMatchObject({ min: 0.6 })
+    expect(get('px4Position', 'MPC_LAND_SPEED')).not.toHaveProperty('max')
+    expect(get('px4ThrustModel', 'THR_MDL_FAC').condition).toContain(
+      'rel_thrust = factor * rel_signal^2 + (1-factor) * rel_signal',
+    )
   })
 
   it('derived values follow their formula: R = R*/M0', () => {

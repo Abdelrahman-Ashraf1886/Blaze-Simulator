@@ -405,22 +405,27 @@ describe('ready-to-fly checklist', () => {
     const items = readyToFly(base)
     expect(items.map((i) => i.id)).toEqual([
       `component:${KV470.id}:rotorInertia`,
+      `reference-density:${KV470.id}`,
       `component:${TATTU.id}:internalResistance`,
       'body-cd',
       'ground-friction',
       'ground-restitution',
     ])
     expect(items[0]!.link).toEqual({ to: 'component', componentId: KV470.id, field: 'rotorInertia' })
-    expect(items[1]!.link).toEqual({ to: 'component', componentId: TATTU.id, field: 'internalResistance' })
-    expect(items[2]!.link).toEqual({ to: 'body-drag', axis: 'x' })
-    expect(items[2]!.label).toBe('Body drag coefficient C_d (x, y, z)')
+    // T-Motor's bench table states no air density: one item for the table's component, listing the four motors.
+    expect(items[1]!.link).toEqual({ to: 'component', componentId: KV470.id, field: 'referenceDensity' })
+    expect(items[1]!.label).toBe('Air density of the test data of MN3110 KV470')
+    expect(items[1]!.parts!.map((p) => p.id)).toEqual(['m1', 'm2', 'm3', 'm4'])
+    expect(items[2]!.link).toEqual({ to: 'component', componentId: TATTU.id, field: 'internalResistance' })
+    expect(items[3]!.link).toEqual({ to: 'body-drag', axis: 'x' })
+    expect(items[3]!.label).toBe('Body drag coefficient C_d (x, y, z)')
     // A partly entered C_d names only the missing axes and links to the first.
     const partial = readyToFly({ ...base, bodyCd: [1.1, null, 1.3] }).find((i) => i.id === 'body-cd')!
     expect(partial.label).toBe('Body drag coefficient C_d (y)')
     expect(partial.link).toEqual({ to: 'body-drag', axis: 'y' })
     // A project without environment settings: both ground values, linked to their fields.
-    expect(items[3]!.link).toEqual({ to: 'environment', elementId: 'ground-friction' })
-    expect(items[4]!.link).toEqual({ to: 'environment', elementId: 'ground-restitution' })
+    expect(items[4]!.link).toEqual({ to: 'environment', elementId: 'ground-friction' })
+    expect(items[5]!.link).toEqual({ to: 'environment', elementId: 'ground-restitution' })
   })
 
   it('adds frame mass, unlinked parts and pairs without data', () => {
@@ -439,7 +444,7 @@ describe('ready-to-fly checklist', () => {
   })
 
   it('is empty when everything is entered, and the engine definition is then complete', () => {
-    const motor = withSpec(KV470, 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured' })
+    const motor = withSpec(withSpec(KV470, 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured' }), 'referenceDensity', { value: 1.225, unit: 'kg/m³', source: 'user', condition: 'the bench\'s stated air' })
     const battery = withSpec(TATTU, 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured' })
     const motors = quad(motor, P13)
     expect(readyToFly({ ...base, motors, battery: { partId: 'b', name: 'Battery 1', component: battery }, bodyCd: [1.1, 1.1, 1.2], environmentMissing: [] })).toEqual([])
@@ -451,10 +456,71 @@ describe('ready-to-fly checklist', () => {
     const m = def.motors[0]!
     expect(m.partId).toBe('m1')
     expect(m.thrustCoefNs2).toBeCloseTo(fitPair(motor, P13)!.kT.k, 18)
+    expect(m.referenceDensityKgM3).toBe(1.225) // the entered value, per motor
     expect(m.inertiaKgM2).toBeCloseTo(1.5e-5 + propInertia(0.0142, 13 * 0.0254), 18)
     expect(def.battery).toEqual({ openCircuitVoltageV: 14.8, internalResistanceOhm: 0.012, capacityC: 5200 * 3.6 })
     // Anything missing → no definition.
     expect(propulsionDefinition(quad(KV470, P13).map((s) => analyseMotor(s)), battery)).toBeNull()
+  })
+})
+
+describe('reference air density of the thrust and torque data (4.8)', () => {
+  const slots = (motor: Component, prop: Component): MotorSlot[] =>
+    [1, 2, 3, 4].map((n) => ({ partId: `m${n}`, name: `Motor ${n}`, motor: { partId: `m${n}`, name: `Motor ${n}`, component: motor }, prop: { partId: `p${n}`, name: `Prop ${n}`, component: prop } }))
+  const input = (motor: Component, prop: Component): ReadyInput => ({
+    frameMassSet: true,
+    partsWithoutMass: [],
+    motors: slots(motor, prop),
+    battery: { partId: 'b', name: 'Battery 1', component: withSpec(TATTU, 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured' }) },
+    bodyCd: [1.1, 1.1, 1.1],
+    environmentMissing: [],
+  })
+  const rotor = (m: Component) => withSpec(m, 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured' })
+  const densityItems = (i: ReadyInput) => readyToFly(i).filter((x) => x.id.startsWith('reference-density:'))
+
+  it('APC data states it in its condition text (cited from its FAQ): derived, shown with its source, nothing to enter', () => {
+    const fit = fitPair(KV470, APC10)!
+    expect(fit.origin.kind).toBe('prop-table')
+    expect(fit.referenceDensity).toEqual({ kgM3: 1.225, from: 'condition', source: fit.origin.condition })
+    expect(fit.referenceDensity!.source).toContain('APC FAQ')
+    expect(densityItems(input(rotor(KV470), APC10))).toEqual([])
+    expect(readyToFly(input(rotor(KV470), APC10))).toEqual([])
+    const def = propulsionDefinition(slots(rotor(KV470), APC10).map((s) => analyseMotor(s)), withSpec(TATTU, 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured' }))!
+    expect(def.motors.map((m) => m.referenceDensityKgM3)).toEqual([1.225, 1.225, 1.225, 1.225])
+  })
+
+  it('T-Motor bench data states none: one required entry for its table, listing every motor, until it is entered', () => {
+    expect(fitPair(KV470, P13)!.referenceDensity).toBeNull()
+    const items = densityItems(input(rotor(KV470), P13))
+    expect(items).toHaveLength(1)
+    expect(items[0]!.parts!.map((p) => p.name)).toEqual(['Motor 1', 'Motor 2', 'Motor 3', 'Motor 4'])
+    expect(items[0]!.link).toEqual({ to: 'component', componentId: KV470.id, field: 'referenceDensity' })
+    expect(propulsionDefinition(slots(rotor(KV470), P13).map((s) => analyseMotor(s)), TATTU)).toBeNull()
+    // Entered on the motor (any density unit): the item is gone and the value rides with every motor.
+    const entered = withSpec(rotor(KV470), 'referenceDensity', { value: 0.001225, unit: 'g/cm³', source: 'user', condition: 'bench air, as stated by the user' })
+    expect(fitPair(entered, P13)!.referenceDensity).toMatchObject({ from: 'field', source: 'MN3110 KV470' })
+    expect(fitPair(entered, P13)!.referenceDensity!.kgM3).toBeCloseTo(1.225, 12)
+    expect(densityItems(input(entered, P13))).toEqual([])
+  })
+
+  it('a stated value wins over the condition text; a condition naming two densities, or none, asks', () => {
+    const fromField = fitPair(KV470, withSpec(APC10, 'referenceDensity', { value: 1.2, unit: 'kg/m³', source: 'user' }))!
+    expect(fromField.referenceDensity).toMatchObject({ kgM3: 1.2, from: 'field' })
+    const worded = (condition: string) => ({ ...APC10, specs: { ...APC10.specs, performanceTable: { ...APC10.specs.performanceTable!, condition } } })
+    expect(fitPair(KV470, worded('Computed at 1.225 kg/m³ and 1.2 kg/m3'))!.referenceDensity).toBeNull()
+    expect(fitPair(KV470, worded('Computed, air not stated'))!.referenceDensity).toBeNull()
+    expect(fitPair(KV470, worded('Standard atmosphere, 1,2 kg/m³'))!.referenceDensity!.kgM3).toBe(1.2)
+  })
+
+  it('is kept per motor: unlike data in one build give unlike entries', () => {
+    const apc = slots(rotor(KV470), APC10)
+    const mixed = [apc[0]!, ...slots(rotor(KV470), P13).slice(1)]
+    const def = propulsionDefinition(mixed.map((s) => analyseMotor(s)), withSpec(TATTU, 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured' }))
+    expect(def).toBeNull() // the three T-Motor-table motors still need theirs
+    const entered = withSpec(rotor(KV470), 'referenceDensity', { value: 1.1, unit: 'kg/m³', source: 'user' })
+    const both = [apc[0]!, ...slots(entered, P13).slice(1)]
+    const ok = propulsionDefinition(both.map((s) => analyseMotor(s)), withSpec(TATTU, 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured' }))!
+    expect(ok.motors.map((m) => m.referenceDensityKgM3)).toEqual([1.225, 1.1, 1.1, 1.1])
   })
 })
 
@@ -486,7 +552,7 @@ describe('TypeScript/Rust consistency', () => {
     }
   })
   it('the engine definition carries the bench map of the motor', () => {
-    const motor = withSpec(KV470, 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured' })
+    const motor = withSpec(withSpec(KV470, 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured' }), 'referenceDensity', { value: 1.225, unit: 'kg/m³', source: 'user' })
     const battery = withSpec(TATTU, 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured' })
     const slot: MotorSlot = { partId: 'm1', name: 'm1', motor: { partId: 'm1', name: 'm1', component: motor }, prop: { partId: 'p1', name: 'p', component: P13 } }
     const def = propulsionDefinition([analyseMotor(slot)], battery)!

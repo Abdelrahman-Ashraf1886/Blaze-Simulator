@@ -5,7 +5,7 @@ import { Section } from '@/components/section'
 import { ISA_MAX_ALTITUDE_M, ISA_MIN_ALTITUDE_M } from '@/domain/atmosphere'
 import { cn } from '@/lib/utils'
 import { useWorkshopView } from '../workshop/view-store'
-import { useFlightConditions, type CutoffType, type FlightBlocker, type FlightLink } from './readiness'
+import type { CutoffType, FlightBlocker, FlightConditions, FlightLink } from './readiness'
 
 /** Empty text clears the value (not set); otherwise a number in [min, max]. */
 const optional = (min: number, max: number, unit: string, step: number) => (text: string) => {
@@ -39,22 +39,28 @@ function useFollow(projectId: string) {
  * The flight conditions the user enters (no defaults) and, until the build can fly, the checklist of everything
  * still missing, each item linked to its field.
  */
-export function FlightSetup({ projectId, blockers, engineBlock, locked }: { projectId: string; blockers: readonly FlightBlocker[]; engineBlock: string | null; locked: boolean }) {
-  const c = useFlightConditions()
+export function FlightSetup({ projectId, conditions: c, onChange, blockers, engineBlock, locked }: {
+  projectId: string
+  conditions: FlightConditions
+  /** Saves the change with the project (an undo step, like the environment's values). */
+  onChange: (label: string, patch: Partial<FlightConditions>) => void
+  blockers: readonly FlightBlocker[]
+  engineBlock: string | null
+  locked: boolean
+}) {
   const follow = useFollow(projectId)
   return (
     <Section title="Flight setup" count={blockers.length}>
       <div data-testid="flight-conditions">
-        <NumberField key={`alt:${c.ambientAltitudeM}`} id="flight-altitude" label="Ambient altitude" unit="m" placeholder="not set" initial={show(c.ambientAltitudeM)} parse={optional(ISA_MIN_ALTITUDE_M, ISA_MAX_ALTITUDE_M, 'm', 1)} onCommit={(v) => c.set({ ambientAltitudeM: v })} />
-        <NumberField key={`rho:${c.referenceDensityKgM3}`} id="flight-reference-density" label="Air density of the propeller data" unit="kg/m³" placeholder="not set" initial={show(c.referenceDensityKgM3)} parse={optional(0.01, 20, 'kg/m³', 0.0001)} onCommit={(v) => c.set({ referenceDensityKgM3: v })} />
-        <NumberField key={`temp:${c.temperatureC}`} id="flight-temperature" label="Air temperature (blank: standard atmosphere)" unit="°C" placeholder="standard" initial={show(c.temperatureC)} parse={optional(-273, 200, '°C', 0.1)} onCommit={(v) => c.set({ temperatureC: v })} />
+        <NumberField key={`alt:${c.ambientAltitudeM}`} id="flight-altitude" label="Ambient altitude" unit="m" placeholder="not set" initial={show(c.ambientAltitudeM)} parse={optional(ISA_MIN_ALTITUDE_M, ISA_MAX_ALTITUDE_M, 'm', 1)} onCommit={(v) => onChange('Set ambient altitude', { ambientAltitudeM: v })} />
+        <NumberField key={`temp:${c.temperatureC}`} id="flight-temperature" label="Air temperature (blank: standard atmosphere)" unit="°C" placeholder="standard" initial={show(c.temperatureC)} parse={optional(-273, 200, '°C', 0.1)} onCommit={(v) => onChange('Set air temperature', { temperatureC: v })} />
         <div className="flex items-center justify-between gap-3 border-b border-line/60 py-1.5">
           <label htmlFor="flight-cutoff-type" className="text-[12.5px] text-fg-muted">Battery cut-off at</label>
           <select
             id="flight-cutoff-type"
             data-testid="flight-cutoff-type"
             value={c.cutoffType}
-            onChange={(e) => c.set({ cutoffType: e.target.value as CutoffType, cutoffValue: null })}
+            onChange={(e) => onChange('Set battery cut-off type', { cutoffType: e.target.value as CutoffType, cutoffValue: null })}
             className="h-7 rounded-[var(--radius-sm)] border border-line-strong bg-chrome px-2 text-[12.5px] text-fg"
           >
             <option value="voltageV">pack voltage</option>
@@ -69,9 +75,10 @@ export function FlightSetup({ projectId, blockers, engineBlock, locked }: { proj
           placeholder="not set"
           initial={show(c.cutoffValue)}
           parse={optional(0.001, 1e6, c.cutoffType === 'voltageV' ? 'V' : 'mAh', 0.001)}
-          onCommit={(v) => c.set({ cutoffValue: v })}
+          onCommit={(v) => onChange('Set battery cut-off', { cutoffValue: v })}
         />
       </div>
+      <p className="mt-1 text-[11.5px] leading-relaxed text-fg-subtle">Saved with the project.</p>
       {locked && <p className="mt-1 text-[11.5px] text-fg-subtle">Conditions apply to the next start.</p>}
       {blockers.length === 0 ? (
         <p className="mt-2 flex items-center gap-2 text-[12.5px] text-ok" data-testid="flight-ready">

@@ -15,7 +15,7 @@ import { useAssets } from './asset-store'
 import { NO_CAPTURE } from './capture'
 import { mountPoints, snapMount } from './inspection'
 import { useComponentIndex } from './component-index'
-import { linkedComponent, type ComponentIndex } from './links'
+import { effectiveShape, linkedComponent, type ComponentIndex } from './links'
 import { toSI, type Unit } from '@/domain/units'
 import {
   BatteryModel,
@@ -163,7 +163,7 @@ export function PartsModel({
               const assets = useAssets.getState().assets
               // Placed clear of the parts already there; if it does not fit, it stays where it was.
               attachPlaced(`Attach ${selectedPart.name} to ${label}`, geo, selectedPart.id, (d) =>
-                attach(d, geo, selectedPart.id, { kind: 'mount', id: mountId }, assets),
+                attach(d, geo, selectedPart.id, { kind: 'mount', id: mountId }, assets, (p) => effectiveShape(p, components)),
               )
               return
             }

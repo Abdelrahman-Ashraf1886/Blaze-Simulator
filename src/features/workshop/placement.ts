@@ -148,22 +148,41 @@ const mmSize = (part: AssemblyPart, components: ComponentIndex, assets: AssetBou
 export function placeClear(doc: AssemblyDocument, geo: FrameGeometry, partId: string, components: ComponentIndex, assets: AssetBounds): PlaceResult {
   const s = prepare(doc, geo, partId, components, assets)
   if (!s) return { ok: false, reason: 'The part is not in the assembly.' }
+  const { part, support } = s
+  if (part.kind === 'propeller' && !part.parentId && geo.motors.some((m) => m.id === part.mountId)) {
+    if (doc.parts.some((p) => p.kind === 'motor' && p.parentId === null && p.mountId === part.mountId)) {
+      return { ok: false, reason: `Cannot place ${part.name} on ${support.label}: attach the propeller to its motor first.` }
+    }
+    return { ok: false, reason: `Cannot add ${part.name}: add a motor to ${support.label} first.` }
+  }
   // An imported model whose size is not loaded yet cannot be checked ("cannot check" in Checks).
   if (s.moving.length === 0) return { ok: true, doc, moved: false }
-  const { part, support } = s
   const fail = (why: string): PlaceResult => ({
     ok: false,
     reason: `No free spot on ${support.label} for ${part.name} (${mmSize(part, components, assets)}): ${why} Move or remove a part, or add it elsewhere.`,
   })
   if (support.fixed) {
     const errs = errorsAt(s, 0, 0)
-    return errs.length === 0 ? { ok: true, doc, moved: false } : fail(`it would overlap ${errs.map((o) => (o.a === part.id ? o.bName : o.aName)).join(', ')} there, and a motor must sit on its mount.`)
+    const constraint = part.kind === 'motor' ? 'a motor must sit on its mount' : 'this mount only supports its centre position'
+    return errs.length === 0 ? { ok: true, doc, moved: false } : fail(`it would overlap ${errs.map((o) => (o.a === part.id ? o.bName : o.aName)).join(', ')} there, and ${constraint}.`)
   }
   const start: [number, number] = [part.position[0], part.position[1]]
   for (const [x, y] of candidates(support, start)) {
     if (errorsAt(s, x - start[0], y - start[1]).length > 0) continue
     if (x === start[0] && y === start[1]) return { ok: true, doc, moved: false }
     return { ok: true, doc: updatePart(doc, partId, { position: [x, y, part.position[2]] }), moved: true }
+  }
+  // Only describe motor spacing after the existing collision search has failed.
+  // Report actual colliding parts and their dimensions, without changing clearance rules.
+  if (part.kind === 'propeller' && doc.parts.some((p) => p.id === part.parentId && p.kind === 'motor')) {
+    const errs = errorsAt(s, 0, 0)
+    const other = doc.parts.find((p) => (p.kind === 'motor' || p.kind === 'propeller') && errs.some((o) =>
+      (o.a === part.id && o.b === p.id) || (o.b === part.id && o.a === p.id)))
+    if (other) {
+      const a = new Vector3().setFromMatrixPosition(worldMatrix(doc, geo, part.id))
+      const b = new Vector3().setFromMatrixPosition(worldMatrix(doc, geo, other.id))
+      return fail(`the propeller is too large for the available motor spacing: it overlaps ${other.name} (${mmSize(other, components, assets)}), with centres ${Math.round(a.distanceTo(b) * 1000)} mm apart (frame motor diagonal ${Math.round(doc.frame.motorDiagonal * 1000)} mm).`)
+    }
   }
   return fail('every position overlaps another part by more than your tolerance.')
 }

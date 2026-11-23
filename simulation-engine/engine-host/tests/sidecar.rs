@@ -290,7 +290,7 @@ fn vehicle_load_accepts_propulsion_and_refuses_a_mismatch() {
     v["motors"] = serde_json::json!([{ "partId": "m1", "position": [0.1, 0.1, 0.05], "thrustAxis": [0, 0, 1], "spin": "cw" }]);
     let motor = |id: &str| {
         serde_json::json!({ "partId": id, "kvRadPerSV": 49.22, "resistanceOhm": 0.135, "noLoadCurrentA": 0.3,
-            "thrustCoefNs2": 2.294e-5, "torqueCoefNms2": 3.7e-7, "inertiaKgM2": 4e-5 })
+            "thrustCoefNs2": 2.294e-5, "torqueCoefNms2": 3.7e-7, "inertiaKgM2": 4e-5, "referenceDensityKgM3": 1.225 })
     };
     let battery = serde_json::json!({ "openCircuitVoltageV": 14.8, "internalResistanceOhm": 0.012, "capacityC": 18720.0 });
 
@@ -326,16 +326,16 @@ fn sim_run_flies_the_throttles_and_reports_motors_and_battery() {
     v["motors"] = serde_json::json!([{ "partId": "m1", "position": [-0.05, 0.0, 0.0375], "thrustAxis": [0, 0, 1], "spin": "cw" }]);
     let p = serde_json::json!({ "version": 1, "battery": { "openCircuitVoltageV": 14.8, "internalResistanceOhm": 0.012, "capacityC": 18720.0 },
         "motors": [{ "partId": "m1", "kvRadPerSV": 49.22, "resistanceOhm": 0.135, "noLoadCurrentA": 0.3,
-            "thrustCoefNs2": 2.294e-5, "torqueCoefNms2": 3.7e-7, "inertiaKgM2": 4e-5 }] });
+            "thrustCoefNs2": 2.294e-5, "torqueCoefNms2": 3.7e-7, "inertiaKgM2": 4e-5, "referenceDensityKgM3": 1.225 }] });
 
     // Without propulsion: throttle is refused.
     e.call(serde_json::json!({"type": "vehicle.load", "vehicle": v}));
-    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [0.5]}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [0.5], "airDensityKgM3": 1.225}));
     assert_eq!(r["error"]["code"], "INVALID_PARAMS", "{r}");
 
     let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": v, "propulsion": p}));
     assert_eq!(r["result"]["valid"], true, "{r}");
-    let run = |e: &mut Engine| e.call(serde_json::json!({"type": "sim.run", "durationS": 0.5, "environment": free, "throttle": [0.6]}));
+    let run = |e: &mut Engine| e.call(serde_json::json!({"type": "sim.run", "durationS": 0.5, "environment": free, "throttle": [0.6], "airDensityKgM3": 1.225}));
     let r = run(&mut e);
     assert_eq!(r["ok"], true, "{r}");
     let m = &r["result"]["motors"][0];
@@ -354,8 +354,8 @@ fn sim_run_flies_the_throttles_and_reports_motors_and_battery() {
     // A body load with propulsion, a wrong throttle count or range: refused.
     for bad in [
         serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "forceBodyN": [0, 0, 1]}),
-        serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [0.5, 0.5]}),
-        serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [1.5]}),
+        serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [0.5, 0.5], "airDensityKgM3": 1.225}),
+        serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "throttle": [1.5], "airDensityKgM3": 1.225}),
     ] {
         assert_eq!(e.call(bad)["error"]["code"], "INVALID_PARAMS");
     }
@@ -387,13 +387,13 @@ fn sim_run_with_the_controller_holds_an_altitude() {
         "totalMassKg": 1.0, "com": [0.0, 0.0, 0.0], "inertia": [0.01, 0.01, 0.02, 0.0, 0.0, 0.0], "missingMass": []
     });
     let m = |id: &str| serde_json::json!({ "partId": id, "kvRadPerSV": 100.0, "resistanceOhm": 0.1, "noLoadCurrentA": 0.5,
-        "thrustCoefNs2": 2e-5, "torqueCoefNms2": 1e-7, "inertiaKgM2": 2e-5 });
+        "thrustCoefNs2": 2e-5, "torqueCoefNms2": 1e-7, "inertiaKgM2": 2e-5, "referenceDensityKgM3": 1.225 });
     let p = serde_json::json!({ "version": 1, "motors": [m("m1"), m("m2"), m("m3"), m("m4")],
         "battery": { "openCircuitVoltageV": 10.0, "internalResistanceOhm": 0.01, "capacityC": 18720.0 } });
     let r = e.call(serde_json::json!({"type": "vehicle.load", "vehicle": v, "propulsion": p}));
     assert_eq!(r["result"]["valid"], true, "{r}");
 
-    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 10.0, "environment": free, "controller": {"altitudeM": 0.5}}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 10.0, "environment": free, "controller": {"altitudeM": 0.5}, "airDensityKgM3": 1.225}));
     assert_eq!(r["ok"], true, "{r}");
     let z = r["result"]["state"]["comM"][2].as_f64().unwrap();
     assert!((z - 0.5).abs() < 0.01, "z = {z}");
@@ -406,10 +406,10 @@ fn sim_run_with_the_controller_holds_an_altitude() {
         (serde_json::json!({"altitudeM": 0.5, "attitude": [0.0, 0.0, 0.0, 2.0]}), "unit quaternion"),
         (serde_json::json!({"altitudeM": 0.5, "gains": {"MC_NOPE": 1.0}}), "unknown PX4 parameter"),
     ] {
-        let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "controller": bad}));
+        let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "controller": bad, "airDensityKgM3": 1.225}));
         assert!(r["error"]["message"].as_str().unwrap().contains(why), "{r}");
     }
-    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "controller": {}, "throttle": [0.5, 0.5, 0.5, 0.5]}));
+    let r = e.call(serde_json::json!({"type": "sim.run", "durationS": 0.1, "environment": free, "controller": {}, "throttle": [0.5, 0.5, 0.5, 0.5], "airDensityKgM3": 1.225}));
     assert_eq!(r["error"]["code"], "INVALID_PARAMS", "{r}");
 }
 

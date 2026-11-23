@@ -74,6 +74,8 @@ export const PropulsionDefinitionSchema = z.strictObject({
       thrustCoefNs2: positive,
       torqueCoefNms2: positive,
       inertiaKgM2: positive,
+      /** The air density (kg/m³) the thrust and torque data was measured or computed at; a flight scales both by its own density relative to it. */
+      referenceDensityKgM3: positive,
       /** [throttle, effective duty] pairs (an empirical bench ratio); absent = ideal ESC. */
       throttleMap: z.array(z.tuple([num, num])).min(1).optional(),
     }),
@@ -250,10 +252,8 @@ export const FlightSessionStartParamsSchema = z.strictObject({
   environment: EnvironmentSchema,
   /** Body origin at the start, world frame. */
   startPositionM: vec3.optional(),
-  /** ISA density at the user's altitude (src/domain/atmosphere.ts), kg/m³. */
+  /** ISA density at the user's altitude (src/domain/atmosphere.ts), kg/m³; each motor's thrust and torque scale by it relative to that motor's own reference density (propulsion definition). */
   airDensityKgM3: num.refine((v) => v > 0, 'must be positive'),
-  /** The air density the propeller data (k_T, k_Q) was measured or computed at, kg/m³: thrust and torque scale as ρ / ρ_ref. No default. */
-  referenceDensityKgM3: num.refine((v) => v > 0, 'must be positive'),
   /** The user's choice; no default. */
   cutoff: z.discriminatedUnion('type', [
     z.strictObject({ type: z.literal('voltageV'), value: num.refine((v) => v > 0, 'must be positive') }),

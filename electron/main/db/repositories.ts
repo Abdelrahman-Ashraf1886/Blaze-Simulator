@@ -18,6 +18,7 @@ import type {
   CreateProjectInput,
   FrameParams,
   EnvironmentDoc,
+  FlightConditionsDoc,
   FrameType,
   InterferenceSettingsDoc,
   ModelHull,
@@ -366,6 +367,7 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
               frame_mass_source: 'user' | null
               interference_json: string | null
               environment_json: string | null
+              flight_json?: string | null
               body_cd_x?: number | null
               body_cd_y?: number | null
               body_cd_z?: number | null
@@ -409,6 +411,8 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           // Omitted when not set, so documents saved before schema v10 round-trip unchanged.
           ...(row.interference_json !== null ? { interference: JSON.parse(row.interference_json) as InterferenceSettingsDoc } : {}),
           ...(row.environment_json !== null ? { environment: JSON.parse(row.environment_json) as EnvironmentDoc } : {}),
+          // Omitted when not set (schema v12), like the environment.
+          ...(row.flight_json != null ? { flight: JSON.parse(row.flight_json) as FlightConditionsDoc } : {}),
           // Omitted when not set (schema v11), like the frame mass.
           ...(row.body_cd_source != null
             ? { bodyDrag: { cd: [row.body_cd_x ?? null, row.body_cd_y ?? null, row.body_cd_z ?? null], source: row.body_cd_source } }
@@ -447,13 +451,13 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
         const ts = now().toISOString()
         db.prepare(
           `INSERT INTO assemblies (project_id, revision, frame_json, motors_json, wiring_json, frame_mass_kg, frame_mass_source,
-             interference_json, environment_json, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             interference_json, environment_json, flight_json, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (project_id) DO UPDATE SET revision = excluded.revision, frame_json = excluded.frame_json,
              motors_json = excluded.motors_json, wiring_json = excluded.wiring_json,
              frame_mass_kg = excluded.frame_mass_kg, frame_mass_source = excluded.frame_mass_source,
              interference_json = excluded.interference_json, environment_json = excluded.environment_json,
-             updated_at = excluded.updated_at`,
+             flight_json = excluded.flight_json, updated_at = excluded.updated_at`,
         ).run(
           input.projectId,
           revision,
@@ -464,6 +468,7 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           input.frameMass?.source ?? null,
           input.interference ? JSON.stringify(input.interference) : null,
           input.environment ? JSON.stringify(input.environment) : null,
+          input.flight ? JSON.stringify(input.flight) : null,
           ts,
         )
         // Separate statement so the columns of schema v11 stay apart from the upsert above.

@@ -67,9 +67,12 @@ test('propulsion: fit and validation per pair, Ready-to-fly checklist with links
   await expect(page.getByTestId('rotor-missing')).toBeVisible()
 
   // Exactly the values no source states for these parts.
-  await expect(items(page)).toHaveCount(5)
+  await expect(items(page)).toHaveCount(6)
   for (const id of ['body-cd', 'ground-friction', 'ground-restitution']) await expect(item(page, id)).toBeVisible()
   await expect(items(page).filter({ hasText: 'Motor rotor inertia' })).toHaveCount(1)
+  // T-Motor's bench table states no air density: one item for the table, not one per motor (4.8). APC's data would name it.
+  await expect(items(page).filter({ hasText: 'Air density of the test data of MN3110 KV470' })).toHaveCount(1)
+  await expect(page.getByTestId('pair-density')).toHaveAttribute('data-from', 'missing')
   await expect(items(page).filter({ hasText: 'Battery internal resistance' })).toHaveCount(1)
   await first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1600, 1000))
   await page.getByTestId('ready-section').scrollIntoViewIfNeeded()
@@ -93,7 +96,7 @@ test('propulsion: fit and validation per pair, Ready-to-fly checklist with links
   await commit(page, 'body-cd-y', '')
   await expect(item(page, 'body-cd')).toContainText('C_d (y)')
   await commit(page, 'body-cd-y', '1.1')
-  await expect(items(page)).toHaveCount(4)
+  await expect(items(page)).toHaveCount(5)
 
   // Battery R_int: an override on this battery part only (inspector), undoable.
   const rint = () => items(page).filter({ hasText: 'Battery internal resistance' })
@@ -135,6 +138,17 @@ test('propulsion: fit and validation per pair, Ready-to-fly checklist with links
   await expect(page.getByTestId('viewport-3d').locator('canvas')).toBeVisible()
   await expect(items(page).filter({ hasText: 'Motor rotor inertia' })).toHaveCount(0)
   await expect(page.getByTestId('rotor-missing')).toHaveCount(0)
+  // The air density of the bench table: entered on the motor in the library, like the rotor inertia.
+  await items(page).filter({ hasText: 'Air density of the test data' }).getByRole('button').first().click()
+  await expect(page.getByTestId('component-detail')).toContainText('MN3110 KV470')
+  await expect(page.getByTestId('spec-referenceDensity')).toHaveAttribute('data-highlight', 'true')
+  await page.getByTestId('fill-value').fill('1.225')
+  await page.getByTestId('fill-condition').fill('bench air, as stated by the user')
+  await page.getByTestId('fill-save').click()
+  await expect(page.getByTestId('spec-referenceDensity')).toContainText('1.225 kg/m³')
+  await page.goBack()
+  await expect(page.getByTestId('viewport-3d').locator('canvas')).toBeVisible()
+  await expect(page.getByTestId('pair-density')).toHaveAttribute('data-from', 'field')
   await expect(items(page)).toHaveCount(2) // ground friction and restitution (4.4)
   await page.getByTestId('ready-section').scrollIntoViewIfNeeded()
   await page.screenshot({ path: shot('checklist-after') })

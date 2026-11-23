@@ -41,6 +41,8 @@ async function buildQuad(page: Page, name: string, { environment }: { environmen
     const all = (await api.components.list()).data
     const byName = (n: string) => all.find((c) => c.name === n)!
     await api.components.setFill(byName('MN3110 KV470').id, 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured', condition: 'bifilar pendulum, bell and shaft' })
+    // The air density of T-Motor's bench table: no source states it, so it is the user's entry for that data.
+    await api.components.setFill(byName('MN3110 KV470').id, 'referenceDensity', { value: 1.225, unit: 'kg/m³', source: 'user', condition: 'bench air, as stated by the user' })
     await api.components.setFill(byName('Tattu G-Tech 5200mAh 4S 35C').id, 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured', condition: '4-wire AC, 1 kHz, 25 °C' })
   })
   await createProject(page, name)
@@ -92,16 +94,12 @@ test('live flight: a ready build starts, W climbs, release holds a vertical spee
   await openFlight(page, 'Live quad')
 
   // Everything the build needs is stated or entered; the flight conditions (altitude, cut-off) are the user's.
-  await expect(page.getByTestId('flight-blocker')).toHaveCount(3)
+  await expect(page.getByTestId('flight-blocker')).toHaveCount(2)
   await expect(page.getByTestId('flight-blocker').first()).toHaveAttribute('data-item', 'flight-altitude')
-  await expect(page.getByTestId('flight-blocker').nth(1)).toHaveAttribute('data-item', 'flight-reference-density')
-  await expect(page.getByTestId('flight-blocker').nth(2)).toHaveAttribute('data-item', 'flight-cutoff')
+  await expect(page.getByTestId('flight-blocker').nth(1)).toHaveAttribute('data-item', 'flight-cutoff')
   await expect(page.getByTestId('flight-start')).toBeDisabled()
   await expect(page.getByText('Demo data')).toHaveCount(0)
   await commit(page, 'flight-altitude', '0')
-  await expect(page.getByTestId('flight-blocker')).toHaveCount(2)
-  // The propeller data's air density is the user's entry (APC states 1.225 kg/m³ for its files).
-  await commit(page, 'flight-reference-density', '1.225')
   await expect(page.getByTestId('flight-blocker')).toHaveCount(1)
   await commit(page, 'flight-cutoff-value', '12')
   await expect(page.getByTestId('flight-ready')).toBeVisible()
@@ -144,6 +142,17 @@ test('live flight: a ready build starts, W climbs, release holds a vertical spee
   await expect(page.getByTestId('flight-debug')).toContainText('Charge cut-off')
   await expect(page.getByTestId('flight-start')).toBeEnabled()
   expect(errors).toEqual([])
+
+  // The conditions are saved with the project: after a restart they are still entered.
+  await page.waitForTimeout(1000)
+  await app.close()
+  const second = await launchApp(userData)
+  running.push(second.app)
+  await openFlight(second.page, 'Live quad')
+  await expect(second.page.getByTestId('flight-altitude')).toHaveValue('0')
+  await expect(second.page.getByTestId('flight-cutoff-type')).toHaveValue('chargeMah')
+  await expect(second.page.getByTestId('flight-cutoff-value')).toHaveValue('1')
+  await expect(second.page.getByTestId('flight-ready')).toBeVisible()
 })
 
 test('live flight: a build missing a cut-off or an environment value shows the checklist and cannot start', async () => {
@@ -157,15 +166,14 @@ test('live flight: a build missing a cut-off or an environment value shows the c
   const items = page.getByTestId('flight-blocker')
   const item = (id: string) => page.locator(`[data-testid=flight-blocker][data-item="${id}"]`)
   await expect(page.getByTestId('flight-blockers')).toBeVisible()
-  for (const id of ['ground-friction', 'ground-restitution', 'flight-altitude', 'flight-reference-density', 'flight-cutoff']) await expect(item(id)).toBeVisible()
-  await expect(items).toHaveCount(5)
+  for (const id of ['ground-friction', 'ground-restitution', 'flight-altitude', 'flight-cutoff']) await expect(item(id)).toBeVisible()
+  await expect(items).toHaveCount(4)
   await expect(page.getByTestId('flight-ready')).toHaveCount(0)
   await expect(page.getByTestId('flight-start')).toBeDisabled()
   await page.screenshot({ path: shot('checklist') })
 
   // Entering the conditions leaves the environment values: still no start.
   await commit(page, 'flight-altitude', '0')
-  await commit(page, 'flight-reference-density', '1.225')
   await commit(page, 'flight-cutoff-value', '12')
   await expect(items).toHaveCount(2)
   await expect(page.getByTestId('flight-start')).toBeDisabled()

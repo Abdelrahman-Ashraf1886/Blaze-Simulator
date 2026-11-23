@@ -165,6 +165,18 @@ export const environmentDocSchema = z
       }),
   })
   .strict()
+const optionalNumber = (min: number, max: number, what: string) =>
+  z.number().refine(Number.isFinite, `${what} must be a number`).min(min, `${what} must be at least ${min}`).max(max, `${what} must be at most ${max}`).nullable()
+
+/** The flight conditions: the user's entries, null = not entered. Bounds are sanity limits, not defaults. */
+export const flightConditionsDocSchema = z
+  .object({
+    ambientAltitudeM: optionalNumber(-5000, 11000, 'The ambient altitude'),
+    temperatureC: optionalNumber(-273, 200, 'The air temperature'),
+    cutoffType: z.enum(['voltageV', 'chargeMah']),
+    cutoffValue: optionalNumber(0.001, 1e6, 'The battery cut-off'),
+  })
+  .strict()
 /** One axis of the body drag coefficient; null = not entered. */
 const bodyCd = z.number().positive('C_d must be more than 0').max(10, 'C_d must be at most 10').nullable()
 
@@ -197,6 +209,7 @@ export const saveAssemblySchema = z
       .record(z.uuid(), z.object({ x: z.number().min(-1e5).max(1e5), y: z.number().min(-1e5).max(1e5) }).strict())
       .optional(),
     environment: environmentDocSchema.nullable().optional(),
+    flight: flightConditionsDocSchema.nullable().optional(),
     interference: z
       .object({
         toleranceM: z

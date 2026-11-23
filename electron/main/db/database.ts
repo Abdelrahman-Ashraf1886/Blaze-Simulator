@@ -10,11 +10,12 @@ import m0008 from '../../../database/migrations/0008_frame_mass.sql?raw'
 import m0009 from '../../../database/migrations/0009_part_kinds_inertia.sql?raw'
 import m0010 from '../../../database/migrations/0010_collisions.sql?raw'
 import m0011 from '../../../database/migrations/0011_physics_inputs.sql?raw'
+import m0012 from '../../../database/migrations/0012_flight_conditions.sql?raw'
 
 export type Db = Database.Database
 
 /** Ordered list of migrations. Append only; never edit a shipped migration. */
-export const MIGRATIONS: readonly string[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011]
+export const MIGRATIONS: readonly string[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012]
 
 /**
  * Open (or create) the database and bring it to the latest schema version.

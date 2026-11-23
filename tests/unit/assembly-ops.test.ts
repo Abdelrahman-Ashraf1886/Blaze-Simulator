@@ -11,10 +11,14 @@ import {
   duplicatePart,
   fromEulerDeg,
   halfHeight,
+  seatPropsOnMotors,
   toEulerDeg,
+  updatePart,
   worldMatrix,
+  type AssetBounds,
 } from '../../src/features/workshop/assembly-ops'
 import { buildFrame } from '../../src/three/frame-geometry'
+import { assemblyInterferenceFindings } from '../../src/features/workshop/interference-input'
 
 const FRAME = { motorDiagonal: 0.45, armWidth: 0.02, armThickness: 0.004, plateSize: 0.12 }
 const empty = (): AssemblyDocument => ({ frame: FRAME, motors: {}, parts: [] })
@@ -22,6 +26,62 @@ let n = 0
 const ids = () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`
 
 describe('assembly operations', () => {
+  it('seats legacy props using effective dimensions and preserves shaft rotation in the motor frame', () => {
+    const geo = buildFrame('hex-x', FRAME, { 'motor-3': { spin: 'cw', tilt: 0.2 } })
+    const motor = addPart(empty(), 'motor', { kind: 'mount', id: 'motor-3' }, 0, ids())
+    const prop = addPart(motor.doc, 'propeller', { kind: 'part', id: motor.part.id }, 0, ids())
+    const legacy = updatePart(updatePart(prop.doc, motor.part.id, { rotation: fromEulerDeg([0, 0, 20]) }), prop.part.id, {
+      parentId: null, mountId: 'motor-3', position: [0, 0, 0.004], rotation: fromEulerDeg([0, 0, 75]),
+    })
+    const snapshot = structuredClone(legacy)
+    const shapeOf = (p: typeof motor.part) => p.kind === 'motor'
+      ? { type: 'cylinder' as const, radius: 0.014, height: 0.05 }
+      : { type: 'model' as const, assetId: 'prop-model', units: 'm' as const, upAxis: 'z' as const }
+    const assets: AssetBounds = { 'prop-model': { bounds: { min: [-0.1, -0.1, -0.006], max: [0.1, 0.1, 0.006] } } }
+    const upgraded = seatPropsOnMotors(legacy, geo, assets, shapeOf)
+    const seated = upgraded.parts.find((p) => p.id === prop.part.id)!
+    expect(seated).toMatchObject({ parentId: motor.part.id, mountId: null })
+    expect(seated.position[2]).toBeCloseTo(0.031)
+    toEulerDeg(seated.rotation).forEach((v, i) => expect(v).toBeCloseTo([0, 0, 55][i]!))
+    expect(legacy).toEqual(snapshot)
+    expect(seatPropsOnMotors(upgraded, geo, assets, shapeOf)).toBe(upgraded)
+  })
+
+  it('keeps only the first legacy prop on a motor and reports extras without stacking them', () => {
+    const geo = buildFrame('hex-x', FRAME)
+    const motor = addPart(empty(), 'motor', { kind: 'mount', id: 'motor-3' }, 0, ids())
+    const first = addPart(motor.doc, 'propeller', { kind: 'part', id: motor.part.id }, 0, ids())
+    const second = addPart(first.doc, 'propeller', { kind: 'part', id: motor.part.id }, 0, ids())
+    let legacy = second.doc
+    for (const p of [first.part, second.part]) {
+      legacy = updatePart(legacy, p.id, { parentId: null, mountId: 'motor-3', position: [0, 0, 0.004] })
+    }
+    const upgraded = seatPropsOnMotors(legacy, geo)
+    expect(upgraded.parts.find((p) => p.id === first.part.id)!.parentId).toBe(motor.part.id)
+    expect(upgraded.parts.find((p) => p.id === second.part.id)).toBe(legacy.parts.find((p) => p.id === second.part.id))
+    expect(assemblyInterferenceFindings(upgraded, geo, {}, {})).toContainEqual(expect.objectContaining({
+      severity: 'error', message: expect.stringContaining('Motor 1 already carries Propeller 1'),
+      partIds: [second.part.id, motor.part.id, first.part.id],
+    }))
+    expect(seatPropsOnMotors(upgraded, geo)).toBe(upgraded)
+    // An existing attached prop takes precedence even if a legacy prop comes first.
+    const occupied = updatePart(legacy, second.part.id, { parentId: motor.part.id, mountId: null })
+    expect(seatPropsOnMotors(occupied, geo)).toBe(occupied)
+  })
+
+  it('resolves mount-targeted props for insertion and reattachment using the motor effective height', () => {
+    const geo = buildFrame('hex-x', FRAME)
+    const motor = addPart(empty(), 'motor', { kind: 'mount', id: 'motor-3' }, 0, ids())
+    const shapeOf = (p: typeof motor.part) => p.kind === 'motor' ? { type: 'cylinder' as const, radius: 0.014, height: 0.05 } : p.shape
+    const prop = addPart(motor.doc, 'propeller', { kind: 'mount', id: 'motor-3' }, 0, ids(), {}, shapeOf)
+    expect(prop.part).toMatchObject({ parentId: motor.part.id, mountId: null })
+    expect(prop.part.position[2]).toBeCloseTo(0.029)
+    const detached = attach(prop.doc, geo, prop.part.id, { kind: 'none' })
+    const reattached = attach(detached, geo, prop.part.id, { kind: 'mount', id: 'motor-3' }, {}, shapeOf)
+    expect(reattached.parts.find((p) => p.id === prop.part.id)).toMatchObject({ parentId: motor.part.id, mountId: null })
+    expect(reattached.parts.find((p) => p.id === prop.part.id)!.position[2]).toBeCloseTo(0.029)
+  })
+
   it('adds parts resting on a mount, a part, or the frame top, with numbered names and no mass', () => {
     let doc = empty()
     const m = addPart(doc, 'motor', { kind: 'mount', id: 'motor-1' }, 0.004, ids())

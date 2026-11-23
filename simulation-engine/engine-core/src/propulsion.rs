@@ -54,6 +54,12 @@ pub struct MotorPropulsion {
     /// Absent = ideal ESC, e = d.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub throttle_map: Option<Vec<[f64; 2]>>,
+    /// The air density (kg/m³) the data behind `thrustCoefNs2` and `torqueCoefNms2` was
+    /// measured or computed at: stated by its source (APC: the sea-level standard
+    /// atmosphere) or the user's entry for that data. A flight scales both coefficients by
+    /// ρ_air / ρ_ref (`Flight::scale_to_air_density`) and refuses a motor without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_density_kg_m3: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -85,6 +91,8 @@ pub struct MotorModel {
     pub j: f64,
     /// `[d, e]` points; empty = ideal (e = d).
     pub map: Vec<[f64; 2]>,
+    /// The air density the coefficients were fitted at, kg/m³ (see `MotorPropulsion`).
+    pub reference_density: Option<f64>,
 }
 
 impl MotorModel {
@@ -98,6 +106,7 @@ impl MotorModel {
             k_torque: m.torque_coef_nms2,
             j: m.inertia_kg_m2,
             map: m.throttle_map.clone().unwrap_or_default(),
+            reference_density: m.reference_density_kg_m3,
         }
     }
 
@@ -233,6 +242,9 @@ impl Propulsion {
                     ));
                 }
             }
+            if let Some(rho) = m.reference_density_kg_m3 {
+                positive(&mut errors, p("referenceDensityKgM3"), rho);
+            }
             if !(m.no_load_current_a.is_finite() && m.no_load_current_a >= 0.0) {
                 errors.push(error(p("noLoadCurrentA"), format!("must be a number ≥ 0 (got {})", m.no_load_current_a)));
             }
@@ -342,6 +354,7 @@ mod tests {
             torque_coef_nms2: 1e-7,
             inertia_kg_m2: 2e-5,
             throttle_map: None,
+            reference_density_kg_m3: None,
         }
     }
 
@@ -552,7 +565,7 @@ mod tests {
             let f = |k: &str| c[k].as_f64().unwrap();
             let map: Vec<[f64; 2]> = serde_json::from_value(c["throttleMap"].clone()).unwrap();
             let kv = f("kvRadPerSV");
-            let m = MotorModel { kv, kt: 1.0 / kv, r: f("resistanceOhm"), i0: f("noLoadCurrentA"), k_thrust: 0.0, k_torque: f("torqueCoefNms2"), j: 1.0, map };
+            let m = MotorModel { kv, kt: 1.0 / kv, r: f("resistanceOhm"), i0: f("noLoadCurrentA"), k_thrust: 0.0, k_torque: f("torqueCoefNms2"), j: 1.0, map, reference_density: None };
             let (v, rs, d) = (f("supplyV"), f("sourceResistanceOhm"), f("throttle"));
             let e = m.effective_duty(d);
             let omega = m.steady_omega(e * v, e * e * rs);

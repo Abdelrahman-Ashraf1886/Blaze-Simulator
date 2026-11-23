@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { AssemblyDocument, FrameParams } from '../../electron/ipc/contract'
-import { addPart, duplicatePart, halfHeight, updatePart } from '../../src/features/workshop/assembly-ops'
+import { addPart, attach, duplicatePart, halfHeight, seatPropsOnMotors, updatePart, worldMatrix } from '../../src/features/workshop/assembly-ops'
 import { assemblyOverlaps } from '../../src/features/workshop/interference-input'
 import { candidates, partErrors, placeClear, reseat, supportOf } from '../../src/features/workshop/placement'
 import { buildFrame } from '../../src/three/frame-geometry'
@@ -24,6 +24,94 @@ function add(doc: AssemblyDocument, kind: Parameters<typeof addPart>[1], target:
 }
 
 describe('placement', () => {
+  const hexFrame = { ...frame, motorDiagonal: 0.27 }
+  const hex = buildFrame('hex-x', hexFrame)
+  function hexWithMotors() {
+    let doc = { ...base, frame: hexFrame }
+    for (const m of hex.motors) doc = addPart(doc, 'motor', { kind: 'mount', id: m.id }, t, `m${m.number}`).doc
+    return addPart(doc, 'propeller', { kind: 'part', id: 'm4' }, t, 'p4').doc
+  }
+
+  it('upgrades a legacy Hex X prop on bare motor-3 and clears its overlap with Motor 2', () => {
+    const added = addPart(hexWithMotors(), 'propeller', { kind: 'mount', id: 'motor-3' }, t, 'p3')
+    const legacy = updatePart(added.doc, 'p3', { parentId: null, mountId: 'motor-3', position: [0, 0, 0.004] })
+    expect(partErrors(legacy, hex, 'p3', {}, {}).some((o) => o.aName === 'Motor 2' || o.bName === 'Motor 2')).toBe(true)
+    const upgraded = seatPropsOnMotors(legacy, hex)
+    expect(upgraded.parts.find((p) => p.id === 'p3')).toEqual(added.part)
+    expect(partErrors(upgraded, hex, 'p3', {}, {})).toEqual([])
+    expect(placeClear(upgraded, hex, 'p3', {}, {}).ok).toBe(true)
+    expect(seatPropsOnMotors(upgraded, hex)).toBe(upgraded)
+  })
+
+  it('leaves a legacy prop without a motor unchanged, retaining the missing-motor explanation', () => {
+    const legacy = addPart(base, 'propeller', { kind: 'mount', id: 'motor-3' }, t, 'p3').doc
+    expect(seatPropsOnMotors(legacy, hex)).toBe(legacy)
+    expect(placeClear(legacy, hex, 'p3', {}, {})).toEqual({
+      ok: false, reason: 'Cannot add Propeller 1: add a motor to Motor 3 mount first.',
+    })
+  })
+
+  it('adds a prop to Motor 3 on a fully populated Hex X with a prop already on Motor 4', () => {
+    const before = hexWithMotors()
+    const added = addPart(before, 'propeller', { kind: 'mount', id: 'motor-3' }, t, 'p3')
+    const bare = updatePart(added.doc, 'p3', { parentId: null, mountId: 'motor-3', position: [0, 0, 0.004] })
+    expect(partErrors(bare, hex, 'p3', {}, {}).some((o) => o.a === 'm2' || o.b === 'm2')).toBe(true)
+    expect(placeClear(bare, hex, 'p3', {}, {})).toEqual({ ok: false, reason: 'Cannot place Propeller 2 on Motor 3 mount: attach the propeller to its motor first.' })
+    expect(added.part).toMatchObject({ parentId: 'm3', mountId: null, position: [0, 0, 0.019] })
+    const result = placeClear(added.doc, hex, 'p3', {}, {})
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(assemblyOverlaps(result.doc, hex, {}, {}).filter((o) => o.status === 'error')).toEqual([])
+    expect(worldMatrix(result.doc, hex, 'p3').elements[14]).toBeCloseTo(t + 0.03 + 0.004)
+    // The 254 mm discs on opposite mounts (270 mm apart) clear each other;
+    // neighbouring motor bodies end at z=34 mm, where the prop's bottom starts.
+    expect(Math.hypot(...hex.motors[2]!.position.map((v, i) => v - hex.motors[3]!.position[i]!))).toBeCloseTo(0.27)
+  })
+
+  it('refuses a prop on an empty motor mount, including reattachment and unknown model bounds', () => {
+    const before = hexWithMotors()
+    const doc = { ...before, parts: before.parts.filter((p) => p.id !== 'm3') }
+    const added = addPart(doc, 'propeller', { kind: 'mount', id: 'motor-3' }, t, 'p3')
+    const refusal = { ok: false, reason: 'Cannot add Propeller 2: add a motor to Motor 3 mount first.' }
+    expect(placeClear(added.doc, hex, 'p3', {}, {})).toEqual(refusal)
+    const moved = attach(doc, hex, 'p4', { kind: 'mount', id: 'motor-3' })
+    expect(placeClear(moved, hex, 'p4', {}, {})).toEqual({ ...refusal, reason: refusal.reason.replace('Propeller 2', 'Propeller 1') })
+    const unknown = updatePart(added.doc, 'p3', { shape: { type: 'model', assetId: 'unknown', units: 'm', upAxis: 'z' } })
+    expect(placeClear(unknown, hex, 'p3', {}, {})).toEqual(refusal)
+  })
+
+  it('reattaches a dragged prop onto the motor on its target mount', () => {
+    const moved = attach(hexWithMotors(), hex, 'p4', { kind: 'mount', id: 'motor-3' })
+    expect(moved.parts.find((p) => p.id === 'p4')).toMatchObject({ parentId: 'm3', mountId: null, position: [0, 0, 0.019] })
+    expect(placeClear(moved, hex, 'p4', {}, {}).ok).toBe(true)
+  })
+
+  it('explains genuinely oversized props with their size and motor spacing', () => {
+    const added = addPart(hexWithMotors(), 'propeller', { kind: 'mount', id: 'motor-3' }, t, 'p3')
+    const tallerMotor = updatePart(added.doc, 'm2', { shape: { type: 'cylinder', radius: 0.014, height: 0.05 }, position: [0, 0, 0.025] })
+    expect(placeClear(tallerMotor, hex, 'p3', {}, {}).ok).toBe(true)
+    const tooBig = updatePart(tallerMotor, 'p3', { shape: { type: 'cylinder', radius: 0.5, height: 0.008 } })
+    const result = placeClear(tooBig, hex, 'p3', {}, {})
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toContain('Propeller 2 (1000 × 1000 × 8 mm)')
+      expect(result.reason).toContain('too large for the available motor spacing')
+      expect(result.reason).toContain('Motor 2 (28 × 28 × 50 mm), with centres 135 mm apart (frame motor diagonal 270 mm)')
+      expect(result.reason).not.toContain('a motor must sit')
+    }
+  })
+
+  it('names the mount constraint for non-motors without calling them motors', () => {
+    const first = addPart(base, 'custom', { kind: 'mount', id: 'motor-1' }, t, 'c1')
+    const second = addPart(first.doc, 'custom', { kind: 'mount', id: 'motor-1' }, t, 'c2')
+    const result = placeClear(second.doc, geo, 'c2', {}, {})
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toContain('this mount only supports its centre position')
+      expect(result.reason).not.toContain('a motor must sit')
+    }
+  })
+
   it('a second battery lands beside the first on the frame, resting on the plate, with no overlap', () => {
     let doc = add(base, 'battery', { kind: 'none' }, 'b1')
     doc = add(doc, 'esc', { kind: 'none' }, 'e1')

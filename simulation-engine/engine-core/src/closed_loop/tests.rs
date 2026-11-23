@@ -24,6 +24,7 @@ fn motor(id: &str) -> MotorPropulsion {
         torque_coef_nms2: 1e-7,
         inertia_kg_m2: 2e-5,
         throttle_map: None,
+        reference_density_kg_m3: None,
     }
 }
 

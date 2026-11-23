@@ -70,7 +70,9 @@ it('matches props by their motor parent in telemetry order, preserving hub pose,
     plugins: [react()],
     optimizeDeps: { noDiscovery: true, include: [] },
     resolve: { alias: { '@': resolve('src') } },
-    server: { middlewareMode: true, hmr: false },
+    // No file watcher: one SSR load needs none, and in the main checkout the root also
+    // holds .claude/worktrees (full repo copies), which made watching exceed the timeout.
+    server: { middlewareMode: true, hmr: false, watch: null },
   })
   try {
     const module = await server.ssrLoadModule('/src/features/flight/FlightViewport.tsx') as {

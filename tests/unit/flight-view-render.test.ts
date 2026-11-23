@@ -19,7 +19,8 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
     plugins: [react()],
     optimizeDeps: { noDiscovery: true, include: [] },
     resolve: { alias: { '@': resolve('src') } },
-    server: { middlewareMode: true, hmr: false },
+    // No file watcher: see rotor-spin.test.ts (the main checkout's root holds .claude/worktrees).
+    server: { middlewareMode: true, hmr: false, watch: null },
   })
   try {
     const module = await server.ssrLoadModule('/src/features/flight/DebugPanel.tsx') as {

@@ -15,6 +15,8 @@ pub mod thrust_model;
 pub mod closed_loop;
 pub mod environment;
 pub mod flight;
+pub mod flight_loop;
+pub mod flight_modes;
 pub mod math;
 pub mod propulsion;
 pub mod scenario;

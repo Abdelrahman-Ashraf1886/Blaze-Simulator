@@ -10,36 +10,59 @@ import { ASSET_SCHEME, MAX_ASSET_BYTES, type AssetInfo, type IpcResult } from '.
 import type { Repositories } from '../db/repositories'
 import { AssetError, inspectGltf, tooLarge } from './gltf'
 import { modelHull } from './hull'
+import { modelHullAsync } from './hull-async'
 
+/** Reads, validates and stores the file; everything but the hull. Throws AssetError for a bad file. */
+function stageAsset(path: string, dir: string) {
+  const filename = basename(path)
+  let size: number
+  try {
+    size = statSync(path).size
+  } catch {
+    throw new AssetError(`The file "${filename}" could not be read.`)
+  }
+  // Checked before reading, so an oversized file is never loaded into memory.
+  if (size > MAX_ASSET_BYTES) throw new AssetError(tooLarge(size))
+  const bytes = readFileSync(path)
+  const facts = inspectGltf(bytes, filename)
+  const id = createHash('sha256').update(bytes).digest('hex')
+
+  mkdirSync(dir, { recursive: true })
+  const target = join(dir, `${id}.${facts.format}`)
+  if (!existsSync(target)) {
+    const tmp = `${target}.${process.pid}.tmp`
+    writeFileSync(tmp, bytes)
+    renameSync(tmp, target)
+  }
+  return { id, filename, bytes, facts }
+}
+
+function failure(e: unknown): IpcResult<never> {
+  if (e instanceof AssetError) return { ok: false, error: { code: 'VALIDATION', message: e.message } }
+  console.error('[assets] import failed', e)
+  return { ok: false, error: { code: 'INTERNAL', message: 'The model could not be imported. See application log.' } }
+}
+
+/** Imports a model, computing its hull on the calling thread (blocks it; see `importAssetFileAsync`). */
 export function importAssetFile(path: string, dir: string, repos: Repositories): IpcResult<AssetInfo> {
   try {
-    const filename = basename(path)
-    let size: number
-    try {
-      size = statSync(path).size
-    } catch {
-      throw new AssetError(`The file "${filename}" could not be read.`)
-    }
-    // Checked before reading, so an oversized file is never loaded into memory.
-    if (size > MAX_ASSET_BYTES) throw new AssetError(tooLarge(size))
-    const bytes = readFileSync(path)
-    const facts = inspectGltf(bytes, filename)
-    const id = createHash('sha256').update(bytes).digest('hex')
-
-    mkdirSync(dir, { recursive: true })
-    const target = join(dir, `${id}.${facts.format}`)
-    if (!existsSync(target)) {
-      const tmp = `${target}.${process.pid}.tmp`
-      writeFileSync(tmp, bytes)
-      renameSync(tmp, target)
-    }
+    const { id, filename, bytes, facts } = stageAsset(path, dir)
     const hull = modelHull(bytes, facts.format, facts.bounds)
-    const info = repos.assets.add({ id, filename: filename.slice(0, 255), bytes: bytes.byteLength, ...facts, hull })
-    return { ok: true, data: info }
+    return { ok: true, data: repos.assets.add({ id, filename: filename.slice(0, 255), bytes: bytes.byteLength, ...facts, hull }) }
   } catch (e) {
-    if (e instanceof AssetError) return { ok: false, error: { code: 'VALIDATION', message: e.message } }
-    console.error('[assets] import failed', e)
-    return { ok: false, error: { code: 'INTERNAL', message: 'The model could not be imported. See application log.' } }
+    return failure(e)
+  }
+}
+
+/** As `importAssetFile`, with the hull computed on a worker thread so main's event loop stays free. */
+export async function importAssetFileAsync(path: string, dir: string, repos: Repositories): Promise<IpcResult<AssetInfo>> {
+  try {
+    const { id, filename, bytes, facts } = stageAsset(path, dir)
+    const size = bytes.byteLength // the worker takes the bytes
+    const hull = await modelHullAsync(bytes, facts.format, facts.bounds)
+    return { ok: true, data: repos.assets.add({ id, filename: filename.slice(0, 255), bytes: size, ...facts, hull }) }
+  } catch (e) {
+    return failure(e)
   }
 }
 
@@ -76,6 +99,23 @@ export function backfillHulls(dir: string, repos: Repositories): string[] {
     const file = join(dir, `${a.id}.${a.format}`)
     if (!existsSync(file)) continue
     repos.assets.setHull(a.id, modelHull(readFileSync(file), a.format, a.bounds))
+    done.push(a.id)
+  }
+  return done
+}
+
+/**
+ * As `backfillHulls`, one model at a time on a worker thread, so startup does not wait for
+ * it and main's event loop stays free. The first failure rejects (the models after it are
+ * left for the next start), as `backfillHulls` throws.
+ */
+export async function backfillHullsAsync(dir: string, repos: Repositories): Promise<string[]> {
+  const done: string[] = []
+  for (const a of repos.assets.list()) {
+    if (a.hull) continue
+    const file = join(dir, `${a.id}.${a.format}`)
+    if (!existsSync(file)) continue
+    repos.assets.setHull(a.id, await modelHullAsync(readFileSync(file), a.format, a.bounds))
     done.push(a.id)
   }
   return done

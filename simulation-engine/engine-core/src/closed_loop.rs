@@ -37,29 +37,73 @@ pub struct ControllerSummary {
     pub collective_thrust: f64,
 }
 
+/// Which demands the allocation could not meet on the last step, in
+/// roll/pitch/yaw/collective order (`controller::Saturation`, serializable).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaturationDiagnostic {
+    pub positive: [bool; 4],
+    pub negative: [bool; 4],
+}
+
+/// The controller's last step, for the debug panel (4.8).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlDiagnostic {
+    /// Normalised roll, pitch and yaw torque demand of the rate loop.
+    pub torque_demand: [f64; 3],
+    pub rate_integral: [f64; 3],
+    /// Collective thrust command, normalised 0…1.
+    pub collective_thrust: f64,
+    pub saturation: SaturationDiagnostic,
+}
+
 pub struct ClosedLoop {
     flight: Flight,
     controller: Controller,
     commands: Vec<f64>,
     saturated_steps: u64,
     collective: f64,
+    torque_demand: [f64; 3],
+    saturation: Saturation,
+}
+
+/// The attitude as the controller's estimate: unit length. `Controller::step`
+/// asserts a unit quaternion within 1e-9 and a panic would end the sidecar, but
+/// the quaternion rapier integrates is only unit to rounding, so it is
+/// normalised here.
+pub fn unit_attitude(q: [f64; 4]) -> [f64; 4] {
+    let norm = q.iter().map(|x| x * x).sum::<f64>().sqrt();
+    q.map(|x| x / norm)
 }
 
 impl ClosedLoop {
     pub fn new(vehicle: &Vehicle, flight: Flight, yaw_ratio: f64, gains: Gains) -> Result<ClosedLoop, String> {
         let controller = Controller::new(&vehicle.definition.motors, yaw_ratio, gains)?;
         let n = vehicle.definition.motors.len();
-        Ok(ClosedLoop { flight, controller, commands: vec![0.0; n], saturated_steps: 0, collective: 0.0 })
+        Ok(ClosedLoop {
+            flight,
+            controller,
+            commands: vec![0.0; n],
+            saturated_steps: 0,
+            collective: 0.0,
+            torque_demand: [0.0; 3],
+            saturation: Saturation::default(),
+        })
     }
 
     pub fn flight(&self) -> &Flight {
         &self.flight
     }
 
+    /// One fixed step. After the flight's battery cut-off was reached nothing steps.
     pub fn step(&mut self, sim: &mut Simulation, sp: &Setpoint) {
+        if self.flight.ended().is_some() {
+            return;
+        }
         let s = sim.state();
         let est = ControllerInput {
-            attitude: s.quaternion,
+            attitude: unit_attitude(s.quaternion),
             body_rates: s.angular_velocity_body_radps,
             z: s.com_m[2],
             z_velocity: s.linear_velocity_mps[2],
@@ -69,8 +113,20 @@ impl ClosedLoop {
             self.saturated_steps += 1;
         }
         self.collective = out.collective_thrust;
+        self.torque_demand = out.torque_demand;
+        self.saturation = out.saturation;
         self.commands.copy_from_slice(out.motor_commands);
         self.flight.step(sim, &self.commands);
+    }
+
+    /// The last step: torque demand, integrators, collective and saturation.
+    pub fn control(&self) -> ControlDiagnostic {
+        ControlDiagnostic {
+            torque_demand: self.torque_demand,
+            rate_integral: self.controller.rate_integral(),
+            collective_thrust: self.collective,
+            saturation: SaturationDiagnostic { positive: self.saturation.positive, negative: self.saturation.negative },
+        }
     }
 
     pub fn summary(&self) -> ControllerSummary {

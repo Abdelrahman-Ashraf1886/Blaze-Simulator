@@ -27,7 +27,7 @@ const withSpec = (c: Component, key: string, spec: QuantityValue): Component => 
 
 it('a seed quad with the missing values entered loads with its propulsion in the engine', async () => {
   // Values a user would enter (measured): no source states them.
-  const motor = withSpec(named('MN3110 KV470'), 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured' })
+  const motor = withSpec(withSpec(named('MN3110 KV470'), 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured' }), 'referenceDensity', { value: 1.225, unit: 'kg/m³', source: 'user' })
   const battery = withSpec(named('Tattu G-Tech 5200mAh 4S 35C'), 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured' })
   const prop = named('P13*4.4 CF propeller')
 

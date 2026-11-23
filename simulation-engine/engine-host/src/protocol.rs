@@ -27,6 +27,20 @@ pub enum Command {
     Hello,
     Ping,
     Shutdown,
+    /// Live flight (4.8 part B), validated in flight_session: start replaces any
+    /// session, step advances N fixed steps with the setpoint held, end drops it.
+    #[serde(rename = "flight.session.start")]
+    FlightSessionStart {
+        #[serde(flatten)]
+        params: serde_json::Map<String, Value>,
+    },
+    #[serde(rename = "flight.session.step")]
+    FlightSessionStep {
+        #[serde(flatten)]
+        params: serde_json::Map<String, Value>,
+    },
+    #[serde(rename = "flight.session.end")]
+    FlightSessionEnd,
     /// Validates a `VehicleDefinition` and, if valid, makes it the vehicle
     /// that `sim.run` simulates. An invalid one clears the loaded vehicle.
     /// `propulsion` (optional, additive in 4.5) carries the per-motor
@@ -139,6 +153,10 @@ pub enum ErrorCode {
     /// `sim.run` needed more compute time than the engine allows one request
     /// (it would stop answering health pings); no state is returned.
     RunTooLong,
+    /// `flight.session.start` without a battery cut-off (the user's choice; no default).
+    CutoffRequired,
+    /// `flight.session.step` before `flight.session.start`.
+    NoSession,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

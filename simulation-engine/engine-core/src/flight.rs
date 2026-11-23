@@ -27,7 +27,8 @@
 //! Throttles are given in the order of `VehicleDefinition.motors`.
 //! Not modelled (stated): rotor inflow and ground effect, blade flapping, prop
 //! drag in forward flight (thrust is the static k_T ω² at any airspeed), motor
-//! and ESC thermal limits, a battery cut-off (reported, not enforced here).
+//! and ESC thermal limits. A battery cut-off is enforced only when the caller
+//! sets one (`set_cutoff`, 4.8); `sim.run` sets none.
 
 use crate::aero::{rotate_inverse, BodyDrag};
 use crate::math::Vec3 as MVec3;
@@ -79,6 +80,50 @@ pub struct Loads {
     pub torque_body_nm: Vector,
 }
 
+/// A battery cut-off the user chose; the run ends when it is reached (4.8).
+/// There is no default: no source states one for a given pack.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Cutoff {
+    /// The pack terminal voltage under load falls to this, V.
+    VoltageV(f64),
+    /// The charge drawn reaches this, mAh.
+    ChargeMah(f64),
+}
+
+/// Why a run ended before its duration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EndReason {
+    VoltageCutoff,
+    ChargeCutoff,
+}
+
+/// What acted on the body over the last step, body axes, by source (the debug
+/// panel, 4.8). Forces in N, torques about the CoM in N·m. The rotor speeds
+/// are those at the start of the step (the loads of step 1 of the module
+/// header); `total_torque_nm` is the sum actually applied.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepLoads {
+    /// Σ F_i of the rotors.
+    pub thrust_body_n: [f64; 3],
+    /// Body drag, through the CoM.
+    pub drag_body_n: [f64; 3],
+    /// Σ (p_i − c) × F_i: the thrust forces at their arms.
+    pub arm_torque_nm: [f64; 3],
+    /// The rotors' drag torque held by the motors, −s_i Q_i a_i.
+    pub drag_reaction_torque_nm: [f64; 3],
+    /// Spinning the rotors up or down, −s_i J_i dω_i/dt a_i.
+    pub spin_up_reaction_torque_nm: [f64; 3],
+    /// −ω_b × Σ h_i.
+    pub rotor_gyro_torque_nm: [f64; 3],
+    pub total_torque_nm: [f64; 3],
+}
+
+fn arr(v: Vector) -> [f64; 3] {
+    [v.x, v.y, v.z]
+}
+
 #[derive(Debug)]
 pub struct Flight {
     motors: Vec<FlightMotor>,
@@ -86,6 +131,12 @@ pub struct Flight {
     state: PropulsionState,
     drag: Option<(BodyDrag, f64)>,
     throttle: Vec<f64>,
+    cutoff: Option<Cutoff>,
+    ended: Option<EndReason>,
+    loads: StepLoads,
+    /// (k_T, k_Q) of each propulsion motor as loaded, the data's own coefficients;
+    /// `scale_to_air_density` always scales from these, never from a scaled value.
+    base_coefficients: Vec<(f64, f64)>,
 }
 
 impl Flight {
@@ -119,7 +170,60 @@ impl Flight {
         };
         let state = propulsion.rest();
         let n = motors.len();
-        Ok(Flight { motors, propulsion, state, drag, throttle: vec![0.0; n] })
+        let base_coefficients = propulsion.motors.iter().map(|m| (m.k_thrust, m.k_torque)).collect();
+        Ok(Flight { motors, propulsion, state, drag, throttle: vec![0.0; n], cutoff: None, ended: None, loads: StepLoads::default(), base_coefficients })
+    }
+
+    /// Ends the run when the battery reaches `cutoff` (checked after each step,
+    /// so a run overshoots it by at most one step). Must be finite and positive.
+    pub fn set_cutoff(&mut self, cutoff: Cutoff) -> Result<(), String> {
+        let (Cutoff::VoltageV(x) | Cutoff::ChargeMah(x)) = cutoff;
+        if !(x.is_finite() && x > 0.0) {
+            return Err(format!("the cut-off must be a positive number (got {x})"));
+        }
+        self.cutoff = Some(cutoff);
+        Ok(())
+    }
+
+    /// Scales each motor's thrust and torque coefficients from the air density its data was
+    /// fitted at (`MotorPropulsion::reference_density_kg_m3`: stated by the data's source, or
+    /// the user's entry for it, per motor) to the density of this flight (`air_kg_m3`):
+    /// T = k_T ω² and Q = k_Q ω² both scale as ρ/ρ_ref,i (4.8). The motor model then gives
+    /// ω, current and battery use at the new loading. Every density must be positive, and
+    /// every motor must have its reference density: none is assumed. Scaling is from the
+    /// loaded coefficients, so calling it again replaces the scaling (k = k_base · ρ/ρ_ref)
+    /// instead of compounding it. Nothing changes if it fails.
+    pub fn scale_to_air_density(&mut self, air_kg_m3: f64) -> Result<(), String> {
+        if !(air_kg_m3.is_finite() && air_kg_m3 > 0.0) {
+            return Err(format!("the air density must be a positive number (got {air_kg_m3})"));
+        }
+        let mut ratios = Vec::with_capacity(self.propulsion.motors.len());
+        for (m, def) in self.propulsion.motors.iter().zip(&self.propulsion.definition.motors) {
+            match m.reference_density {
+                Some(rho) if rho.is_finite() && rho > 0.0 => ratios.push(air_kg_m3 / rho),
+                _ => {
+                    return Err(format!(
+                        "motor \"{}\" has no reference density (referenceDensityKgM3): the air density its thrust and torque data was measured or computed at",
+                        def.part_id
+                    ))
+                }
+            }
+        }
+        for ((m, (k_thrust, k_torque)), ratio) in self.propulsion.motors.iter_mut().zip(&self.base_coefficients).zip(ratios) {
+            m.k_thrust = k_thrust * ratio;
+            m.k_torque = k_torque * ratio;
+        }
+        Ok(())
+    }
+
+    /// Why the run ended, once the cut-off was reached. An ended flight no longer steps.
+    pub fn ended(&self) -> Option<EndReason> {
+        self.ended
+    }
+
+    /// What acted on the body over the last step, by source.
+    pub fn loads(&self) -> &StepLoads {
+        &self.loads
     }
 
     /// Starts the rotors at these speeds (rad/s, vehicle motor order), e.g. a
@@ -153,9 +257,30 @@ impl Flight {
         Loads { force_body_n: f, torque_body_nm: t }
     }
 
+    /// The rotor loads of `rotor_loads` by source: thrust force, arm torque,
+    /// drag-torque reaction and gyroscopic torque (for the debug panel only; the
+    /// step applies `rotor_loads`).
+    fn rotor_split(&self, omega_body: Vector) -> (Vector, Vector, Vector, Vector) {
+        let (mut f, mut arm, mut reaction, mut h) = (Vector::ZERO, Vector::ZERO, Vector::ZERO, Vector::ZERO);
+        for m in &self.motors {
+            let model = &self.propulsion.motors[m.model];
+            let w = self.state.omega[m.model];
+            let thrust = m.axis * model.thrust(w);
+            f += thrust;
+            arm += m.arm.cross(thrust);
+            reaction -= m.axis * (m.spin * model.drag_torque(w));
+            h += m.axis * (m.spin * model.j * w);
+        }
+        (f, arm, reaction, -omega_body.cross(h))
+    }
+
     /// One fixed step of the vehicle with `throttle` (vehicle motor order,
-    /// clamped to [0, 1]) held over it.
+    /// clamped to [0, 1]) held over it. After the cut-off (`set_cutoff`) was
+    /// reached the flight no longer steps.
     pub fn step(&mut self, sim: &mut Simulation, throttle: &[f64]) {
+        if self.ended.is_some() {
+            return;
+        }
         let dt = sim.config().dt_s;
         for (i, x) in self.throttle.iter_mut().enumerate() {
             *x = throttle.get(i).copied().unwrap_or(0.0).clamp(0.0, 1.0);
@@ -163,6 +288,9 @@ impl Flight {
         let s = sim.state();
         let omega_body = vec(s.angular_velocity_body_radps);
         let mut loads = self.rotor_loads(omega_body);
+        let (thrust, arm, reaction, gyro) = self.rotor_split(omega_body);
+        let mut spin_up = Vector::ZERO;
+        let mut drag_force = Vector::ZERO;
         // Propulsion takes throttles in its own (definition) order.
         let mut d = vec![0.0; self.propulsion.motors.len()];
         for (m, &x) in self.motors.iter().zip(&self.throttle) {
@@ -172,15 +300,35 @@ impl Flight {
         self.propulsion.step(&mut self.state, &d, dt);
         for m in &self.motors {
             let dw = self.state.omega[m.model] - before[m.model];
-            loads.torque_body_nm -= m.axis * (m.spin * self.propulsion.motors[m.model].j * dw / dt);
+            let q = m.axis * (m.spin * self.propulsion.motors[m.model].j * dw / dt);
+            loads.torque_body_nm -= q;
+            spin_up -= q;
         }
         if let Some((drag, rho)) = &self.drag {
             let v = s.linear_velocity_mps;
             let fw = drag.force_world(*rho, s.quaternion, MVec3::new(v[0], v[1], v[2]));
             let fb = rotate_inverse(s.quaternion, fw);
-            loads.force_body_n += Vector::new(fb.x, fb.y, fb.z);
+            drag_force = Vector::new(fb.x, fb.y, fb.z);
+            loads.force_body_n += drag_force;
         }
+        self.loads = StepLoads {
+            thrust_body_n: arr(thrust),
+            drag_body_n: arr(drag_force),
+            arm_torque_nm: arr(arm),
+            drag_reaction_torque_nm: arr(reaction),
+            spin_up_reaction_torque_nm: arr(spin_up),
+            rotor_gyro_torque_nm: arr(gyro),
+            total_torque_nm: arr(loads.torque_body_nm),
+        };
         sim.step(&BodyInput { force_body_n: loads.force_body_n, torque_body_nm: loads.torque_body_nm });
+        if let Some(cutoff) = self.cutoff {
+            let b = self.battery();
+            self.ended = match cutoff {
+                Cutoff::VoltageV(v) if b.voltage_v <= v => Some(EndReason::VoltageCutoff),
+                Cutoff::ChargeMah(q) if b.charge_used_c / 3.6 >= q => Some(EndReason::ChargeCutoff),
+                _ => None,
+            };
+        }
     }
 
     pub fn motors(&self) -> Vec<MotorReading> {

@@ -123,11 +123,13 @@ pub struct Engine {
     propulsion: Option<Propulsion>,
     /// Body drag of the loaded vehicle (4.5), applied in flight (4.6).
     aero: Option<BodyDrag>,
+    /// The live flight session (4.8 part B, `flight_session.rs`), at most one.
+    session: Option<crate::flight_session::Session>,
 }
 
 impl Engine {
     pub fn new() -> Self {
-        Engine { started: Instant::now(), vehicle: None, propulsion: None, aero: None }
+        Engine { started: Instant::now(), vehicle: None, propulsion: None, aero: None, session: None }
     }
 
     /// Handles one request; the flag is true when the engine should exit.
@@ -150,6 +152,12 @@ impl Engine {
                 false,
             ),
             Command::Shutdown => (Response::ok(id, serde_json::json!({})), true),
+            Command::FlightSessionStart { params } => (
+                crate::flight_session::start(id, params, &mut self.session, self.vehicle.as_ref(), self.propulsion.as_ref(), self.aero),
+                false,
+            ),
+            Command::FlightSessionStep { params } => (crate::flight_session::step(id, params, &mut self.session), false),
+            Command::FlightSessionEnd => (crate::flight_session::end(id, &mut self.session), false),
             Command::VehicleLoad { vehicle, propulsion, aero } => (self.load(id, vehicle, propulsion, aero), false),
             Command::SimRun {
                 duration_s,
@@ -235,30 +243,13 @@ impl Engine {
     fn run(&self, id: u64, args: RunArgs) -> Response {
         let RunArgs { duration_s, environment, start_position_m, dt_s, force, torque, throttle, rotor_speeds, air_density, controller } = args;
         let bad = |m: String| Response::err(Some(id), ErrorCode::InvalidParams, m);
-        let Some(vehicle) = &self.vehicle else {
-            return Response::err(Some(id), ErrorCode::NoVehicle, "load a valid vehicle first (vehicle.load)");
+        let vehicle = match loaded_vehicle(id, self.vehicle.as_ref()) {
+            Ok(v) => v,
+            Err(r) => return r,
         };
-        let missing = &vehicle.definition.missing_mass;
-        if !missing.is_empty() {
-            return Response::err(
-                Some(id),
-                ErrorCode::VehicleIncomplete,
-                format!("{} part(s) have no mass: {}", missing.len(), missing.join(", ")),
-            );
-        }
-        let Some(environment) = environment else {
-            return Response::err(
-                Some(id),
-                ErrorCode::EnvironmentIncomplete,
-                "environment is not set: give the ground's friction and restitution (or \"ground\": null for free space) and the obstacles",
-            );
-        };
-        let environment = match Environment::from_json(&environment) {
+        let environment = match parse_environment(id, environment) {
             Ok(e) => e,
-            Err(errors) => {
-                let list: Vec<String> = errors.iter().map(|e| format!("{}: {}", e.path, e.message)).collect();
-                return Response::err(Some(id), ErrorCode::EnvironmentIncomplete, list.join("; "));
-            }
+            Err(r) => return r,
         };
         let dt = dt_s.unwrap_or(DEFAULT_DT_S);
         if !(dt.is_finite() && dt > 0.0) {
@@ -294,6 +285,14 @@ impl Engine {
                     Ok(fl) => fl,
                     Err(e) => return bad(e),
                 };
+                // Thrust and torque scale as rho / rho_ref,i per motor, the same as in a flight session: the air
+                // density is the caller's, each motor's reference density is in the propulsion definition.
+                let Some(rho) = air_density else {
+                    return bad("with propulsion give the air density (airDensityKgM3): thrust and torque scale with it relative to the density of the propeller data".into());
+                };
+                if let Err(e) = fl.scale_to_air_density(rho) {
+                    return bad(e);
+                }
                 if let Some(w) = &rotor_speeds {
                     if let Err(e) = fl.set_rotor_speeds(w) {
                         return bad(format!("rotorSpeedsRadps: {e}"));
@@ -304,17 +303,9 @@ impl Engine {
                         if throttle.is_some() {
                             return bad("give either throttle or controller, not both".into());
                         }
-                        let sp = match setpoint(&c) {
-                            Ok(sp) => sp,
-                            Err(e) => return bad(format!("controller: {e}")),
-                        };
-                        let gains = match gains_with_overrides(c.gains.as_ref()) {
-                            Ok(g) => g,
-                            Err(e) => return bad(format!("controller.gains: {e}")),
-                        };
-                        match ClosedLoop::new(vehicle, fl, p.yaw_ratio(), gains) {
-                            Ok(cl) => Plant::Controlled(Box::new(cl), sp),
-                            Err(e) => return bad(format!("controller: {e}")),
+                        match controlled(vehicle, p, fl, &c) {
+                            Ok((cl, sp)) => Plant::Controlled(Box::new(cl), sp),
+                            Err(e) => return bad(e),
                         }
                     }
                     None => {
@@ -383,10 +374,50 @@ impl Engine {
     }
 }
 
+/// The loaded vehicle, if there is one and every part has a mass (`sim.run` and the flight session).
+pub(crate) fn loaded_vehicle(id: u64, vehicle: Option<&Vehicle>) -> Result<&Vehicle, Response> {
+    let Some(vehicle) = vehicle else {
+        return Err(Response::err(Some(id), ErrorCode::NoVehicle, "load a valid vehicle first (vehicle.load)"));
+    };
+    let missing = &vehicle.definition.missing_mass;
+    if !missing.is_empty() {
+        return Err(Response::err(
+            Some(id),
+            ErrorCode::VehicleIncomplete,
+            format!("{} part(s) have no mass: {}", missing.len(), missing.join(", ")),
+        ));
+    }
+    Ok(vehicle)
+}
+
+/// The request's environment, complete (the user's friction and restitution; no defaults).
+pub(crate) fn parse_environment(id: u64, environment: Option<serde_json::Value>) -> Result<Environment, Response> {
+    let Some(environment) = environment else {
+        return Err(Response::err(
+            Some(id),
+            ErrorCode::EnvironmentIncomplete,
+            "environment is not set: give the ground's friction and restitution (or \"ground\": null for free space) and the obstacles",
+        ));
+    };
+    Environment::from_json(&environment).map_err(|errors| {
+        let list: Vec<String> = errors.iter().map(|e| format!("{}: {}", e.path, e.message)).collect();
+        Response::err(Some(id), ErrorCode::EnvironmentIncomplete, list.join("; "))
+    })
+}
+
+/// The PX4 controller around `flight`, with the request's gain overrides, and its checked setpoint.
+pub(crate) fn controlled(vehicle: &Vehicle, p: &Propulsion, flight: Flight, c: &ControllerRequest) -> Result<(ClosedLoop, Setpoint), String> {
+    let sp = setpoint(c).map_err(|e| format!("controller: {e}"))?;
+    let gains = gains_with_overrides(c.gains.as_ref()).map_err(|e| format!("controller.gains: {e}"))?;
+    let cl = ClosedLoop::new(vehicle, flight, p.yaw_ratio(), gains).map_err(|e| format!("controller: {e}"))?;
+    Ok((cl, sp))
+}
+
 /// The controller setpoint of a request, checked (finite, unit attitude).
-fn setpoint(c: &ControllerRequest) -> Result<Setpoint, String> {
+pub(crate) fn setpoint(c: &ControllerRequest) -> Result<Setpoint, String> {
     let attitude = c.attitude.unwrap_or([0.0, 0.0, 0.0, 1.0]);
-    if !attitude.iter().all(|x| x.is_finite()) || (attitude.iter().map(|x| x * x).sum::<f64>() - 1.0).abs() > 1e-9 {
+    // The controller asserts |q|^2 - 1 < 1e-9, so a request at exactly 1e-9 is refused here too.
+    if !attitude.iter().all(|x| x.is_finite()) || (attitude.iter().map(|x| x * x).sum::<f64>() - 1.0).abs() >= 1e-9 {
         return Err("attitude must be a unit quaternion x y z w".into());
     }
     if !c.altitude_m.is_none_or(f64::is_finite) || !c.climb_rate_mps.is_finite() || !c.yaw_rate_radps.is_finite() {

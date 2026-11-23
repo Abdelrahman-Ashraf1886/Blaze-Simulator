@@ -127,7 +127,7 @@ export function createAssemblyStore(api: () => DesktopApi = getApi, opts: Assemb
           const res = await api().assembly.load(projectId)
           if (get().projectId !== projectId) return // another project was opened meanwhile
           if (res.ok) {
-            const { revision, frame, frameMass, bodyDrag, motors, parts, wires, schematic, interference, environment } = res.data
+            const { revision, frame, frameMass, bodyDrag, motors, parts, wires, schematic, interference, environment, flight } = res.data
             // Optional fields only when present, so documents without them stay identical.
             const doc: AssemblyDocument = {
               frame,
@@ -139,6 +139,7 @@ export function createAssemblyStore(api: () => DesktopApi = getApi, opts: Assemb
               ...(schematic ? { schematic } : {}),
               ...(interference ? { interference } : {}),
               ...(environment ? { environment } : {}),
+              ...(flight ? { flight } : {}),
             }
             set({ doc, revision, loading: false })
           } else {

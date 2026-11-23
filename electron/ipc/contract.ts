@@ -9,6 +9,7 @@
 
 import type { Component, ComponentCategory, ComponentInput, SpecValue } from './component-fields'
 export type * from './component-fields'
+import type { FlightSessionEndResult, FlightSessionStartResult, FlightSessionStepParams, FlightSessionStepResult } from '../main/engine/protocol'
 
 // ---- Domain types -----------------------------------------------------------
 
@@ -271,6 +272,22 @@ export interface AssemblyDocument {
    * entered: the simulation then lists the ground's friction and restitution as missing.
    */
   environment?: EnvironmentDoc | null
+  /**
+   * The project's flight conditions (4.8 part B): the user's entries the flight test needs and no
+   * source states. Absent or null = nothing entered; the flight test then lists each as missing.
+   */
+  flight?: FlightConditionsDoc | null
+}
+
+/** The flight conditions, the user's entries (no defaults; null = not entered). */
+export interface FlightConditionsDoc {
+  /** Height above sea level, m; sets the air density (standard atmosphere). */
+  ambientAltitudeM: number | null
+  /** Air temperature, °C; null = the standard atmosphere's at that altitude (not a missing value). */
+  temperatureC: number | null
+  /** The battery cut-off: the pack voltage (V) or the charge drawn (mAh) at which the run ends. */
+  cutoffType: 'voltageV' | 'chargeMah'
+  cutoffValue: number | null
 }
 
 /**
@@ -324,6 +341,34 @@ export interface DropTestResult {
   contacts: { partId: string; with: string; startS: number; endS: number | null }[]
   contactsDropped: number
 }
+
+/**
+ * A live flight (4.8 part B). The renderer builds the vehicle, propulsion and aero payloads from
+ * the assembly (mass properties are computed in TypeScript, ADR 0006); main validates all of it
+ * with the protocol schemas, loads the vehicle into the engine and starts the session.
+ */
+export interface FlightStartInput {
+  /** The pinned VehicleDefinition (src/domain/mass.ts). */
+  vehicle: unknown
+  /** The motors' coefficients and the battery (src/domain/propulsion.ts `propulsionDefinition`). */
+  propulsion: unknown
+  /** Body drag: per-axis C_d (entered) and projected areas (derived, src/domain/aero.ts). */
+  aero: unknown
+  /** The engine's ground and obstacles (src/domain/environment.ts `simEnvironment`). */
+  environment: unknown
+  /** ISA density at the user's altitude and temperature (src/domain/atmosphere.ts), kg/m³. */
+  airDensityKgM3: number
+  /** The user's battery cut-off: no default. */
+  cutoff: { type: 'voltageV' | 'chargeMah'; value: number }
+  /** Body origin at the start, world frame, m. */
+  startPositionM: [number, number, number]
+  /** PX4 gain overrides by exact parameter name; absent = the v1.13.3 defaults. */
+  gains?: Record<string, number>
+}
+export type FlightStartResult = FlightSessionStartResult
+export type FlightStepInput = FlightSessionStepParams
+export type FlightStepResult = FlightSessionStepResult
+export type FlightEndResult = FlightSessionEndResult
 
 /** Id an allowed pair uses for the parametric frame (its plate and arms are one part). */
 export const FRAME_PART_ID = 'frame'
@@ -411,6 +456,11 @@ export const Channels = {
   engineStatusChanged: 'engine:statusChanged',
   /** Loads a vehicle into the engine and drops it in the given environment. */
   engineDropTest: 'engine:dropTest',
+  /** Loads the vehicle and starts a live flight session (replacing any). */
+  engineFlightStart: 'engine:flightStart',
+  /** Advances the session N fixed 1 ms steps with the setpoint held. */
+  engineFlightStep: 'engine:flightStep',
+  engineFlightEnd: 'engine:flightEnd',
 } as const
 
 /** Shape exposed on `window.api` by the preload script. */
@@ -456,6 +506,9 @@ export interface DesktopApi {
   }
   engine: {
     dropTest(input: DropTestInput): Promise<IpcResult<DropTestResult>>
+    flightStart(input: FlightStartInput): Promise<IpcResult<FlightStartResult>>
+    flightStep(input: FlightStepInput): Promise<IpcResult<FlightStepResult>>
+    flightEnd(): Promise<IpcResult<FlightEndResult>>
   }
   /** True when main was started for end-to-end tests (BLAZE_UAV_TEST_HOOKS=1); never in normal use. */
   testHooks: boolean

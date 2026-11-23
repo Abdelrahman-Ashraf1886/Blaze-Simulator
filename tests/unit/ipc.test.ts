@@ -73,9 +73,13 @@ describe('IPC handlers', () => {
     // The push channel is main → renderer; the sync save is bound with ipcMain.on to the same handler;
     // the import and the image save need native file dialogs, so main binds them
     // (their logic is tested in assets.test.ts and screenshot.test.ts); the drop test needs the
-    // engine supervisor, so main binds it (drop-test.ts, tested in environment and supervisor tests).
+    // engine supervisor, so main binds it (drop-test.ts, tested in environment and supervisor tests);
+    // so do the live flight channels (flight-session.ts, tested in flight-live.test.ts).
     const mainOnly: string[] = [
       Channels.engineDropTest,
+      Channels.engineFlightStart,
+      Channels.engineFlightStep,
+      Channels.engineFlightEnd,
       Channels.engineStatusChanged,
       Channels.assemblySaveSync,
       Channels.assetsImport,

@@ -151,6 +151,13 @@ export const COMPONENT_FIELDS: Record<ComponentCategory, readonly FieldDef[]> = 
     q('bodyDiameter', 'Body diameter', 'length', 'mm', 'Outer diameter of the motor'),
     q('bodyLength', 'Body length', 'length', 'mm', 'Outer length along the shaft, as stated'),
     mountPattern,
+    q(
+      'referenceDensity',
+      'Air density of the test data',
+      'density',
+      'kg/m³',
+      'The air density the manufacturer test data below was measured at, when the source states it (or the density you enter for it). The flight scales its thrust and torque by the flight air density relative to this',
+    ),
     {
       key: 'thrustTable',
       label: 'Manufacturer test data',
@@ -178,6 +185,13 @@ export const COMPONENT_FIELDS: Record<ComponentCategory, readonly FieldDef[]> = 
     q('boreDiameter', 'Bore diameter', 'length', 'mm'),
     mass,
     text('material', 'Material'),
+    q(
+      'referenceDensity',
+      'Air density of the performance data',
+      'density',
+      'kg/m³',
+      'The air density the performance data below was measured or computed at, when stated outside its condition text (a condition that names it, like APC\'s 1.225 kg/m³, is read from there)',
+    ),
     {
       key: 'performanceTable',
       label: 'Manufacturer performance data',

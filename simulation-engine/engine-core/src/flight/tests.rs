@@ -24,6 +24,8 @@ fn motor(id: &str) -> MotorPropulsion {
         torque_coef_nms2: 1e-7,
         inertia_kg_m2: 2e-5,
         throttle_map: None,
+        // APC states the sea-level standard atmosphere for its data; the other tests fly at that density.
+        reference_density_kg_m3: Some(1.225),
     }
 }
 
@@ -277,4 +279,147 @@ fn refuses_drag_without_air_density_and_motors_without_data() {
     let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
     assert!(f.set_rotor_speeds(&[1.0, 2.0]).is_err());
     assert!(f.set_rotor_speeds(&[-1.0, 0.0, 0.0, 0.0]).is_err());
+}
+
+/// The last step's loads by source (4.8). One CCW motor 0.2 m forward at
+/// ω = 500 rad/s with zero throttle (the rotor spins down), body at rest:
+/// thrust 5 N along +z, arm torque (0.2, 0, 0) × (0, 0, 5) = (0, −1, 0) N·m,
+/// drag reaction −s k_Q ω² a = −0.025 N·m about z, no gyroscopic term (no body
+/// rate), spin-up reaction −s J (ω₁ − ω₀)/dt a with the rotor's own change of
+/// speed, and the total is the sum of the four, which is what was applied.
+#[test]
+fn step_loads_are_split_by_source_and_sum_to_the_applied_torque() {
+    let v = vehicle(1.0, &[([0.2, 0.0, 0.0], Spin::Ccw)]);
+    let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+    f.set_rotor_speeds(&[500.0]).unwrap();
+    let mut s = sim(&v);
+    f.step(&mut s, &[0.0]);
+    let l = *f.loads();
+    close(l.thrust_body_n[2], 5.0, 1e-12, "thrust");
+    close(l.arm_torque_nm[1], -1.0, 1e-12, "arm torque");
+    close(l.drag_reaction_torque_nm[2], -0.025, 1e-15, "drag reaction");
+    assert_eq!(l.rotor_gyro_torque_nm, [0.0; 3]);
+    let dw = f.state.omega[0] - 500.0;
+    assert!(dw < 0.0, "the rotor spins down");
+    close(l.spin_up_reaction_torque_nm[2], -2e-5 * dw / DT, 1e-12, "spin-up reaction");
+    for k in 0..3 {
+        let sum = l.arm_torque_nm[k] + l.drag_reaction_torque_nm[k] + l.spin_up_reaction_torque_nm[k] + l.rotor_gyro_torque_nm[k];
+        close(l.total_torque_nm[k], sum, 1e-12, "total torque");
+    }
+    // Body rolling at 1 rad/s: the gyroscopic term appears, as in `rotor_loads_match_the_hand_calculation`.
+    let mut s = sim(&v);
+    s.step(&BodyInput { force_body_n: Vector::ZERO, torque_body_nm: Vector::new(1e-3, 0.0, 0.0) });
+    let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+    f.set_rotor_speeds(&[500.0]).unwrap();
+    f.step(&mut s, &[0.0]);
+    assert!(f.loads().rotor_gyro_torque_nm.iter().any(|x| x.abs() > 0.0));
+}
+
+/// Body drag is reported through the CoM: with the air density and a body at
+/// rest it is zero; moving it opposes the velocity, −½ ρ C_d A v|v| per axis.
+#[test]
+fn step_loads_report_the_drag_force() {
+    let v = vehicle(1.0, &[([0.2, 0.0, 0.0], Spin::Ccw)]);
+    let drag = BodyDrag { cd_body: [1.0, 1.0, 1.2], area_m2: [0.01, 0.01, 0.03] };
+    let mut f = Flight::new(&v, propulsion(&v), Some(drag), Some(1.2)).unwrap();
+    let mut s = sim(&v);
+    f.step(&mut s, &[0.0]);
+    assert_eq!(f.loads().drag_body_n, [0.0; 3]);
+    s.step(&BodyInput { force_body_n: Vector::new(0.0, 0.0, G + 1.0), torque_body_nm: Vector::ZERO });
+    let v_z = s.state().linear_velocity_mps[2];
+    f.step(&mut s, &[0.0]);
+    assert!(v_z.abs() > 1e-3, "the body moves (falling a little): {v_z}");
+    close(f.loads().drag_body_n[2], -0.5 * 1.2 * 1.2 * 0.03 * v_z * v_z.abs(), 1e-12, "drag along z");
+}
+
+/// The battery cut-off ends the run (4.8): a charge cut-off at 0.5 mAh (1.8 C,
+/// reached within a second at hover current) and a voltage cut-off at 9.9 V
+/// (the 10 V pack sags below it as the rotors draw their start-up
+/// current, R = 0.1 Ω motors on 0.01 Ω), and the flight is frozen afterwards.
+#[test]
+fn a_cutoff_ends_the_run_and_freezes_it() {
+    let v = quad(1.0);
+    let d = hover_throttle(&v);
+    for (cutoff, reason) in [(Cutoff::ChargeMah(0.5), EndReason::ChargeCutoff), (Cutoff::VoltageV(9.9), EndReason::VoltageCutoff)] {
+        let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+        f.set_cutoff(cutoff).unwrap();
+        let mut s = sim(&v);
+        assert!(f.ended().is_none());
+        let mut steps = 0;
+        while f.ended().is_none() && steps < 5000 {
+            f.step(&mut s, &[d; 4]);
+            steps += 1;
+        }
+        assert_eq!(f.ended(), Some(reason));
+        assert!(steps >= 1 && steps < 5000, "{reason:?} after {steps} steps");
+        let (hash, words) = (s.state_hash(), f.hash_words());
+        f.step(&mut s, &[d; 4]);
+        assert_eq!((s.state_hash(), f.hash_words()), (hash, words), "an ended flight does not step");
+    }
+    // Without a cut-off nothing ends; a cut-off must be positive and finite.
+    let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+    let mut s = sim(&v);
+    for _ in 0..200 {
+        f.step(&mut s, &[d; 4]);
+    }
+    assert!(f.ended().is_none());
+    for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(f.set_cutoff(Cutoff::VoltageV(bad)).is_err());
+        assert!(f.set_cutoff(Cutoff::ChargeMah(bad)).is_err());
+    }
+}
+
+/// Thrust T = k_T w^2 and drag torque Q = k_Q w^2 scale as rho / rho_ref,i per motor (4.8): at half the
+/// reference density the same rotor speed gives half the thrust and half the torque, the reaction torque on the
+/// body follows, a density equal to the reference changes nothing, and each motor uses its own reference density.
+/// A motor without one, or an invalid density, is refused and changes nothing.
+#[test]
+fn the_coefficients_scale_with_the_air_density_ratio() {
+    let v = vehicle(1.0, &[([0.2, 0.0, 0.0], Spin::Ccw)]);
+    let loads = |rho: f64| {
+        let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+        f.scale_to_air_density(rho).unwrap();
+        f.set_rotor_speeds(&[500.0]).unwrap();
+        (f.rotor_loads(Vector::ZERO), f.motors()[0].thrust_n, f.motors()[0].drag_torque_nm)
+    };
+    let (base, t1, q1) = loads(1.225);
+    close(t1, 5.0, 1e-12, "unchanged at the reference density");
+    close(q1, 0.025, 1e-15, "drag torque unchanged");
+    let (thin, t2, q2) = loads(0.6125);
+    close(t2, 2.5, 1e-12, "half the density, half the thrust");
+    close(q2, 0.0125, 1e-15, "half the drag torque");
+    close(thin.force_body_n.z, 0.5 * base.force_body_n.z, 1e-12, "thrust on the body");
+    close(thin.torque_body_nm.z, 0.5 * base.torque_body_nm.z, 1e-15, "reaction torque on the body");
+
+    // Scaling twice replaces the scaling, it does not compound it.
+    let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+    f.scale_to_air_density(0.6125).unwrap();
+    f.scale_to_air_density(0.6125).unwrap();
+    f.set_rotor_speeds(&[500.0]).unwrap();
+    close(f.motors()[0].thrust_n, 2.5, 1e-12, "the second call with the same density changes nothing");
+    f.scale_to_air_density(1.225).unwrap();
+    close(f.motors()[0].thrust_n, 5.0, 1e-12, "and a later call starts from the data's coefficients");
+
+    // Each motor scales by its own reference density: a motor whose data was taken at 0.6125 kg/m³ is unchanged at 0.6125.
+    let q = quad(1.0);
+    let mut p = propulsion(&q);
+    p.motors[1].reference_density = Some(0.6125);
+    let mut f = Flight::new(&q, p, None, None).unwrap();
+    f.scale_to_air_density(0.6125).unwrap();
+    f.set_rotor_speeds(&[500.0; 4]).unwrap();
+    let t: Vec<f64> = f.motors().iter().map(|m| m.thrust_n).collect();
+    close(t[0], 2.5, 1e-12, "m1: data at 1.225, flown at 0.6125");
+    close(t[1], 5.0, 1e-12, "m2: its own data was taken at 0.6125");
+
+    // A motor without a reference density, and invalid densities, are refused and leave the scaling as it was.
+    let mut p = propulsion(&q);
+    p.motors[2].reference_density = None;
+    let mut f = Flight::new(&q, p, None, None).unwrap();
+    f.set_rotor_speeds(&[500.0; 4]).unwrap();
+    let err = f.scale_to_air_density(1.225).unwrap_err();
+    assert!(err.contains("m3") && err.contains("reference density"), "{err}");
+    close(f.motors()[0].thrust_n, 5.0, 1e-12, "nothing changed");
+    for air in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(Flight::new(&q, propulsion(&q), None, None).unwrap().scale_to_air_density(air).is_err(), "{air}");
+    }
 }

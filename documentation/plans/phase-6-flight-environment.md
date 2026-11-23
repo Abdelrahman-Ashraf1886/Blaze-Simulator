@@ -218,7 +218,7 @@ Prefix: `https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/`.
 | Takeoff states (disarmed, spool-up, ready, ramp-up, flight) | `src/modules/mc_pos_control/Takeoff/Takeoff.cpp` L48–110 | Ported (D15(b)) |
 | Climb-speed ramp | same, L42–46, L112–134 | Ported; `MPC_TKO_RAMP_T` 3 s |
 | Landed detector: ground contact, maybe landed, landed | `src/modules/land_detector/MulticopterLandDetector.cpp` L155–325, hysteresis L344–350; constants in the `.h` (300 ms, 2 s, 1 m) | Ported on true states; no distance sensor, so the close-to-ground check is skipped as PX4 does when unavailable (L235) |
-| Land setpoints: descent speed by height, position held | `src/modules/flight_mode_manager/tasks/Auto/FlightTaskAuto.cpp` L232–287 | Ported without stick help, avoidance or gear |
+| Land setpoints: descent speed by height, position held | `src/modules/flight_mode_manager/tasks/Auto/FlightTaskAuto.cpp` L232–287 | Ported without stick help, avoidance or gear. The descent limit is `MPC_Z_VEL_MAX_DN` (L239), not `MPC_Z_V_AUTO_DN`. The crawl below `MPC_LAND_ALT3` needs a range sensor (L241–245), which the vehicle has not, so `MPC_LAND_CRWL` and `MPC_LAND_ALT3` are not used. Without one, "height" is the height above the start, not above terrain (`tasks/FlightTask/FlightTask.cpp` L191–198) |
 | Takeoff and hold setpoints: position target through a smoothed trajectory | same, L118–224; `src/lib/motion_planning/PositionSmoothing.cpp` (326 lines), `VelocitySmoothing.cpp` (303 lines) | **To verify**: both smoothing files are unread. If large, the first cut uses 5.1's limits without jerk smoothing and says so |
 | Tilt limit until flight, thrust minimum, `MPC_TILTMAX_LND` | `MulticopterPositionControl.cpp` L425–450 (Phase 5 plan) | **To verify** with the Phase 5 code |
 | Return (optional) | `src/modules/navigator/rtl.cpp` (940 lines: climb, return, descend, loiter, land) | States seen at L341–545, not read in detail |
@@ -345,7 +345,7 @@ Tolerances are stated with each test before it is run, not tuned afterwards.
 11. **Takeoff and landing** (6.7): state by state against the PX4 switch; the ramp starts at
     −g/P and ends at the desired speed after `MPC_TKO_RAMP_T` (by hand); each detector level's
     timing (`LNDMC_TRIG_TIME`/3 each); land speed equals `MPC_LAND_SPEED` below
-    `MPC_LAND_ALT2` and the descent limit above `MPC_LAND_ALT1`; a build that cannot lift off
+    `MPC_LAND_ALT2` and `MPC_Z_VEL_MAX_DN` above `MPC_LAND_ALT1`, linear between, no crawl; a build that cannot lift off
     never reports flight; on the built-in build: takeoff, hold, land, landed, with final errors stated
     after the first run.
 12. **Determinism and replay** (6.5): same start, inputs and seed give one hash; any

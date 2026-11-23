@@ -19,7 +19,7 @@ use crate::protocol::{ErrorCode, Response};
 use engine_core::aero::BodyDrag;
 use engine_core::closed_loop::gains_with_overrides;
 use engine_core::environment::Environment;
-use engine_core::flight::{Cutoff, Flight};
+use engine_core::flight::{Cutoff, Flight, ScaleToAirDensityError};
 use engine_core::propulsion::Propulsion;
 use engine_core::scenario::{
     balanced_hover, com_offset, com_offset_beyond_authority, modified_vehicle, overweight_payload, payload, run, Ground, Scenario,
@@ -142,13 +142,16 @@ pub fn handle(
         None => unreachable!("checked above"),
     };
     // Each motor's data is at its own reference density; the engine's scaling refuses a motor without one.
-    let scaling = Flight::new(vehicle, propulsion.clone(), aero, Some(rho)).and_then(|mut f| {
-        f.scale_to_air_density(rho)?;
-        Ok(f)
-    });
-    if let Err(e) = scaling {
-        let code = if e.contains("reference density") { ErrorCode::ReferenceDensityRequired } else { ErrorCode::InvalidParams };
-        return Response::err(Some(id), code, e);
+    let mut flight = match Flight::new(vehicle, propulsion.clone(), aero, Some(rho)) {
+        Ok(f) => f,
+        Err(e) => return bad(e),
+    };
+    if let Err(e) = flight.scale_to_air_density(rho) {
+        let code = match e {
+            ScaleToAirDensityError::MissingReferenceDensity { .. } => ErrorCode::ReferenceDensityRequired,
+            ScaleToAirDensityError::InvalidDensity(_) => ErrorCode::InvalidParams,
+        };
+        return Response::err(Some(id), code, e.to_string());
     }
     let gains = match gains_with_overrides(p.config.gains.as_ref()) {
         Ok(g) => g,

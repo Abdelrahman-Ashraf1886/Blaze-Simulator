@@ -292,7 +292,7 @@ impl Engine {
                     return bad("with propulsion give the air density (airDensityKgM3): thrust and torque scale with it relative to the density of the propeller data".into());
                 };
                 if let Err(e) = fl.scale_to_air_density(rho) {
-                    return bad(e);
+                    return bad(e.to_string());
                 }
                 if let Some(w) = &rotor_speeds {
                     if let Err(e) = fl.set_rotor_speeds(w) {

@@ -416,7 +416,7 @@ fn the_coefficients_scale_with_the_air_density_ratio() {
     p.motors[2].reference_density = None;
     let mut f = Flight::new(&q, p, None, None).unwrap();
     f.set_rotor_speeds(&[500.0; 4]).unwrap();
-    let err = f.scale_to_air_density(1.225).unwrap_err();
+    let err = f.scale_to_air_density(1.225).unwrap_err().to_string();
     assert!(err.contains("m3") && err.contains("reference density"), "{err}");
     close(f.motors()[0].thrust_n, 5.0, 1e-12, "nothing changed");
     for air in [0.0, -1.0, f64::NAN, f64::INFINITY] {

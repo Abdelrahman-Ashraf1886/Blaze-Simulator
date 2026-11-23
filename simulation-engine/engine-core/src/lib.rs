@@ -20,6 +20,7 @@ pub mod propulsion;
 pub mod scenario;
 pub mod sim;
 pub mod vehicle;
+pub mod hover_thrust;
 pub mod controller;
 pub mod position_control;
 

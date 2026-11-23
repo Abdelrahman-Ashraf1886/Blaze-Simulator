@@ -29,21 +29,48 @@ Each entry:
 |---|---|---|
 | `key` | yes | Unique within the set. For PX4 it is the exact parameter name (`MC_ROLLRATE_P`). |
 | `value` | yes | A number, **as the source states it**. |
-| `unit` | when the source states one | A unit from `src/domain/units.ts` (convert with `toSI`). Left out when the source gives none (most PX4 gains); the `condition` then quotes how the source defines the number. `"1"` marks a dimensionless value. |
+| `unit` | when the source states one | Normally a unit from `src/domain/units.ts` (convert with `toSI`). Left out when the source gives none (most PX4 gains); the `condition` then quotes how the source defines the number. `"1"` marks a dimensionless value. |
+| `min`, `max` | when documented | Numeric bounds copied only from the parameter comment's `@min` / `@max`, in the same unit as `value`. Either bound may be absent. Enum labels do not imply bounds. |
 | `source` | yes | `standard` (a published standard), `manufacturer` (a datasheet), `software-default` (a default in a named software release), or `derived`. |
 | `reference` | yes, except for `derived` | `{ url?, document?, locator, retrieved }`: a URL or document title, where in it (`locator`: page, table, line), and the date it was read (YYYY-MM-DD). |
 | `condition` | yes | What the source says the value applies to: laminate and fibre fraction, layer of the atmosphere, how a gain is defined, a misprint noticed in the source. |
 | `formula`, `inputs` | `derived` only | The formula, written using the keys of the cited entries it uses (in the same set). A derived value never has a `reference`; its inputs carry the citations. |
 
 `tests/unit/reference-data.test.ts` enforces this: every entry is complete, units
-exist, each derived value matches its formula, and the cited ISA values satisfy the
-standard's own equation of state.
+are known conversion units or explicitly retained PX4 source units, each derived
+value matches its formula, and the cited ISA values satisfy the standard's own
+equation of state.
 
 ### Sets in version 1
 
 - `isa`: U.S. Standard Atmosphere 1976. Sea-level g0, P0, T0, ρ0, the 0–11 km lapse rate, R* and M0, plus the specific gas constant derived as R*/M0.
 - `carbonFibrePlate`: carbon/epoxy plate density from two datasheets (Elevated Materials, RS PRO). The frame plate's own manufacturer is unknown, so the user chooses one or enters their own.
 - `px4`: PX4-Autopilot v1.13.3 defaults for the multicopter attitude, rate and vertical position/velocity controllers. Airframe files may override them.
+- `px4Position` (36): PX4 v1.13.3 position/velocity gains and limits, manual stick mapping, altitude/position submode selection, acceleration/jerk limits and aggregate velocity settings. Includes the landing slowdown/takeoff parameters read by the manual tasks; recording them does not select a ground-handling implementation. Vertical gains and thrust limits are reused from `px4`.
+- `px4Allocation` (1): `MC_AIRMODE`, with its documented behaviours and tuning caution in `condition`.
+- `px4ThrustModel` (1): `THR_MDL_FAC`, with the source's static thrust model quoted in `condition`. This is the firmware default; a vehicle-specific fit is not reference data.
+- `px4HoverThrust` (6): all six `HTE_*` estimator parameters. `MPC_USE_HTE` and `MPC_THR_HOVER` are reused from `px4`.
+
+The original `px4` set is frozen at 38 entries for the Phase 4.7 Rust `Gains`
+conformance test. New parameters belong in the separate sets above; exact PX4
+parameter keys must be unique across all `px4*` sets.
+
+For these new sets, defaults come from the actual `PARAM_DEFINE_*` line in the
+raw file at tag v1.13.3, cited with its GitHub line anchor. Units and bounds come
+from the immediately preceding doc comment, not inferred physical dimensions or
+enum values. `norm`, `normalized_thrust` and `SD` are represented by `"1"`, and
+`m/s^2` by `"m/s²"`; `condition` retains the original unit token. The source unit
+strings `deg`, `Hz`, `m/s^3` and `normalized_thrust/s` are retained verbatim because
+`src/domain/units.ts` has no conversions for them. They are reference metadata:
+consumers must check `isUnit` before calling `toSI`, and must not silently treat
+these values as dimensionless. No conversion units are added in this data-only change.
+
+`MPC_XY_VEL_ALL` and `MPC_Z_VEL_ALL` have negative firmware defaults: their comments
+say negative values keep the individual parameters active. `SYS_VEHICLE_RESP`
+is excluded as the draft plan requests (no port of its parameter rewriting).
+No requested parameter was missing from the fetched definitions; the manual-mode
+reads were checked in `FlightTask`, `ManualAltitude`, `ManualAltitudeSmoothVel`,
+`ManualPosition`, `ManualAcceleration`, `Sticks` and `StickAccelerationXY`.
 
 A change to a value is a new citation, not an edit. If a source is revised, update
 `reference.retrieved` and `locator` together with the value.

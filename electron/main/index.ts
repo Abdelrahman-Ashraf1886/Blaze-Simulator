@@ -4,7 +4,8 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
 import { createHandlers } from '../ipc/handlers'
-import { backfillHulls, importAssetFile, removeAssetFiles, resolveAssetUrl } from './assets/store'
+import { backfillHullsAsync, importAssetFileAsync, removeAssetFiles, resolveAssetUrl } from './assets/store'
+import { shutdownHullWorkers } from './assets/hull-async'
 import { safeFileName, savePngSchema } from './screenshot'
 import { MAX_PACK_BYTES, PackError, buildPack, importPack } from './components/pack'
 import { loadBuiltIns } from './components/seed'
@@ -207,12 +208,12 @@ function start(): void {
   } catch (e) {
     console.error('[assets] cleanup failed', e) // never blocks startup
   }
-  try {
-    const filled = backfillHulls(assetsDir, repos)
-    if (filled.length) console.log(`[assets] computed the hull of ${filled.length} model(s) imported before 4.4`)
-  } catch (e) {
-    console.error('[assets] hull back-fill failed', e) // those parts keep their bounding box
-  }
+  // On worker threads and not awaited, so startup never waits for it.
+  void backfillHullsAsync(assetsDir, repos)
+    .then((filled) => {
+      if (filled.length) console.log(`[assets] computed the hull of ${filled.length} model(s) imported before 4.4`)
+    })
+    .catch((e: unknown) => console.error('[assets] hull back-fill failed', e)) // those parts keep their bounding box
   protocol.handle(ASSET_SCHEME, async (request) => {
     const file = resolveAssetUrl(request.url, assetsDir)
     if (!file) return new Response('Not found', { status: 404 })
@@ -229,7 +230,7 @@ function start(): void {
     }
     const picked = await (win ? dialog.showOpenDialog(win, options) : dialog.showOpenDialog(options))
     if (picked.canceled || !picked.filePaths[0]) return { ok: true, data: null }
-    return importAssetFile(picked.filePaths[0], assetsDir, repos)
+    return importAssetFileAsync(picked.filePaths[0], assetsDir, repos)
   })
   ipcMain.handle(Channels.componentsExportPack, async (event, payload: unknown): Promise<IpcResult<{ path: string; count: number } | null>> => {
     const parsed = z.object({ ids: z.array(z.uuid()).min(1, 'Nothing to export').max(5000), name: z.string().max(200) }).safeParse(payload)
@@ -343,6 +344,7 @@ app.on('before-quit', (event) => {
 // The database must outlive the windows: closing a window runs its unload handler,
 // which saves the last edit synchronously. `will-quit` fires after all windows closed.
 app.on('will-quit', () => {
+  shutdownHullWorkers()
   db?.close()
   db = null
 })

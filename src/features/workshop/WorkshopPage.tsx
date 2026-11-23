@@ -23,7 +23,7 @@ import {
   type LayoutStorage,
   type PanelImperativeHandle,
 } from 'react-resizable-panels'
-import { FRAME_SPECS, PART_KINDS, type AssemblyDocument, type PartKind, type Project } from '../../../electron/ipc/contract'
+import { FRAME_SPECS, PART_KINDS, type AssemblyDocument, type AssemblyPart, type PartKind, type Project } from '../../../electron/ipc/contract'
 import { FrameGlyph } from '@/components/frame-glyph'
 import { PageHeader } from '@/components/page-header'
 import { EmptyState, Readout, Readouts, Section } from '@/components/section'
@@ -54,7 +54,7 @@ import {
   deleteSelected,
   useComponentIndex,
 } from './PartPanels'
-import { effectiveMass, resolveLinks } from './links'
+import { effectiveMass, effectiveShape, resolveLinks } from './links'
 import { useComponents } from '@/stores/components'
 import { ComDropLine, ComMarker, MassPanel } from './MassPanel'
 import { CollisionShapes, CollisionStatus } from './CollisionView'
@@ -64,7 +64,7 @@ import { EnvironmentPanel } from './EnvironmentPanel'
 import { ChecksPanel, ChecksStatus } from './ChecksPanel'
 import { PropulsionPanel, ReadyPanel } from './PropulsionPanel'
 import { PartsModel } from './PartsModel'
-import { duplicatePart, subtreeIds, updatePart } from './assembly-ops'
+import { duplicatePart, seatPropsOnMotors, subtreeIds, updatePart } from './assembly-ops'
 import { SNAP_MM } from './view-store'
 import { useWorkshopView } from './view-store'
 import { Viewport } from './Viewport'
@@ -192,6 +192,17 @@ function Workshop({ project }: { project: Project }) {
   }, [imageNote])
   const assets = useAssets((s) => s.assets)
   const components = useComponentIndex()
+  const libraryReady = useComponents((s) => !s.loading && s.components.length > 0)
+  // Projects saved before propellers were seated on their motor can have a prop on a bare
+  // motor mount, at arm height. Seat it on its motor once (an undoable, saved edit). Waits
+  // for the library so the motor's real height is used; a no-op when nothing needs moving.
+  useEffect(() => {
+    if (!doc || !geo || !libraryReady) return
+    const shapeOf = (p: AssemblyPart) => effectiveShape(p, components)
+    if (seatPropsOnMotors(doc, geo, assets, shapeOf) !== doc) {
+      useAssembly.getState().edit('Seat propellers on their motors', (d) => seatPropsOnMotors(d, geo, assets, shapeOf))
+    }
+  }, [doc, geo, libraryReady, components, assets])
   // What is drawn: linked parts at their component's stated size, then the exploded
   // layout. Both are display only; `doc` (what is saved) is untouched.
   const display = useMemo(() => {

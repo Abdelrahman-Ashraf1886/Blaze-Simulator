@@ -1,8 +1,8 @@
 # Phase 4 plan: physics, collisions and flight behaviour
 
-Status: **approved, in progress**. Phase 3 is done (3.8 merged). 4.1–4.7 and the data
-sourcing are merged on `phase-1-foundation` (4.4's open items: its DEVLOG "Still open").
-Next: 4.8 (flight test view and physics debug), then 4.9.
+Status: **Done (2026-11-23)**. 4.1–4.9 are merged on `phase-1-foundation`; the DEVLOG
+has an entry for each, with its own "Still open" list. Awaiting user review. Phase 3 was
+done before it (3.8 merged).
 
 ## Goal
 
@@ -276,12 +276,19 @@ Each milestone ends with `npm run test:all` green, a DEVLOG entry and screenshot
 | 4.1 Mass properties ✅ | Frame mass parameter (migration); `mass.ts` (mass, CoM, inertia, incomplete CoM); CoM marker in the viewport; mass panel with the CoM in X/Y/Z and its distance from the frame centre, plus the inertia tensor; live updates while dragging; CoM-offset warning (threshold is a setting) |
 | 4.2 Editor additions ✅ | New part kinds: GPS, camera, sensor, landing gear (parametric legs/skids); drag a component from the library into the viewport or onto a mount; scale tool for envelope parts only (linked components keep their stated size); per-part inertia and CoM-offset override; collision-shape choice |
 | 4.3 Engine foundation ✅ | rapier3d-f64 with enhanced determinism; protocol v2; `vehicle.load` from the assembly; cross-check against `mass.ts`; spikes: gyroscopic term and determinism hash; ADR 0005 (rapier) and ADR 0006 (mass properties in TS, simulation in Rust) |
-| 4.4 Collisions | Interference check in the workshop (live while dragging, debounced); tolerance and allowed pairs; collision-boundary debug view; ground and obstacle contact in the engine |
+| 4.4 Collisions ✅ | Interference check in the workshop (live while dragging, debounced); tolerance and allowed pairs; collision-boundary debug view; ground and obstacle contact in the engine |
 | 4.5 Motor, prop and battery models ✅ | k_T and k_Q fits and the steady-state solver; validation against the cited thrust tables (error shown); APC performance data sourced into the seed (done, with the cited reference data); Ready-to-fly checklist. Follow-up: bench throttle map, leave-one-prop-out validation, fit domains, catalog gap-fills and part overrides, per-axis body drag. Status: coherent and bounded, not validated (see the DEVLOG) |
 | 4.6 Flight dynamics ✅ | Per-motor forces at their true pose, reaction torque, gravity, drag, battery sag and consumption; analytical tests |
 | 4.7 Controller ✅ | Angle/rate cascade, allocation, altitude hold, PX4 default gains (cited) |
-| 4.8 Flight test view and physics debug | Engine → renderer state stream; flight view with ground and obstacles; keyboard sticks; a debug panel showing every value the spec lists (mass, CoM, inertia, thrust per motor and total, torque per axis, angular and linear velocity, collisions, battery use); indicators for unbalanced mass, motor layout, collisions, T/W below the limit and instability |
-| 4.9 Scenarios and acceptance | Scripted unbalanced and payload scenarios; determinism; docs; update the ROADMAP (Phase 5/6 then deepen what 4.7/4.8 start) |
+| 4.8 Flight test view and physics debug ✅ | Engine → renderer state stream; flight view with ground and obstacles; keyboard sticks; a debug panel showing every value the spec lists (mass, CoM, inertia, thrust per motor and total, torque per axis, angular and linear velocity, collisions, battery use); indicators for unbalanced mass, motor layout, collisions, T/W below the limit and instability |
+| 4.9 Scenarios and acceptance ✅ | Scripted unbalanced and payload scenarios; determinism; docs; update the ROADMAP (Phase 5/6 then deepen what 4.7/4.8 start) |
+
+**How it ended.** All nine milestones are merged, with these differences from the plan:
+- 4.8 and 4.9 each came in two parts. 4.8: the flight view on demo data, then the live engine session (`flight.session.*`). 4.9: the engine-core scenario runner, then `scenario.run` and the scenarios page.
+- The live flight is stepped by the renderer: one `flight.session.step` request advances at most 100 fixed 1 ms steps, not a continuous stream.
+- Wind and ground effect (in the ROADMAP's Phase 4 scope) were not built; the plan had deferred them. The Phase 5 plan recommends Phase 6; that is not decided.
+- The 4.9 "update the ROADMAP" step is done: Phase 5 is in progress.
+- Open items, kept in the DEVLOG: a flat box rebounds about half the expected height (rapier, 4.4); long ground-contact simulations stop at the 2 s compute budget per request (4.4); the controller's estimate is the true state (no sensors, noise or delay).
 
 ## Automated tests (the spec's 10 areas)
 

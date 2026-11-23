@@ -27,7 +27,7 @@ renderer shows it.
 | Attitude P with yaw weighting | 4.7: `controller.rs::attitude_rates` | Unchanged |
 | Rate PID, feed-forward, K, integrator limits, saturation anti-windup | 4.7: `RateControl` | Unchanged. The D filter belongs to the sensors (D6) |
 | Allocation: pseudo-inverse, PX4 normalisation, desaturation | 4.7: `Allocator`, airmode 0 only | Airmode 1 and 2 (D3) |
-| Vertical position and velocity hold, thrust limits | 4.7: inside `Controller::step` | Same behaviour, now one part of a 3-axis position controller |
+| Vertical position and velocity hold, thrust limits | 4.7: inside `Controller::step` | Same behaviour, now one part of a 3-axis position controller (5.1). The old vertical hold is removed in 5.9, so only one vertical controller remains (D13) |
 | **Horizontal position and velocity control** | No | **5.1** |
 | **Thrust vector to attitude, tilt limit, horizontal thrust margin** | No: the attitude setpoint is given | **5.1** |
 | **Thrust curve (`THR_MDL_FAC`)** | No: command = throttle, linear (4.7 header) | **5.2** |
@@ -35,11 +35,19 @@ renderer shows it.
 | Gains | `sim.run` and 4.8 sessions accept overrides by exact PX4 name; Rust checks only "finite and not negative" | **5.5**: stored per project, checked against PX4's documented ranges, editable in the UI |
 | Scenarios | 4.9: summary checks (`pass/fail`, max error, mean throttle…), no time series | **5.7**: time series from a scripted step; **5.6**: the metrics |
 | Estimator | None: the controller gets the true state (4.7 header) | Unchanged (D6). The boundary stays where Phase 7 can insert sensor models |
-| Hover thrust | `MPC_THR_HOVER` fixed at its default 0.5; the integrator absorbs the difference | Unchanged unless you choose to port the estimator (D5) |
+| Hover thrust | `MPC_THR_HOVER` fixed at its default 0.5; the integrator absorbs the difference. `MPC_USE_HTE` (PX4 default 1) is stored but has no effect | **5.10**: port of PX4's hover thrust estimator, so `MPC_USE_HTE` = 1 behaves as in PX4 (D5) |
 
 Not in Phase 5: auto modes (mission, takeoff, land, return), trajectory generators,
 collision prevention, terrain following, wind estimation, failsafes, arming and the landed
 detector. Phase 6 covers input devices, cameras and any further modes.
+
+**Wind and ground effect are also out of Phase 5.** The ROADMAP lists them under Phase 4
+("drag, wind, ground effect"); the Phase 4 plan deferred them ("Wind and ground effect stay
+in a later milestone") and no later plan has claimed them. Note for you: I recommend
+Phase 6 (flight environment), where terrain and obstacles already live. Wind in
+particular is what the horizontal integrator and the step tests would most usefully be
+exercised against, so it would be worth scheduling early in Phase 6. The ROADMAP is not
+edited here; moving them is your call.
 
 ## Decisions (for you)
 
@@ -51,15 +59,15 @@ Nothing below is decided. Each row has a recommendation; the plan is written to 
 | D2 | Which PX4 parts to port | (a) `PositionControl` + `ControlMath` + the three manual modes; (b) (a) plus jerk-limited trajectories and auto modes | **(a)**. Auto modes need a mission and a takeoff/land state machine, which belong with Phase 6 |
 | D3 | Airmode | (a) 0 only, as now; (b) add 1 (roll/pitch) and 2 (roll/pitch/yaw) as a setting, default 0 | **(b)**. The algorithms are short (`mixAirmodeRP`, `mixAirmodeRPY`) and they change how a large CoM offset saturates, which is what 4.9 measures. PX4's own text says to disable it while tuning, so the default stays 0 and the UI says so |
 | D4 | Thrust curve | (a) `THR_MDL_FAC` = 0, PX4's default; (b) derived by fitting PX4's model to our propulsion model, shown with its fit error, you can overwrite it; (c) you enter it | **(b)**. PX4's guide tells users to fit it to thrust-stand data, and the 4.5 model is that data. Derived, not invented. Applied by default only in 5.9, after the 4.9 baselines are re-run (see risks) |
-| D5 | Hover thrust | (a) fixed `MPC_THR_HOVER`, editable, integrator absorbs the rest; (b) derive it from the model at the nominal mass; (c) port PX4's hover thrust estimator | **(a)** for 5.1 to 5.9. (c) is optional 5.10. (b) is not what a real controller knows, and (c) is what makes a payload change settle in PX4 |
-| D6 | Estimator and sensor filtering | (a) perfect state in Phase 5, Phase 7 adds sensor models and an estimator; (b) add a simple estimator now | **(a)**. The gyro low-pass (`IMU_GYRO_CUTOFF`, 40 Hz) and the D-term differentiation (`IMU_DGYRO_CUTOFF`, 30 Hz) act on sensed signals, so they come with the sensor models. Until then tuning on exact signals looks better than a real vehicle would |
+| D5 | Hover thrust | (a) port PX4's hover thrust estimator, so `MPC_USE_HTE` = 1 (PX4's default) behaves as in PX4; (b) keep `MPC_THR_HOVER` fixed at 0.5 and label the deviation on screen and in the docs; (c) derive it from the model at the nominal mass | **(a)**, as core milestone 5.10. PX4 v1.13.3 defaults to the estimator being on, so a fixed 0.5 departs from PX4's default behaviour, most visibly in the payload scenarios. (b) is acceptable only with the label (the UI and docs state "hover thrust is not estimated; PX4 default differs"). (c) is not what a real controller knows |
+| D6 | Estimator and sensor filtering | (a) perfect state in Phase 5, Phase 7 adds sensor models and an estimator; (b) add a simple estimator now | **(a)**. The gyro low-pass (`IMU_GYRO_CUTOFF`, 40 Hz) and the D-term differentiation (`IMU_DGYRO_CUTOFF`, 30 Hz) act on sensed signals, so they come with the sensor models. Until then tuning on exact signals looks better than a real vehicle would, so 5.8 must say so on screen in the tuning and step-response panels |
 | D7 | Where flight modes live, and the split with Phase 6 | (a) mode logic in engine-core now, UI selector on the existing flight page; Phase 6 adds input devices, cameras, auto modes; (b) leave all modes to Phase 6 and test position control with scripted setpoints only | **(a)**. The stick shaping (expo, dead zone, tilt and speed limits) decides how a gain change feels and is part of the controller stack in PX4. Phase 6 then only maps devices to normalised sticks |
 | D8 | Position-mode submode | (a) `MPC_POS_MODE` 4, PX4's default: sticks command acceleration with a virtual brake drag; (b) (a) plus 0: sticks command velocity directly, which PX4 describes as useful for velocity tuning; (c) all three including the jerk-optimised mode | **(b)**. Mode 3 needs the trajectory generator, which is out of scope (D2) |
 | D9 | Tuning storage | (a) one set of overrides per project; (b) named tunes per project; (c) global presets | **(a)**. A project has one assembly today, so per project is per build. Only overrides are stored, so PX4 defaults stay visible. Each step-response and scenario result records the gains it used. (b) can be added later without changing the storage of (a) |
 | D10 | Tuning aids beyond editing gains and step responses | (a) none; (b) linear loop analysis (gain and phase margins) from the vehicle's own inertia and motor lag; (c) auto-tune | **(a)**. PX4's guide tunes from step responses. (b) is optional 5.11: it needs the motor time constant, which is still a user input (4.5), and a linearisation whose error I would have to quantify. (c) has no PX4 source |
 | D11 | Range checks on gains | (a) refuse a value outside the `@min`/`@max` PX4 documents for it; (b) warn only | **(a)**. The limits are PX4's, cited per parameter. Parameters with no documented range get no invented one; they keep the existing "finite, not negative" check and the relations (`min ≤ hover ≤ max ≤ 1`) |
-| D12 | Step-response definitions | (a) 10–90 % rise time, 2 % settling band, overshoot as a percentage of the step, steady-state error as the mean over the last 10 % of the window, all editable, computed in TypeScript from the time series; (b) computed in Rust inside the scenario report | **(a)**. These are conventions, not PX4 values, so they are labelled as ours and editable; I have not yet checked them against a textbook and will cite one in 5.6. TypeScript lets the panel change a threshold without re-running the simulation (ADR 0008), and there is one implementation, so no cross-check as in ADR 0006 |
-| D13 | Integration style | (a) new modules next to 4.7's `Controller`; once 4.8 and 4.9 have merged, 5.9 can make `ClosedLoop` use the new loop; (b) change `Controller`, `Setpoint` and `ControllerInput` now | **(a)**. 4.9's `scenario.rs` builds those types, so changing them now would collide with that branch. (a) leaves 4.7/4.8/4.9 results bit-identical, which a test asserts |
+| D12 | Step-response definitions | (a) 10–90 % rise time, 2 % settling band, overshoot as a percentage of the step, steady-state error as the mean over the last 10 % of the window, all editable, computed in TypeScript from the time series; (b) computed in Rust inside the scenario report | **(a)**. These are conventions, not PX4 values, so they are labelled as ours and editable. **Gate on 5.6:** the citation is "to verify before 5.6 starts" and 5.6 does not start without it. Candidates, none read yet: IEEE Std 181 for the 10–90 % transition definition, and a named control textbook (chapter and section) for the settling band, overshoot and steady-state error. If no source states a definition, the panel labels it as ours. TypeScript lets the panel change a threshold without re-running the simulation (ADR 0008), and there is one implementation, so no cross-check as in ADR 0006 |
+| D13 | Integration style | (a) new modules next to 4.7's `Controller` now; in 5.9, once 4.8 and 4.9 have merged, `ClosedLoop` (and 4.9's `scenario.rs`) switch to the new loop and the old vertical hold is removed; (b) change `Controller`, `Setpoint` and `ControllerInput` now | **(a)**, with the 5.9 switch mandatory so no duplicate vertical controller remains. 4.9's `scenario.rs` builds those types, so changing them now would collide with that branch. Until 5.9, (a) leaves 4.7/4.8/4.9 results bit-identical, which a test asserts. At 5.9 a test compares the Z path before and after the switch (see test 3) |
 
 ## Where each calculation lives (ADR 0006, ADR 0008)
 
@@ -145,6 +153,7 @@ Defaults are the `PARAM_DEFINE` values; line numbers are in
 | Limits | `MPC_TILTMAX_AIR` 45° (L392), `MPC_TILTMAX_LND` 12° (L405, used only if D2 gains a landed state), `MPC_THR_XY_MARG` 0.3 (L123) |
 | Stabilized and altitude modes | `MPC_MAN_TILT_MAX` 35° (L462), `MC_MAN_TILT_TAU` 0 s (`mc_att_control_params.c` L160), `MPC_MAN_Y_MAX` 150°/s (L473), `MPC_MAN_Y_TAU` 0.08 s (L486), `MPC_THR_CURVE` 0 (L108), `MPC_MANTHR_MIN` 0.08 (L152), `MPC_HOLD_DZ` 0.1 (L496), `MPC_HOLD_MAX_Z` 0.6 (L518), `MPC_Z_MAN_EXPO` 0.6 (L675), `MPC_YAW_EXPO` 0.6 (L691) |
 | Position mode | `MPC_POS_MODE` 4 (L781), `MPC_VEL_MANUAL` 10 (L364), `MPC_HOLD_MAX_XY` 0.8 (L507), `MPC_XY_MAN_EXPO` 0.6 (L659), `MPC_ACC_HOR` 3 (L561), `MPC_JERK_MAX` 8 (L605), `MPC_ACC_UP_MAX` 4 (L573), `MPC_ACC_DOWN_MAX` 3 (L585) |
+| Hover thrust estimator | `HTE_HT_NOISE` 0.0036, `HTE_ACC_GATE` 3.0, `HTE_HT_ERR_INIT` 0.1, `HTE_VXY_THR` 10, `HTE_VZ_THR` 2, `HTE_THR_RANGE` 0.2 (lines in the section below) |
 | Mixer | `MC_AIRMODE` 0 (`src/lib/mixer_module/params.c` L18), `THR_MDL_FAC` 0 (`src/lib/mixer_module/motor_params.c` L73, range 0 to 1) |
 
 Already stored from 4.7 and reused: `MPC_Z_P`, `MPC_Z_VEL_*_ACC`, `MPC_THR_HOVER`,
@@ -208,6 +217,34 @@ be disabled during tuning" because it helps an unstable loop diverge (`params.c`
 - The motor model's own throttle-to-duty map (4.5 bench map) is separate from this and
   stays. The curve linearises what the allocator asks for; it does not replace the map.
 
+### Hover thrust estimator
+
+PX4 v1.13.3 defaults to `MPC_USE_HTE` = 1 (`mc_pos_control_params.c` L86), so the position
+controller's hover thrust is learned in flight, not fixed at `MPC_THR_HOVER`. The estimate
+reaches the controller through `updateHoverThrust` (`PositionControl.cpp` L73–86, which
+also shifts the vertical integrator so the thrust does not jump) from
+`MulticopterPositionControl.cpp` L327–332.
+
+Read on 2026-11-23, in `src/modules/mc_hover_thrust_estimator/`:
+- `zero_order_hover_thrust_ekf.cpp` (156 lines): a one-state Kalman filter. `predict` L44,
+  `fuseAccZ` L52, state and covariance updates L122–127, innovation low-pass L142, adaptive
+  measurement noise L150. The equations are transcribed from this file in 5.10, not from
+  memory.
+- `MulticopterHoverThrustEstimator.cpp` (310 lines): set-up from `MPC_THR_HOVER` and the
+  `HTE_*` parameters L72–92 (the allowed range is `MPC_THR_HOVER` ± `HTE_THR_RANGE`); it
+  does not run while landed L108–130; each step it predicts (L167), scales the measurement
+  noise when |vz| or |vxy| exceed their thresholds (L176–181), fuses the measured vertical
+  acceleration with the thrust setpoint (L182, input −a_z against −thrust_sp_z), and marks
+  the estimate valid when its variance is below 0.001 and, until first valid, the innovation
+  test ratio is below 1 (L184–192), with a 2 s hysteresis (L50).
+- `hover_thrust_estimator_params.c`: `HTE_HT_NOISE` 0.0036 (L55), `HTE_ACC_GATE` 3.0 (L69),
+  `HTE_HT_ERR_INIT` 0.1 (L83), `HTE_VXY_THR` 10 (L99), `HTE_VZ_THR` 2 (L115),
+  `HTE_THR_RANGE` 0.2 (L132).
+
+Our inputs: the true vertical acceleration (a perfect-state simplification, D6; PX4 uses the
+estimator's) and the position controller's thrust setpoint. The landed gate uses the ground
+contact stand-in described under Ground.
+
 ### Tuning procedure the tools follow
 
 PX4 guide, same URL, read 2026-11-23: increase gains slowly (20 to 30 % per step, 5 to
@@ -231,9 +268,11 @@ Searched 2026-11-23 in the PX4 v1.13.3 tag and the v1.13 documentation.
   same files; read into the reference data in 5.0.
 
 **Not found, stays "to verify" or a user input**
-- The unread files listed under Flight modes and Ground.
-- A textbook source for the step-response definitions (D12): I will cite one in 5.6 or the
-  panel labels them as ours.
+- The unread files listed under Flight modes and Ground. The hover thrust estimator is now
+  read at file and line level, but its equations are transcribed only in 5.10.
+- A textbook or standard source for the step-response definitions (D12). This is an
+  explicit gate on 5.6: cite one before 5.6 starts, or the panel labels the definitions as
+  ours.
 - Rotor inertia or motor time constant of the built-in motors (known gap from 4.5). Step
   responses depend on motor lag, so a built-in build still has to have this entered before
   a step test runs, as before.
@@ -255,19 +294,24 @@ merge) and, where noted, the DEVLOG.
 | 5.1 Position controller | `PositionControl` port (XY and Z, NaN-able setpoints, the table above), `ControlMath` (tilt limit, XY constrain, thrust vector to attitude), the velocity derivative filter, `PositionGains` with PX4 defaults and validation, name-based overrides for the new names. A test that the Rust defaults equal the reference data, as `defaults_match_reference` does for 4.7. No change to `controller.rs` | `engine-core/src/position_control.rs`, `position_control/tests.rs`, `lib.rs` | 5.0 |
 | 5.2 Airmode and thrust curve | `Allocator::set_airmode` (default 0, so `allocate` keeps its signature); `thrust_model.rs` (forward and inverse, f in [0, 1]); the TS fit with its error | `engine-core/src/controller.rs`, `controller/tests.rs`, `thrust_model.rs`, `lib.rs`, `src/domain/thrust-curve.ts`, `tests/unit/thrust-curve.test.ts` | 5.0 (the fit reads `propulsion.ts`, which exists) |
 | 5.3 Flight modes and loop | Rates, stabilized, altitude and position (0, then 4) as setpoint generators; `flight_loop.rs`: composes `attitude_rates`, `RateControl`, `Allocator` and 5.1's controller with `Flight`/`Simulation` the way `closed_loop.rs` does, leaving `closed_loop.rs` alone. Reads the "to verify" files first | `engine-core/src/flight_modes.rs`, `flight_modes/tests.rs`, `flight_loop.rs`, `flight_loop/tests.rs`, `lib.rs` | 5.1, 5.2 |
-| 5.4 Protocol and host | `controller.mode` and its setpoint (normalised sticks, or the 4.7 attitude form), the new gain names, `airmode`, `thrustModelFactor`, per-step position-loop diagnostics, in `sim.run` and the 4.8b session. Additive fields; the protocol version stays 2 unless a field changes meaning (to confirm against how 4.8b/4.9 bumped it) | `engine-host/src/protocol.rs`, `engine.rs`, `flight_session.rs`, `electron/main/engine/protocol.ts`, `electron/main/engine/flight-session.ts`, `ARCHITECTURE.md` protocol table | 5.3, and **4.8b merged** (and 4.9, which also edits `protocol.rs`/`engine.rs`) |
-| 5.5 Tuning settings | `controller-params.ts` (table, validation, grouping); migration (next free number when this starts; 0011 is the latest now); repository; IPC with zod; "reset to PX4 defaults"; the saved set is overrides only | `src/domain/controller-params.ts`, `tests/unit/controller-params.test.ts`, `database/migrations/NNNN_controller_tuning.sql`, `electron/main/db/*` (a new repository file), `electron/ipc/contract.ts`, `handlers.ts`, `schemas.ts`, `tests/unit/migrations.test.ts` and `database.test.ts` | 5.0. Independent of the engine |
-| 5.6 Step-response metrics | `step-response.ts`: rise, overshoot, settling, steady-state error, peak time, "did not settle" and "no overshoot" as distinct results, from sampled time and signal; thresholds as arguments | `src/domain/step-response.ts`, `tests/unit/step-response.test.ts` | Nothing |
+| 5.4 Protocol and host | `controller.mode` and its setpoint (normalised sticks, or the 4.7 attitude form), the new gain names, `airmode`, `thrustModelFactor`, per-step position-loop diagnostics, in `sim.run` and the 4.8b session. Additive fields; the protocol version stays 2 unless a field changes meaning (to confirm against how 4.8b/4.9 bumped it) | `engine-host/src/protocol.rs`, `engine.rs`, `flight_session.rs`, `electron/main/engine/protocol.ts`, `electron/main/engine/flight-session.ts`, `ARCHITECTURE.md` protocol table | 5.3, 5.10, and **4.8b merged** (and 4.9, which also edits `protocol.rs`/`engine.rs`). Includes the `MPC_USE_HTE`/`HTE_*` names and the hover-thrust estimate in the diagnostics |
+| 5.5 Tuning settings | `controller-params.ts` (table, validation, grouping); migration (next free number when this starts; 0011 is the latest now); repository; IPC with zod; "reset to PX4 defaults"; the saved set is overrides only | `src/domain/controller-params.ts`, `tests/unit/controller-params.test.ts`, `database/migrations/NNNN_controller_tuning.sql`, `electron/main/db/*` (a new repository file), `electron/ipc/contract.ts`, `handlers.ts`, `schemas.ts`, `tests/unit/migrations.test.ts` and `database.test.ts` | 5.0 and **4.8b merged**. 4.8b owns `contract.ts`, `handlers.ts`, `schemas.ts` and `electron/main/db/*` while it runs and adds its own migration (per-project flight conditions); both would take the same number. 5.5 takes its migration number only after 4.8b has merged. The domain half (`controller-params.ts` and its test) touches none of those files and may be written earlier, but is merged with the rest |
+| 5.6 Step-response metrics | `step-response.ts`: rise, overshoot, settling, steady-state error, peak time, "did not settle" and "no overshoot" as distinct results, from sampled time and signal; thresholds as arguments | `src/domain/step-response.ts`, `tests/unit/step-response.test.ts` | **Gate:** the D12 citation, added to this plan before 5.6 starts. Otherwise nothing |
 | 5.7 Step tests in the engine | Time-series recorder (setpoint, state, command, saturation, at a stated decimation); step definitions (attitude and rate about each axis, altitude, horizontal position) run through the 4.9 scenario runner with a trace in the report; a host message to run one and return it | `engine-core/src/trace.rs`, `trace/tests.rs`, `engine-core/src/scenario.rs` and `scenario/*` (4.9's files: small additions), `engine-host/src/*` (one new module), `electron/main/engine/*` | 5.3, 5.4, **4.9 merged** |
-| 5.8 Tuning and flight UI | Tuning panel (groups from the table, units, PX4 default beside each value, range errors, reset, save per project); step-response panel (charts with the setpoint in magenta, the metrics, editable thresholds, the gains used); mode selector and PX4 stick behaviour on the flight page | `src/features/tuning/*` (new), `src/features/flight/*` (4.8's folder: small edits), `src/app/nav.ts`, `tests/e2e/tuning.spec.ts`, `tests/unit/tuning-*.test.ts` | 5.4, 5.5, 5.6, 5.7, **4.8b merged** |
-| 5.9 Acceptance and defaults | Position-hold and step scenarios on the built-in builds; apply the derived `THR_MDL_FAC` by default (D4) and re-run the 4.9 scenarios, stating each changed number and why; optionally `ClosedLoop` on the new loop (D13); ROADMAP, ARCHITECTURE, DEVLOG, an ADR for the controller port and the perfect-state boundary | `engine-core/src/scenario/builtins.rs`, docs, `closed_loop.rs` if D13 | All of the above, 4.8, 4.9 |
-| 5.10 (optional) Hover thrust estimator | Port of PX4's estimator, `updateHoverThrust` (`PositionControl.cpp` L73–86) and `MulticopterPositionControl.cpp` L327–332. The estimator module (`src/modules/hover_thrust_estimator`) is **not read yet** | new `engine-core` file | D5(c), 5.3 |
+| 5.8 Tuning and flight UI | Tuning panel (groups from the table, units, PX4 default beside each value, range errors, reset, save per project); step-response panel (charts with the setpoint in magenta, the metrics, editable thresholds, the gains used); mode selector and PX4 stick behaviour on the flight page. **Both the tuning panel and the step-response panel state on screen that the signals are exact (no sensor noise, filtering or delay), so responses look better than on a real vehicle (D6)**, next to the values, not in a tooltip; the e2e test asserts the text is visible. The hover-thrust estimate is shown in the debug panel, and if D5(b) is chosen instead of (a), the "hover thrust is not estimated" label is shown there | `src/features/tuning/*` (new), `src/features/flight/*` (4.8's folder: small edits), `src/app/nav.ts`, `tests/e2e/tuning.spec.ts`, `tests/unit/tuning-*.test.ts` | 5.4, 5.5, 5.6, 5.7, **4.8b merged** |
+| 5.9 Acceptance and defaults | Position-hold and step scenarios on the built-in builds; apply the derived `THR_MDL_FAC` by default (D4) and re-run the 4.9 scenarios, stating each changed number and why; **mandatory** switch of `ClosedLoop` and 4.9's `scenario.rs` to the new loop, and removal of the old vertical hold from `Controller::step` (D13), with the before/after Z-path test (test 3); ROADMAP, ARCHITECTURE, DEVLOG, an ADR for the controller port and the perfect-state boundary | `engine-core/src/scenario/builtins.rs`, `scenario.rs`, `closed_loop.rs`, `controller.rs`, `controller/tests.rs`, docs | All of the above, 4.8, 4.9 |
+| 5.10 Hover thrust estimator (core, D5(a)) | Port of PX4's estimator (section above): the one-state filter, the `HTE_*` parameters, validity logic, the landed gate on the ground stand-in, `updateHoverThrust` into 5.1's controller, `MPC_USE_HTE` honoured. The equations are transcribed from `zero_order_hover_thrust_ekf.cpp` first | `engine-core/src/hover_thrust.rs`, `hover_thrust/tests.rs`, `flight_loop.rs` (5.3's file: a small addition), `lib.rs` | 5.1, 5.3 |
 | 5.11 (optional) Loop margins | Linear analysis from the vehicle's inertia, allocation scale and motor lag | `src/domain/loop-analysis.ts` | D10(b), 4.5's motor time constant |
 
-**Waves.** After 5.0 (small, data only): 5.1, 5.2, 5.5 and 5.6 run in parallel, because
-their files are disjoint. Then 5.3. 5.4, 5.7, 5.8 and 5.9 wait for 4.8b and 4.9 to merge.
-5.0 to 5.3, 5.5 and 5.6 do not depend on either and can start now. 5.0 to 5.3 are useful
-on their own (a position-holding engine with tests) before any UI.
+**Waves.**
+- **Wave 1:** 5.0 (small, data only), then 5.1, 5.2 and 5.6 in parallel, because their files
+  are disjoint. 5.6 also waits for the D12 citation (its gate). None of these touch a file
+  that 4.8b or 4.9 edits, so they can start now.
+- **Wave 2:** 5.3 (after 5.1 and 5.2), then 5.10 (after 5.3).
+- **After 4.8b and 4.9 merge:** 5.5 (takes its migration number then), 5.4, 5.7, 5.8, then 5.9.
+  5.5 is not in wave 1: it edits files 4.8b owns now (see its row).
+5.0 to 5.3 and 5.10 are useful on their own (a position-holding engine with tests and the
+PX4 hover thrust behaviour) before any UI.
 
 ## Automated tests
 
@@ -281,8 +325,13 @@ Analytical where possible. A tolerance is stated with each test, not tuned after
 2. **Disturbance rejection** (5.1): with a constant disturbance acceleration d on that
    plant, the horizontal integrator settles at −d and the position error goes to 0. The
    characteristic polynomial with I: s³ + K_v·s² + (K_i + K_v·K_p)·s + K_i·K_p.
-3. **Vertical conformance to 4.7** (5.1): identical inputs, D = 0, 10 s scripted
-   altitude profile: collective thrust equal to 4.7's `Controller::step` to 1e-12.
+3. **Vertical conformance to 4.7** (5.1, repeated at 5.9): identical inputs, D = 0, 10 s
+   scripted altitude profile: collective thrust equal to 4.7's `Controller::step` to
+   1e-12. At 5.9, when the old vertical hold is removed, the Z path of the whole closed
+   loop (an altitude step, hover, and the 4.9 payload scenario) is run before and after
+   the switch: the state hashes are equal, or each difference is listed with its cause (for
+   example the vertical D filter, which differs only when `MPC_Z_VEL_D_ACC` is not 0, and
+   the hover thrust estimator, which changes the payload case on purpose).
 4. **Thrust-vector rules** (5.1): hand values. The z limit is √(1 − 0.3²) = 0.9539 when
    the horizontal demand exceeds the margin; the tilt limit gives exactly `MPC_TILTMAX_AIR`
    for a huge acceleration demand; each branch of `constrainXY`; `bodyzToAttitude` for a
@@ -316,15 +365,22 @@ Analytical where possible. A tolerance is stated with each test, not tuned after
     the state hash of the 4.7 closed-loop tests and the 4.9 scenarios is unchanged.
 12. **Determinism and chunking** (5.3, 5.4): the same run twice gives one hash; a 4.8b
     session stepped in chunks equals one `sim.run`, with the position loop in use.
-13. **Tuning storage** (5.5): save and load; only overrides are stored; an unknown name, a
+13. **Hover thrust estimator** (5.10): with constant true hover thrust h and a starting
+    `MPC_THR_HOVER` ≠ h, the estimate converges to h (tolerance stated after the first
+    run, from the filter's own variance); the estimate stays within `MPC_THR_HOVER` ±
+    `HTE_THR_RANGE`; it does not update while landed or when |vz| or |vxy| exceed their
+    thresholds; `updateHoverThrust` leaves the commanded thrust unchanged at the instant
+    of the switch (the identity in `PositionControl.cpp` L75–83, checked by hand);
+    `MPC_USE_HTE` = 0 reproduces the fixed-hover results of 5.1.
+14. **Tuning storage** (5.5): save and load; only overrides are stored; an unknown name, a
     non-number or a value outside PX4's documented range is refused; a project without a
     saved set flies on PX4 defaults; the migration upgrades from the previous version.
-14. **Step tests on the vehicle** (5.7): the engine's roll-rate step on a built-in build is
+15. **Step tests on the vehicle** (5.7): the engine's roll-rate step on a built-in build is
     compared with a linear model built from the vehicle's own numbers (inertia, the
     allocator's normalisation, thrust per command, motor lag). The derivation is written
     before the test and the tolerance comes from it; if the nonlinearity is too large to
     bound, the test checks direction and ordering only and the DEVLOG says so.
-15. **Reference data** (5.0): every new entry has its citation, unit and range where PX4
+16. **Reference data** (5.0): every new entry has its citation, unit and range where PX4
     states them; the Rust defaults equal the JSON (5.1), per parameter.
 
 ## Risks
@@ -349,9 +405,17 @@ Analytical where possible. A tolerance is stated with each test, not tuned after
   would sit in stabilized mode. Porting the real takeoff logic is a Phase 6 candidate.
 - **The default position mode may be large.** If `FlightTaskManualAltitudeSmoothVel` and
   `VelocitySmoothing` prove long, mode 0 ships first (D8).
-- **Parallel work.** 4.8b and 4.9 edit `protocol.rs`, `engine.rs` and the flight folder.
-  Milestones 5.4, 5.7 and 5.8 start only after those merge; 5.0 to 5.3, 5.5 and 5.6 are
-  built to avoid every file those branches touch (D13). The migration number is taken
-  when 5.5 starts, not now.
-- **Scope.** Ten milestones plus two optional. The core (5.0 to 5.3, 5.5, 5.6) has no
-  dependency on 4.8 or 4.9 and gives a tested position controller, modes and metrics.
+- **Parallel work.** 4.8b and 4.9 edit `protocol.rs`, `engine.rs`, the flight folder,
+  `electron/ipc/*`, `electron/main/db/*` and the migrations. Milestones 5.4, 5.5, 5.7 and
+  5.8 start only after those merge; the migration number is taken when 5.5 starts, never
+  earlier. 5.0 to 5.3, 5.6 and 5.10 are built to avoid every file those branches touch (D13).
+- **Two vertical controllers until 5.9.** 5.1 adds a 3-axis controller beside 4.7's
+  vertical hold. That is deliberate (D13) and temporary; 5.9 removes the old one and the
+  before/after Z-path test guards the switch.
+- **Hover thrust estimator on a perfect state.** The estimator gets the true vertical
+  acceleration, which is cleaner than PX4's, so it converges faster than on a real vehicle.
+  The ground gate is our stand-in (Ground). If you choose D5(b) instead, the deviation from
+  PX4's default is labelled in the UI and docs.
+- **Scope.** Ten core milestones (5.0 to 5.10 except 5.11) plus one optional. The core
+  that does not depend on 4.8 or 4.9 (5.0 to 5.3, 5.6, 5.10) gives a tested position
+  controller, modes, hover thrust estimation and metrics.

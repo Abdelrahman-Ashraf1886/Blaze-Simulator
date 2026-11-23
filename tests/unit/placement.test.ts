@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { AssemblyDocument, FrameParams } from '../../electron/ipc/contract'
-import { addPart, attach, duplicatePart, halfHeight, updatePart, worldMatrix } from '../../src/features/workshop/assembly-ops'
+import { addPart, attach, duplicatePart, halfHeight, seatPropsOnMotors, updatePart, worldMatrix } from '../../src/features/workshop/assembly-ops'
 import { assemblyOverlaps } from '../../src/features/workshop/interference-input'
 import { candidates, partErrors, placeClear, reseat, supportOf } from '../../src/features/workshop/placement'
 import { buildFrame } from '../../src/three/frame-geometry'
@@ -31,6 +31,25 @@ describe('placement', () => {
     for (const m of hex.motors) doc = addPart(doc, 'motor', { kind: 'mount', id: m.id }, t, `m${m.number}`).doc
     return addPart(doc, 'propeller', { kind: 'part', id: 'm4' }, t, 'p4').doc
   }
+
+  it('upgrades a legacy Hex X prop on bare motor-3 and clears its overlap with Motor 2', () => {
+    const added = addPart(hexWithMotors(), 'propeller', { kind: 'mount', id: 'motor-3' }, t, 'p3')
+    const legacy = updatePart(added.doc, 'p3', { parentId: null, mountId: 'motor-3', position: [0, 0, 0.004] })
+    expect(partErrors(legacy, hex, 'p3', {}, {}).some((o) => o.aName === 'Motor 2' || o.bName === 'Motor 2')).toBe(true)
+    const upgraded = seatPropsOnMotors(legacy, hex)
+    expect(upgraded.parts.find((p) => p.id === 'p3')).toEqual(added.part)
+    expect(partErrors(upgraded, hex, 'p3', {}, {})).toEqual([])
+    expect(placeClear(upgraded, hex, 'p3', {}, {}).ok).toBe(true)
+    expect(seatPropsOnMotors(upgraded, hex)).toBe(upgraded)
+  })
+
+  it('leaves a legacy prop without a motor unchanged, retaining the missing-motor explanation', () => {
+    const legacy = addPart(base, 'propeller', { kind: 'mount', id: 'motor-3' }, t, 'p3').doc
+    expect(seatPropsOnMotors(legacy, hex)).toBe(legacy)
+    expect(placeClear(legacy, hex, 'p3', {}, {})).toEqual({
+      ok: false, reason: 'Cannot add Propeller 1: add a motor to Motor 3 mount first.',
+    })
+  })
 
   it('adds a prop to Motor 3 on a fully populated Hex X with a prop already on Motor 4', () => {
     const before = hexWithMotors()

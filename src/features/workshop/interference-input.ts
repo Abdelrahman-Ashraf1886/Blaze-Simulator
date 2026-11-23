@@ -109,6 +109,19 @@ export function assemblyInterferenceFindings(doc: AssemblyDocument, geo: FrameGe
   const s = interferenceSettings(doc)
   const overlaps = interferences(input.bodies, { toleranceM: s.toleranceM, attached: input.attached, allowed: s.allowedPairs })
   const out = interferenceFindings(overlaps, s.toleranceM, FRAME_PART_ID)
+  for (const prop of doc.parts) {
+    if (prop.kind !== 'propeller' || prop.parentId !== null || !geo.motors.some((m) => m.id === prop.mountId)) continue
+    const motor = doc.parts.find((p) => p.kind === 'motor' && p.parentId === null && p.mountId === prop.mountId)
+    const seated = motor && doc.parts.find((p) => p.kind === 'propeller' && p.parentId === motor.id)
+    if (!motor || !seated) continue
+    out.push({
+      id: `interference:extra-prop:${prop.id}`,
+      rule: 'interference',
+      severity: 'error',
+      message: `${prop.name} was left on ${prop.mountId}: ${motor.name} already carries ${seated.name}. Move or remove the extra propeller; it was not stacked on the motor.`,
+      partIds: [prop.id, motor.id, seated.id],
+    })
+  }
   if (input.unknownSize.length > 0) {
     out.push({
       id: `interference:unknown:${input.unknownSize.map((u) => u.id).join(',')}`,

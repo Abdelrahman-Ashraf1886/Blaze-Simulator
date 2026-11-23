@@ -364,6 +364,35 @@ export function attach(
   })
 }
 
+/**
+ * Upgrade legacy props resting directly on motor mounts. The first prop in document
+ * order gets the motor; an already attached prop takes precedence. Extra props stay
+ * untouched and are reported by the interference findings rather than stacked.
+ * Pass the same assets/effective shapes used when adding parts.
+ */
+export function seatPropsOnMotors(
+  doc: AssemblyDocument,
+  geo: FrameGeometry,
+  assets: AssetBounds = {},
+  shapeOf: ShapeOf = ownShape,
+): AssemblyDocument {
+  let next = doc
+  for (const prop of doc.parts) {
+    if (prop.kind !== 'propeller' || prop.parentId !== null || !geo.motors.some((m) => m.id === prop.mountId)) continue
+    const motor = doc.parts.find((p) => p.kind === 'motor' && p.parentId === null && p.mountId === prop.mountId)
+    if (!motor || next.parts.some((p) => p.kind === 'propeller' && p.parentId === motor.id)) continue
+    next = attach(next, geo, prop.id, { kind: 'part', id: motor.id }, assets, shapeOf)
+    // Preserve the twist about the motor shaft, expressed in the new parent frame.
+    const relative = new Quaternion(...motor.rotation).invert().multiply(new Quaternion(...prop.rotation))
+    const length = Math.hypot(relative.z, relative.w)
+    const rotation: AssemblyPart['rotation'] = length > 1e-12
+      ? [0, 0, relative.z / length, relative.w / length]
+      : [...IDENTITY]
+    next = updatePart(next, prop.id, { rotation })
+  }
+  return next
+}
+
 /** Quaternion (x, y, z, w) → XYZ Euler angles in degrees (three.js order), and back. */
 export function toEulerDeg(q: readonly [number, number, number, number]): Vec3 {
   const e = new Euler().setFromQuaternion(new Quaternion(...q), 'XYZ')

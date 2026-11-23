@@ -26,6 +26,7 @@ type Api = {
     setFill(id: string, key: string, spec: unknown): Promise<{ ok: boolean }>
   }
   projects: { list(): Promise<{ ok: true; data: { id: string; name: string }[] }> }
+  assembly: { load(id: string): Promise<{ ok: true; data: { parts: unknown[]; frameMass?: unknown; bodyDrag?: unknown; flight?: { ambientAltitudeM: number | null } | null } }> }
 }
 
 /** The quad of the flight test spec: four MN3110 KV470 with P13*4.4 on a Tattu 4S pack, with the values no source states entered. */
@@ -54,7 +55,27 @@ async function buildQuad(page: Page, name: string) {
   await page.getByTestId('part-component').selectOption({ label: 'Tattu Tattu G-Tech 5200mAh 4S 35C' })
   await commit(page, 'frame-mass', '300')
   await commit(page, 'body-cd-x', '1.1')
-  await page.waitForTimeout(600) // the debounced save reaches the database
+  await savedAssembly(page, name, 'built')
+}
+
+/** Waits until the debounced save has reached the database (polls the stored assembly, no fixed sleep). */
+async function savedAssembly(page: Page, name: string, ready: 'built' | 'flight') {
+  const id = await projectId(page, name)
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          async ([i, what]) => {
+            const d = (await (window as unknown as { api: Api }).api.assembly.load(i!)).data
+            // 4 motors + 4 propellers + battery, frame mass and drag; or the altitude entered on the flight test.
+            return what === 'built' ? d.parts.length >= 9 && !!d.frameMass && !!d.bodyDrag : d.flight?.ambientAltitudeM === 0
+          },
+          [id, ready] as const,
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe(true)
+  return id
 }
 
 async function projectId(page: Page, name: string) {
@@ -71,7 +92,6 @@ test('the analysis page shows mass, CoM and T/W for a build, and links to the fl
   const errors = trackErrors(page)
   await buildQuad(page, 'Analysis quad')
   const id = await projectId(page, 'Analysis quad')
-
   // The sidebar entry is enabled; without a project it offers the projects.
   await page.getByTestId('nav-/analysis').click()
   await expect(page.getByRole('heading', { name: 'Engineering Analysis' })).toBeVisible()
@@ -93,14 +113,16 @@ test('the analysis page shows mass, CoM and T/W for a build, and links to the fl
   await expect(page.getByTestId('analysis-thrust')).toHaveAttribute('data-state', 'unknown')
   await expect(page.getByTestId('analysis-altitude-missing')).toBeVisible()
   await expect(page.getByTestId('analysis-condition-item')).toHaveCount(2)
-  await page.getByTestId('analysis-altitude-missing').getByRole('button').click()
+  const toAltitude = page.getByTestId('analysis-altitude-missing').getByRole('button')
+  await expect(toAltitude).toBeEnabled()
+  await toAltitude.click()
   await expect(page.getByTestId('flight-test')).toBeVisible()
   await expect(page.getByTestId('flight-altitude')).toBeFocused()
 
   // Entering the conditions gives the maximum T/W at that air density.
   await commit(page, 'flight-altitude', '0')
   await commit(page, 'flight-cutoff-value', '12')
-  await page.waitForTimeout(600)
+  await savedAssembly(page, 'Analysis quad', 'flight')
   await page.evaluate((i) => (location.hash = `#/analysis/${i}`), id)
   await expect(page.getByTestId('analysis-page')).toBeVisible()
   await expect(page.getByTestId('analysis-thrust')).toContainText(/Maximum T\/W \d+\.\d{2}/)

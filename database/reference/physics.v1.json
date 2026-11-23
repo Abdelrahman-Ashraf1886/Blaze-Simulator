@@ -581,6 +581,628 @@
           "condition": "Maximum descent velocity — Descent velocity in manual modes and offboard."
         }
       ]
+    },
+    {
+      "id": "px4Position",
+      "title": "PX4 Position defaults (PX4-Autopilot v1.13.3)",
+      "note": "Position/velocity control and the stabilized, altitude and position manual-mode setpoint generators. Includes landing slowdown/takeoff parameters read by the manual tasks and jerk/aggregate settings for reference, without choosing which modes or ground handling to port. SYS_VEHICLE_RESP is deliberately not ported by the draft plan; its default leaves individual parameters active. Existing vertical gains and thrust limits remain in px4. Airframe files may override firmware defaults.",
+      "values": [
+        {
+          "key": "MPC_THR_CURVE",
+          "value": 0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L108",
+            "locator": "mc_pos_control_params.c line 108: PARAM_DEFINE_INT32(MPC_THR_CURVE, 0);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Thrust curve in Manual Mode This parameter defines how the throttle stick input is mapped to commanded thrust in Manual/Stabilized flight mode. In case the default is used ('Rescale to hover thrust'), the stick input is linearly rescaled, such that a centered stick corresponds to the hover throttle (see MPC_THR_HOVER). Select 'No Rescale' to directly map the stick 1:1 to the output. This can be useful in case the hover thrust is very low and the default would lead to too much distortion (e.g. if hover thrust is set to 20%, 80% of the upper thrust range is squeezed into the upper half of the stick range). Note: In case MPC_THR_HOVER is set to 50%, the modes 0 and 1 are the same."
+        },
+        {
+          "key": "MPC_THR_XY_MARG",
+          "value": 0.3,
+          "unit": "1",
+          "min": 0.0,
+          "max": 0.5,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L123",
+            "locator": "mc_pos_control_params.c line 123: PARAM_DEFINE_FLOAT(MPC_THR_XY_MARG, 0.3f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Source unit \"norm\". Horizontal thrust margin Margin that is kept for horizontal control when prioritizing vertical thrust. To avoid completely starving horizontal control with high vertical error."
+        },
+        {
+          "key": "MPC_MANTHR_MIN",
+          "value": 0.08,
+          "unit": "1",
+          "min": 0.0,
+          "max": 1.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L152",
+            "locator": "mc_pos_control_params.c line 152: PARAM_DEFINE_FLOAT(MPC_MANTHR_MIN, 0.08f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Source unit \"norm\". Minimum manual thrust Minimum vertical thrust. It's recommended to set it > 0 to avoid free fall with zero thrust. With MC_AIRMODE set to 1, this can safely be set to 0."
+        },
+        {
+          "key": "MPC_XY_P",
+          "value": 0.95,
+          "min": 0.0,
+          "max": 2.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L270",
+            "locator": "mc_pos_control_params.c line 270: PARAM_DEFINE_FLOAT(MPC_XY_P, 0.95f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Proportional gain for horizontal position error"
+        },
+        {
+          "key": "MPC_XY_VEL_P_ACC",
+          "value": 1.8,
+          "min": 1.2,
+          "max": 5.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L282",
+            "locator": "mc_pos_control_params.c line 282: PARAM_DEFINE_FLOAT(MPC_XY_VEL_P_ACC, 1.8f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Proportional gain for horizontal velocity error defined as correction acceleration in m/s^2 per m/s velocity error"
+        },
+        {
+          "key": "MPC_XY_VEL_I_ACC",
+          "value": 0.4,
+          "min": 0.0,
+          "max": 60.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L295",
+            "locator": "mc_pos_control_params.c line 295: PARAM_DEFINE_FLOAT(MPC_XY_VEL_I_ACC, 0.4f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Integral gain for horizontal velocity error defined as correction acceleration in m/s^2 per m velocity integral Non-zero value allows to eliminate steady state errors in the presence of disturbances like wind."
+        },
+        {
+          "key": "MPC_XY_VEL_D_ACC",
+          "value": 0.2,
+          "min": 0.1,
+          "max": 2.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L307",
+            "locator": "mc_pos_control_params.c line 307: PARAM_DEFINE_FLOAT(MPC_XY_VEL_D_ACC, 0.2f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Differential gain for horizontal velocity error. Small values help reduce fast oscillations. If value is too big oscillations will appear again. defined as correction acceleration in m/s^2 per m/s^2 velocity derivative"
+        },
+        {
+          "key": "MPC_VEL_MANUAL",
+          "value": 10,
+          "unit": "m/s",
+          "min": 3.0,
+          "max": 20.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L364",
+            "locator": "mc_pos_control_params.c line 364: PARAM_DEFINE_FLOAT(MPC_VEL_MANUAL, 10.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Maximum horizontal velocity setpoint for manual controlled mode If velocity setpoint larger than MPC_XY_VEL_MAX is set, then the setpoint will be capped to MPC_XY_VEL_MAX"
+        },
+        {
+          "key": "MPC_XY_VEL_MAX",
+          "value": 12,
+          "unit": "m/s",
+          "min": 0.0,
+          "max": 20.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L379",
+            "locator": "mc_pos_control_params.c line 379: PARAM_DEFINE_FLOAT(MPC_XY_VEL_MAX, 12.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Maximum horizontal velocity Maximum horizontal velocity in AUTO mode. If higher speeds are commanded in a mission they will be capped to this velocity."
+        },
+        {
+          "key": "MPC_TILTMAX_AIR",
+          "value": 45,
+          "unit": "deg",
+          "min": 20.0,
+          "max": 89.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L392",
+            "locator": "mc_pos_control_params.c line 392: PARAM_DEFINE_FLOAT(MPC_TILTMAX_AIR, 45.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Maximum tilt angle in air Limits maximum tilt in AUTO and POSCTRL modes during flight."
+        },
+        {
+          "key": "MPC_TILTMAX_LND",
+          "value": 12,
+          "unit": "deg",
+          "min": 10.0,
+          "max": 89.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L405",
+            "locator": "mc_pos_control_params.c line 405: PARAM_DEFINE_FLOAT(MPC_TILTMAX_LND, 12.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Maximum tilt during landing Limits maximum tilt angle on landing."
+        },
+        {
+          "key": "MPC_MAN_TILT_MAX",
+          "value": 35,
+          "unit": "deg",
+          "min": 0.0,
+          "max": 90.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L462",
+            "locator": "mc_pos_control_params.c line 462: PARAM_DEFINE_FLOAT(MPC_MAN_TILT_MAX, 35.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Maximal tilt angle in manual or altitude mode"
+        },
+        {
+          "key": "MPC_MAN_Y_MAX",
+          "value": 150,
+          "unit": "deg/s",
+          "min": 0.0,
+          "max": 400.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L473",
+            "locator": "mc_pos_control_params.c line 473: PARAM_DEFINE_FLOAT(MPC_MAN_Y_MAX, 150.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Max manual yaw rate"
+        },
+        {
+          "key": "MPC_MAN_Y_TAU",
+          "value": 0.08,
+          "unit": "s",
+          "min": 0.0,
+          "max": 5.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L486",
+            "locator": "mc_pos_control_params.c line 486: PARAM_DEFINE_FLOAT(MPC_MAN_Y_TAU, 0.08f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Manual yaw rate input filter time constant Setting this parameter to 0 disables the filter"
+        },
+        {
+          "key": "MPC_HOLD_DZ",
+          "value": 0.1,
+          "min": 0.0,
+          "max": 1.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L496",
+            "locator": "mc_pos_control_params.c line 496: PARAM_DEFINE_FLOAT(MPC_HOLD_DZ, 0.1f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Deadzone of sticks where position hold is enabled"
+        },
+        {
+          "key": "MPC_HOLD_MAX_XY",
+          "value": 0.8,
+          "unit": "m/s",
+          "min": 0.0,
+          "max": 3.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L507",
+            "locator": "mc_pos_control_params.c line 507: PARAM_DEFINE_FLOAT(MPC_HOLD_MAX_XY, 0.8f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Maximum horizontal velocity for which position hold is enabled (use 0 to disable check)"
+        },
+        {
+          "key": "MPC_HOLD_MAX_Z",
+          "value": 0.6,
+          "unit": "m/s",
+          "min": 0.0,
+          "max": 3.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L518",
+            "locator": "mc_pos_control_params.c line 518: PARAM_DEFINE_FLOAT(MPC_HOLD_MAX_Z, 0.6f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Maximum vertical velocity for which position hold is enabled (use 0 to disable check)"
+        },
+        {
+          "key": "MPC_VELD_LP",
+          "value": 5,
+          "unit": "Hz",
+          "min": 0.0,
+          "max": 10.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L529",
+            "locator": "mc_pos_control_params.c line 529: PARAM_DEFINE_FLOAT(MPC_VELD_LP, 5.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Low pass filter cut freq. for numerical velocity derivative"
+        },
+        {
+          "key": "MPC_ACC_HOR_MAX",
+          "value": 5,
+          "unit": "m/s²",
+          "min": 2.0,
+          "max": 15.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L546",
+            "locator": "mc_pos_control_params.c line 546: PARAM_DEFINE_FLOAT(MPC_ACC_HOR_MAX, 5.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Source unit \"m/s^2\". Maximum horizontal acceleration for auto mode and for manual mode MPC_POS_MODE 1 just deceleration 3 acceleration and deceleration 4 just acceleration"
+        },
+        {
+          "key": "MPC_ACC_HOR",
+          "value": 3,
+          "unit": "m/s²",
+          "min": 2.0,
+          "max": 15.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L561",
+            "locator": "mc_pos_control_params.c line 561: PARAM_DEFINE_FLOAT(MPC_ACC_HOR, 3.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Source unit \"m/s^2\". Acceleration for auto and for manual Note: In manual, this parameter is only used in MPC_POS_MODE 4."
+        },
+        {
+          "key": "MPC_ACC_UP_MAX",
+          "value": 4,
+          "unit": "m/s²",
+          "min": 2.0,
+          "max": 15.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L573",
+            "locator": "mc_pos_control_params.c line 573: PARAM_DEFINE_FLOAT(MPC_ACC_UP_MAX, 4.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Source unit \"m/s^2\". Maximum vertical acceleration in velocity controlled modes upward"
+        },
+        {
+          "key": "MPC_ACC_DOWN_MAX",
+          "value": 3,
+          "unit": "m/s²",
+          "min": 2.0,
+          "max": 15.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L585",
+            "locator": "mc_pos_control_params.c line 585: PARAM_DEFINE_FLOAT(MPC_ACC_DOWN_MAX, 3.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Source unit \"m/s^2\". Maximum vertical acceleration in velocity controlled modes down"
+        },
+        {
+          "key": "MPC_JERK_MAX",
+          "value": 8,
+          "unit": "m/s^3",
+          "min": 0.5,
+          "max": 500.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L605",
+            "locator": "mc_pos_control_params.c line 605: PARAM_DEFINE_FLOAT(MPC_JERK_MAX, 8.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Maximum jerk limit Limit the maximum jerk of the vehicle (how fast the acceleration can change). A lower value leads to smoother vehicle motions, but it also limits its agility (how fast it can change directions or break). Setting this to the maximum value essentially disables the limit. Note: This is only used when MPC_POS_MODE is set to a smoothing mode 3 or 4."
+        },
+        {
+          "key": "MPC_JERK_AUTO",
+          "value": 4,
+          "unit": "m/s^3",
+          "min": 1.0,
+          "max": 80.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L621",
+            "locator": "mc_pos_control_params.c line 621: PARAM_DEFINE_FLOAT(MPC_JERK_AUTO, 4.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Jerk limit in auto mode Limit the maximum jerk of the vehicle (how fast the acceleration can change). A lower value leads to smoother vehicle motions, but it also limits its agility."
+        },
+        {
+          "key": "MPC_ALT_MODE",
+          "value": 0,
+          "min": 0.0,
+          "max": 2.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L643",
+            "locator": "mc_pos_control_params.c line 643: PARAM_DEFINE_INT32(MPC_ALT_MODE, 0);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Altitude control mode. Set to 0 to control height relative to the earth frame origin. This origin may move up and down in flight due to sensor drift. Set to 1 to control height relative to estimated distance to ground. The vehicle will move up and down with terrain height variation. Requires a distance to ground sensor. The height controller will revert to using height above origin if the distance to ground estimate becomes invalid as indicated by the local_position.distance_bottom_valid message being false. Set to 2 to control height relative to ground (requires a distance sensor) when stationary and relative to earth frame origin when moving horizontally. The speed threshold is controlled by the MPC_HOLD_MAX_XY parameter."
+        },
+        {
+          "key": "MPC_XY_MAN_EXPO",
+          "value": 0.6,
+          "min": 0.0,
+          "max": 1.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L659",
+            "locator": "mc_pos_control_params.c line 659: PARAM_DEFINE_FLOAT(MPC_XY_MAN_EXPO, 0.6f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Manual position control stick exponential curve sensitivity The higher the value the less sensitivity the stick has around zero while still reaching the maximum value with full stick deflection. 0 Purely linear input curve (default) 1 Purely cubic input curve"
+        },
+        {
+          "key": "MPC_Z_MAN_EXPO",
+          "value": 0.6,
+          "min": 0.0,
+          "max": 1.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L675",
+            "locator": "mc_pos_control_params.c line 675: PARAM_DEFINE_FLOAT(MPC_Z_MAN_EXPO, 0.6f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Manual control stick vertical exponential curve The higher the value the less sensitivity the stick has around zero while still reaching the maximum value with full stick deflection. 0 Purely linear input curve (default) 1 Purely cubic input curve"
+        },
+        {
+          "key": "MPC_YAW_EXPO",
+          "value": 0.6,
+          "min": 0.0,
+          "max": 1.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L691",
+            "locator": "mc_pos_control_params.c line 691: PARAM_DEFINE_FLOAT(MPC_YAW_EXPO, 0.6f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Manual control stick yaw rotation exponential curve The higher the value the less sensitivity the stick has around zero while still reaching the maximum value with full stick deflection. 0 Purely linear input curve (default) 1 Purely cubic input curve"
+        },
+        {
+          "key": "MPC_POS_MODE",
+          "value": 4,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L781",
+            "locator": "mc_pos_control_params.c line 781: PARAM_DEFINE_INT32(MPC_POS_MODE, 4);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Manual-Position control sub-mode The supported sub-modes are: 0 Simple position control where sticks map directly to velocity setpoints without smoothing. Useful for velocity control tuning. 3 Smooth position control with maximum acceleration and jerk limits based on jerk optimized trajectory generator (different algorithm than 1). 4 Smooth position control where sticks map to acceleration and there's a virtual brake drag"
+        },
+        {
+          "key": "MPC_XY_VEL_ALL",
+          "value": -10,
+          "min": -20.0,
+          "max": 20.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L846",
+            "locator": "mc_pos_control_params.c line 846: PARAM_DEFINE_FLOAT(MPC_XY_VEL_ALL, -10.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Overall Horizonal Velocity Limit If set to a value greater than zero, other parameters are automatically set (such as MPC_XY_VEL_MAX or MPC_VEL_MANUAL). If set to a negative value, the existing individual parameters are used."
+        },
+        {
+          "key": "MPC_Z_VEL_ALL",
+          "value": -3,
+          "min": -3.0,
+          "max": 8.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L861",
+            "locator": "mc_pos_control_params.c line 861: PARAM_DEFINE_FLOAT(MPC_Z_VEL_ALL, -3.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Overall Vertical Velocity Limit If set to a value greater than zero, other parameters are automatically set (such as MPC_Z_VEL_MAX_UP or MPC_LAND_SPEED). If set to a negative value, the existing individual parameters are used."
+        },
+        {
+          "key": "MC_MAN_TILT_TAU",
+          "value": 0,
+          "unit": "s",
+          "min": 0.0,
+          "max": 2.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_att_control/mc_att_control_params.c#L160",
+            "locator": "mc_att_control_params.c line 160: PARAM_DEFINE_FLOAT(MC_MAN_TILT_TAU, 0.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Manual tilt input filter time constant Setting this parameter to 0 disables the filter"
+        },
+        {
+          "key": "MPC_LAND_ALT1",
+          "value": 10,
+          "unit": "m",
+          "min": 0.0,
+          "max": 122.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L721",
+            "locator": "mc_pos_control_params.c line 721: PARAM_DEFINE_FLOAT(MPC_LAND_ALT1, 10.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Altitude for 1. step of slow landing (descend) Below this altitude descending velocity gets limited to a value between \"MPC_Z_VEL_MAX_DN\" (or \"MPC_Z_V_AUTO_DN\") and \"MPC_LAND_SPEED\" Value needs to be higher than \"MPC_LAND_ALT2\""
+        },
+        {
+          "key": "MPC_LAND_ALT2",
+          "value": 5,
+          "unit": "m",
+          "min": 0.0,
+          "max": 122.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L736",
+            "locator": "mc_pos_control_params.c line 736: PARAM_DEFINE_FLOAT(MPC_LAND_ALT2, 5.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Altitude for 2. step of slow landing (landing) Below this altitude descending velocity gets limited to \"MPC_LAND_SPEED\" Value needs to be lower than \"MPC_LAND_ALT1\""
+        },
+        {
+          "key": "MPC_LAND_SPEED",
+          "value": 0.7,
+          "unit": "m/s",
+          "min": 0.6,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L415",
+            "locator": "mc_pos_control_params.c line 415: PARAM_DEFINE_FLOAT(MPC_LAND_SPEED, 0.7f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Landing descend rate"
+        },
+        {
+          "key": "MPC_TKO_SPEED",
+          "value": 1.5,
+          "unit": "m/s",
+          "min": 1.0,
+          "max": 5.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L451",
+            "locator": "mc_pos_control_params.c line 451: PARAM_DEFINE_FLOAT(MPC_TKO_SPEED, 1.5f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Takeoff climb rate"
+        }
+      ]
+    },
+    {
+      "id": "px4Allocation",
+      "title": "PX4 Allocation defaults (PX4-Autopilot v1.13.3)",
+      "note": "Mixer airmode selection. Enum labels are recorded in condition; no min/max is inferred from enum values. Airframe files may override firmware defaults.",
+      "values": [
+        {
+          "key": "MC_AIRMODE",
+          "value": 0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/lib/mixer_module/params.c#L18",
+            "locator": "params.c line 18: PARAM_DEFINE_INT32(MC_AIRMODE, 0);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Multicopter air-mode The air-mode enables the mixer to increase the total thrust of the multirotor in order to keep attitude and rate control even at low and high throttle. This function should be disabled during tuning as it will help the controller to diverge if the closed-loop is unstable (i.e. the vehicle is not tuned yet). Enabling air-mode for yaw requires the use of an arming switch. 0 Disabled; 1 Roll/Pitch; 2 Roll/Pitch/Yaw (source @value labels)."
+        }
+      ]
+    },
+    {
+      "id": "px4ThrustModel",
+      "title": "PX4 thrust model defaults (PX4-Autopilot v1.13.3)",
+      "note": "Firmware default for the static thrust-to-motor-signal model. The formula is quoted in condition, not evaluated as a derived reference value; fitting a vehicle-specific factor is later work.",
+      "values": [
+        {
+          "key": "THR_MDL_FAC",
+          "value": 0,
+          "min": 0.0,
+          "max": 1.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/lib/mixer_module/motor_params.c#L73",
+            "locator": "motor_params.c line 73: PARAM_DEFINE_FLOAT(THR_MDL_FAC, 0.0f);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Thrust to motor control signal model parameter Parameter used to model the nonlinear relationship between motor control signal (e.g. PWM) and static thrust. The model is: rel_thrust = factor * rel_signal^2 + (1-factor) * rel_signal, where rel_thrust is the normalized thrust between 0 and 1, and rel_signal is the relative motor control signal between 0 and 1."
+        }
+      ]
+    },
+    {
+      "id": "px4HoverThrust",
+      "title": "PX4 hover thrust estimator defaults (PX4-Autopilot v1.13.3)",
+      "note": "Hover thrust estimator defaults. MPC_USE_HTE and MPC_THR_HOVER remain in px4; they are not duplicated here. Airframe files may override firmware defaults.",
+      "values": [
+        {
+          "key": "HTE_HT_NOISE",
+          "value": 0.0036,
+          "unit": "normalized_thrust/s",
+          "min": 0.0001,
+          "max": 1.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_hover_thrust_estimator/hover_thrust_estimator_params.c#L55",
+            "locator": "hover_thrust_estimator_params.c line 55: PARAM_DEFINE_FLOAT(HTE_HT_NOISE, 0.0036);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Hover thrust process noise Reduce to make the hover thrust estimate more stable, increase if the real hover thrust is expected to change quickly over time."
+        },
+        {
+          "key": "HTE_ACC_GATE",
+          "value": 3,
+          "unit": "1",
+          "min": 1.0,
+          "max": 10.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_hover_thrust_estimator/hover_thrust_estimator_params.c#L69",
+            "locator": "hover_thrust_estimator_params.c line 69: PARAM_DEFINE_FLOAT(HTE_ACC_GATE, 3.0);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Source unit \"SD\". Gate size for acceleration fusion Sets the number of standard deviations used by the innovation consistency test."
+        },
+        {
+          "key": "HTE_HT_ERR_INIT",
+          "value": 0.1,
+          "unit": "1",
+          "min": 0.0,
+          "max": 1.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_hover_thrust_estimator/hover_thrust_estimator_params.c#L83",
+            "locator": "hover_thrust_estimator_params.c line 83: PARAM_DEFINE_FLOAT(HTE_HT_ERR_INIT, 0.1);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Source unit \"normalized_thrust\". 1-sigma initial hover thrust uncertainty Sets the number of standard deviations used by the innovation consistency test."
+        },
+        {
+          "key": "HTE_VXY_THR",
+          "value": 10,
+          "unit": "m/s",
+          "min": 1.0,
+          "max": 20.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_hover_thrust_estimator/hover_thrust_estimator_params.c#L99",
+            "locator": "hover_thrust_estimator_params.c line 99: PARAM_DEFINE_FLOAT(HTE_VXY_THR, 10.0);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Horizontal velocity threshold for sensitivity reduction Above this speed, the measurement noise is linearly increased to reduce the sensitivity of the estimator from biased measurement. Set to a low value on vehicles with large lifting surfaces."
+        },
+        {
+          "key": "HTE_VZ_THR",
+          "value": 2,
+          "unit": "m/s",
+          "min": 1.0,
+          "max": 10.0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_hover_thrust_estimator/hover_thrust_estimator_params.c#L115",
+            "locator": "hover_thrust_estimator_params.c line 115: PARAM_DEFINE_FLOAT(HTE_VZ_THR, 2.0);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Vertical velocity threshold for sensitivity reduction Above this speed, the measurement noise is linearly increased to reduce the sensitivity of the estimator from biased measurement. Set to a low value on vehicles affected by air drag when climbing or descending."
+        },
+        {
+          "key": "HTE_THR_RANGE",
+          "value": 0.2,
+          "unit": "1",
+          "min": 0.01,
+          "max": 0.4,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_hover_thrust_estimator/hover_thrust_estimator_params.c#L132",
+            "locator": "hover_thrust_estimator_params.c line 132: PARAM_DEFINE_FLOAT(HTE_THR_RANGE, 0.2);",
+            "retrieved": "2026-11-23"
+          },
+          "condition": "Source unit \"normalized_thrust\". Max deviation from MPC_THR_HOVER Defines the range of the hover thrust estimate around MPC_THR_HOVER. A value of 0.2 with MPC_THR_HOVER at 0.5 results in a range of [0.3, 0.7]. Set to a large value if the vehicle operates in varying physical conditions that affect the required hover thrust strongly (e.g. differently sized payloads)."
+        }
+      ]
     }
   ]
 }

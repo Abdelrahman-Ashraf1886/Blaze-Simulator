@@ -427,6 +427,7 @@ pub struct Allocator {
     effectiveness: Vec<[f64; 4]>,
     inverse: Vec<[f64; 4]>,
     commands: Vec<f64>,
+    airmode: u8,
 }
 #[derive(Debug)]
 pub struct Allocation<'a> {
@@ -543,7 +544,17 @@ impl Allocator {
             effectiveness: b,
             inverse,
             commands: vec![0.0; motors.len()],
+            airmode: 0,
         })
+    }
+    /// MC_AIRMODE: 0 disabled (default), 1 roll/pitch, 2 roll/pitch/yaw.
+    /// Reject invalid settings without changing the current mode.
+    pub fn set_airmode(&mut self, airmode: u8) -> Result<(), String> {
+        if airmode > 2 {
+            return Err("MC_AIRMODE must be 0, 1 or 2".into());
+        }
+        self.airmode = airmode;
+        Ok(())
     }
     /// Columns of normalized B.
     pub fn effectiveness(&self) -> &[[f64; 4]] {
@@ -553,24 +564,48 @@ impl Allocator {
     pub fn pseudo_inverse(&self) -> &[[f64; 4]] {
         &self.inverse
     }
-    /// PX4 v1.13.3 `ControlAllocationSequentialDesaturation.cpp`,
-    /// `mixAirmodeDisabled` (174-204), `mixYaw` (207-228): MC_AIRMODE=0.
-    /// <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/control_allocator/ControlAllocation/ControlAllocationSequentialDesaturation.cpp#L174-L228>.
+    /// PX4 v1.13.3 `ControlAllocationSequentialDesaturation.cpp`: mode selection
+    /// by `MC_AIRMODE` (52-64), `mixAirmodeRP` (122-143), `mixAirmodeRPY`
+    /// (146-171), `mixAirmodeDisabled` (174-204), `mixYaw` (207-228).
+    /// <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/control_allocator/ControlAllocation/ControlAllocationSequentialDesaturation.cpp#L52-L228>.
     /// Trim is zero for this geometry-only motor API. Final output clips to [0,1].
     /// Achieved vs demand retains directional rate/vertical anti-windup feedback.
+    /// Signs: axis 3 (up thrust) is negated inside the desaturation vector because
+    /// PX4's `THRUST_Z` is negative (NED); this keeps the `increase_only` guard
+    /// (`gain < 0`, line 73) meaning "never raise thrust". Axes 0-2 are unchanged
+    /// by a vector sign flip (gain and vector flip together).
     pub fn allocate(&mut self, demand: [f64; 4]) -> Allocation<'_> {
         assert!(demand.iter().all(|x| x.is_finite()));
-        for (u, v) in self.commands.iter_mut().zip(&self.inverse) {
-            *u = v[0] * demand[0] + v[1] * demand[1] + v[3] * demand[3];
+        if self.airmode == 2 {
+            // PX4 v1.13.3 mixAirmodeRPY, lines 146-171: full mix,
+            // shift collective both ways, then sacrifice yaw before roll/pitch.
+            for (u, v) in self.commands.iter_mut().zip(&self.inverse) {
+                *u = v[0] * demand[0]
+                    + v[1] * demand[1]
+                    + v[2] * demand[2]
+                    + v[3] * demand[3];
+            }
+            self.desaturate_actuators(3, 1.0, false);
+            self.desaturate_actuators(2, 1.0, false);
+        } else {
+            for (u, v) in self.commands.iter_mut().zip(&self.inverse) {
+                *u = v[0] * demand[0] + v[1] * demand[1] + v[3] * demand[3];
+            }
+            if self.airmode == 1 {
+                // mixAirmodeRP, lines 122-143: collective may rise for RP.
+                self.desaturate_actuators(3, 1.0, false);
+            } else {
+                // Preserve Phase 4.7's operation order exactly.
+                self.desaturate_actuators(3, 1.0, true);
+                self.desaturate_actuators(0, 1.0, false);
+                self.desaturate_actuators(1, 1.0, false);
+            }
+            for (u, v) in self.commands.iter_mut().zip(&self.inverse) {
+                *u += v[2] * demand[2];
+            }
+            self.desaturate_actuators(2, 1.15, false);
+            self.desaturate_actuators(3, 1.0, true);
         }
-        self.desaturate_actuators(3, 1.0, true);
-        self.desaturate_actuators(0, 1.0, false);
-        self.desaturate_actuators(1, 1.0, false);
-        for (u, v) in self.commands.iter_mut().zip(&self.inverse) {
-            *u += v[2] * demand[2];
-        }
-        self.desaturate_actuators(2, 1.15, false);
-        self.desaturate_actuators(3, 1.0, true);
         for u in &mut self.commands {
             *u = u.clamp(0.0, 1.0);
         }

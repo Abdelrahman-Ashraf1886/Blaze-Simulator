@@ -1,13 +1,124 @@
 import '@/three/setup'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { GizmoHelper, GizmoViewport } from '@react-three/drei'
-import { Suspense, useMemo } from 'react'
-import { Vector3 } from 'three'
-import type { AssemblyDocument } from '../../../electron/ipc/contract'
+import { Suspense, useMemo, useRef } from 'react'
+import { DoubleSide, Quaternion, Vector3, type Group, type Mesh } from 'three'
+import type { AssemblyDocument, AssemblyPart, Spin } from '../../../electron/ipc/contract'
 import type { FrameGeometry } from '@/three/frame-geometry'
 import { FrameModel } from '../workshop/FrameModel'
 import { PartsModel } from '../workshop/PartsModel'
+import { mountFrames, shapeExtent, subtreeIds, worldMatrix, type AssetBounds } from '../workshop/assembly-ops'
+import { useAssets } from '../workshop/asset-store'
+import { useComponentIndex } from '../workshop/component-index'
+import { linkedComponent, type ComponentIndex } from '../workshop/links'
+import { PropellerModel } from '@/three/part-models'
+import { toSI, type Unit } from '@/domain/units'
 import { frameToPose, type FlightFrame } from './frame'
+import { integrateRotorAngle, ROTOR_BLUR_THRESHOLD_RADPS, rotorIsBlurred } from './rotor-spin'
+
+function FlightParts({ frame, doc, geo }: { frame: FlightFrame; doc: AssemblyDocument; geo: FrameGeometry }) {
+  const components = useComponentIndex()
+  const assets = useAssets((s) => s.assets)
+  const models = useMemo(() => flightRotorModels(doc, geo, components, assets), [doc, geo, components, assets])
+  return <>
+    <PartsModel doc={models.stationary} geo={geo} editable={false} />
+    {models.rotors.map((rotor) => <SpinningPropeller key={rotor.prop.id} rotor={rotor} frame={frame} geo={geo} />)}
+  </>
+}
+
+/** Prepare assembly-space pivots once per assembly change, never in useFrame. */
+export function flightRotorModels(doc: AssemblyDocument, geo: FrameGeometry, components: ComponentIndex, assets: AssetBounds): { rotors: Rotor[]; stationary: AssemblyDocument } {
+    const mounts = mountFrames(geo)
+    const moving = new Set<string>()
+    const rotors = geo.motors.flatMap((mount, motorIndex) => {
+      // Same mount order and attachment rule as mass-input.ts::motorInputs,
+      // which supplies the engine's vehicle definition. Never use part order.
+      const motor = doc.parts.find((p) => p.kind === 'motor' && p.parentId === null && p.mountId === mount.id)
+      if (!motor) return []
+      return doc.parts.filter((p) => p.kind === 'propeller' && p.parentId === motor.id).map((prop) => {
+        // Preserve attachments to the propeller without drawing any part twice.
+        const descendants = subtreeIds(doc, prop.id)
+        for (const id of descendants) moving.add(id)
+        const position = new Vector3()
+        const orientation = new Quaternion()
+        worldMatrix(doc, geo, prop.id).decompose(position, orientation, new Vector3())
+        const axis = new Vector3(0, 0, 1).applyQuaternion(mounts.get(mount.id)!.quaternion)
+        const discOrientation = new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), axis)
+        const component = linkedComponent(prop, components)
+        const statedBlades = component?.specs.blades?.value
+        // Same unlinked display model as the workshop's PropellerModel (two blades).
+        const blades = typeof statedBlades === 'number' ? statedBlades : 2
+        const pitch = component?.specs.pitch as { value: number; unit: Unit } | undefined
+        const extent = shapeExtent(prop.shape, assets)
+        const radius = prop.shape.type === 'cylinder' ? prop.shape.radius : extent ? Math.hypot(extent[0], extent[1]) / 2 : null
+        const localDoc: AssemblyDocument = {
+          ...doc,
+          parts: doc.parts.filter((p) => descendants.has(p.id)).map((p) => p.id === prop.id
+            ? { ...p, parentId: null, mountId: null, position: [0, 0, 0], rotation: [0, 0, 0, 1] }
+            : p),
+        }
+        const childrenDoc: AssemblyDocument = {
+          ...localDoc,
+          parts: localDoc.parts.filter((p) => p.id !== prop.id).map((p) => p.parentId === prop.id ? { ...p, parentId: null } : p),
+        }
+        return { prop, motorIndex, spin: mount.spin, position, orientation, axis, discOrientation, radius, blades,
+          pitch: pitch && typeof pitch.value === 'number' ? toSI(pitch.value, pitch.unit) : undefined,
+          carbon: typeof component?.specs.material?.value === 'string' && /CF|carbon/i.test(component.specs.material.value),
+          localDoc: { ...localDoc, parts: localDoc.parts.filter((p) => p.id === prop.id) }, childrenDoc }
+      })
+    })
+    return { rotors, stationary: { ...doc, parts: doc.parts.filter((p) => !moving.has(p.id)) } }
+}
+
+interface Rotor {
+  prop: AssemblyPart
+  motorIndex: number
+  spin: Spin
+  position: Vector3
+  orientation: Quaternion
+  axis: Vector3
+  discOrientation: Quaternion
+  radius: number | null
+  blades: number
+  pitch: number | undefined
+  carbon: boolean
+  localDoc: AssemblyDocument
+  childrenDoc: AssemblyDocument
+}
+
+function SpinningPropeller({ rotor, frame, geo }: { rotor: Rotor; frame: FlightFrame; geo: FrameGeometry }) {
+  const rotation = useRef<Group>(null)
+  const blades = useRef<Group>(null)
+  const disc = useRef<Mesh>(null)
+  const angle = useRef(0)
+  const previousTime = useRef(frame.timeS)
+  useFrame((_, dtS) => {
+    if (frame.timeS < previousTime.current) angle.current = 0
+    previousTime.current = frame.timeS
+    const omega = frame.motors[rotor.motorIndex]?.omegaRadps ?? 0
+    angle.current = integrateRotorAngle(angle.current, omega, dtS, rotor.spin)
+    rotation.current?.quaternion.setFromAxisAngle(rotor.axis, angle.current)
+    const blurred = rotor.radius !== null && rotorIsBlurred(omega, dtS, rotor.blades)
+    if (blades.current) blades.current.visible = !blurred
+    if (disc.current) disc.current.visible = blurred
+  })
+  return <group position={rotor.position}>
+    <group ref={rotation}>
+      <group quaternion={rotor.orientation}>
+        <group ref={blades}>
+          {rotor.prop.shape.type === 'cylinder'
+            ? <PropellerModel radius={rotor.prop.shape.radius} height={rotor.prop.shape.height} blades={rotor.blades} spin={rotor.spin} pitch={rotor.pitch} carbon={rotor.carbon} />
+            : <PartsModel doc={rotor.localDoc} geo={geo} editable={false} />}
+        </group>
+        <PartsModel doc={rotor.childrenDoc} geo={geo} editable={false} />
+      </group>
+    </group>
+    {rotor.radius !== null && <mesh ref={disc} quaternion={rotor.discOrientation} visible={false}>
+      <circleGeometry args={[rotor.radius, 64]} />
+      <meshStandardMaterial color="#8d96a0" side={DoubleSide} transparent opacity={0.25} depthWrite={false} />
+    </mesh>}
+  </group>
+}
 
 function FollowCamera({ frame, distance }: { frame: FlightFrame; distance: number }) {
   const target = useMemo(() => new Vector3(), [])
@@ -46,7 +157,7 @@ export function FlightViewport({ frame, doc, geo }: { frame: FlightFrame; doc: A
           <group raycast={() => null}>
             <Suspense fallback={null}>
               <FrameModel geo={geo} params={doc.frame} />
-              <PartsModel doc={doc} geo={geo} editable={false} />
+              <FlightParts frame={frame} doc={doc} geo={geo} />
             </Suspense>
           </group>
         </group>
@@ -59,6 +170,7 @@ export function FlightViewport({ frame, doc, geo }: { frame: FlightFrame; doc: A
         </GizmoHelper>
       </Canvas>
       <p className="pointer-events-none absolute left-3 top-3 text-[12px] text-warn">Live engine · Follow camera · Amber sphere: CoM</p>
+      <p className="pointer-events-none absolute bottom-3 left-3 max-w-[70%] text-[12px] text-muted">Propeller motion blur: translucent discs at ≥{ROTOR_BLUR_THRESHOLD_RADPS.toFixed(1)} rad/s (900 rpm), or sooner at the display’s blade-sampling limit.</p>
     </div>
   )
 }

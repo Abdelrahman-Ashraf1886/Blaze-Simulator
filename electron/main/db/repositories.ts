@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { TRIANGLE_WARNING } from '../../ipc/contract'
+import { validateOverrides, type ParamError, type TuningOverrides } from '../../../src/domain/controller-params'
 import {
   COMPONENT_SCHEMA_VERSION,
   fieldDef,
@@ -168,11 +169,28 @@ const toProject = (r: ProjectRow): Project => ({
 
 export class NotFoundError extends Error {}
 
+/** Tuning overrides refused by `validateOverrides`; `errors` names every parameter at fault. */
+export class TuningValidationError extends ValidationError {
+  constructor(readonly errors: ParamError[]) {
+    super(errors.map((e) => e.message).join('; '))
+  }
+}
+
 export function createRepositories(db: Db, now: () => Date = () => new Date()) {
   const getProject = (id: string): Project => {
     const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined
     if (!row) throw new NotFoundError(`Project ${id} not found`)
     return toProject(row)
+  }
+
+  /** The saved gain overrides of a project (schema v13), name → value. */
+  const tuningOf = (projectId: string): TuningOverrides => {
+    getProject(projectId)
+    const rows = db.prepare('SELECT param_name, value FROM controller_tuning WHERE project_id = ? ORDER BY param_name').all(projectId) as {
+      param_name: string
+      value: number
+    }[]
+    return Object.fromEntries(rows.map((r) => [r.param_name, r.value]))
   }
 
   const getComponent = (id: string): Component => {
@@ -512,6 +530,29 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
         db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(ts, input.projectId)
         return { revision, updatedAt: ts }
       }),
+    },
+    /** Per-project controller gain overrides (schema v13). Only overrides are stored; the PX4 defaults are not. */
+    tuning: {
+      /** The project's overrides, name → value; empty when none are saved. */
+      get: (projectId: string): TuningOverrides => tuningOf(projectId),
+      /** Replaces the project's overrides. Validated first: an invalid set throws and nothing is stored. */
+      set(projectId: string, overrides: unknown): TuningOverrides {
+        getProject(projectId)
+        const result = validateOverrides(overrides)
+        if (!result.ok) throw new TuningValidationError(result.errors)
+        const ts = now().toISOString()
+        db.transaction(() => {
+          db.prepare('DELETE FROM controller_tuning WHERE project_id = ?').run(projectId)
+          const insert = db.prepare('INSERT INTO controller_tuning (project_id, param_name, value, updated_at) VALUES (?, ?, ?, ?)')
+          for (const [name, value] of Object.entries(overrides as TuningOverrides)) insert.run(projectId, name, value, ts)
+        })()
+        return tuningOf(projectId)
+      },
+      /** "Reset to PX4 defaults": removes every override of the project. */
+      clear(projectId: string): void {
+        getProject(projectId)
+        db.prepare('DELETE FROM controller_tuning WHERE project_id = ?').run(projectId)
+      },
     },
     assets: {
       list(): AssetInfo[] {

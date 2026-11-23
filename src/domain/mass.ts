@@ -206,6 +206,61 @@ export function rotateInertia(local: Inertia6, q: Quat): Inertia6 {
   return fromMat(mul(mul(r, toMat(local)), transpose(r)))
 }
 
+// ---- principal axes -------------------------------------------------------------
+
+/**
+ * Principal moments and axes of a symmetric inertia tensor, by the cyclic Jacobi method (Golub & Van Loan,
+ * *Matrix Computations*, 4th ed., §8.5), the same method and conventions as the engine's `principal_axes`
+ * (simulation-engine/engine-core/src/vehicle.rs): repeated plane rotations Jᵀ A J, each zeroing one off-diagonal
+ * element (t = sgn θ / (|θ| + √(θ²+1)), θ = (a_qq − a_pp) / 2a_pq, c = 1/√(t²+1), s = t·c), until the
+ * off-diagonal part is below rounding (1e-17 of the Frobenius norm, at most 32 sweeps).
+ *
+ * Returns `moments` ascending and `axes` = [e₁, e₂, e₃], unit vectors in the tensor's own (body) axes with
+ * A = Σ λᵢ eᵢ eᵢᵀ. The frame is right-handed: e₃ = e₁ × e₂ (an eigenvector may be flipped to make it so).
+ * The engine returns the moments in Jacobi order; this sorts them, which only permutes the axes.
+ * With equal moments the axes within that eigenspace are any orthonormal pair.
+ */
+export function principalAxes(inertia: Inertia6): { moments: Vec3; axes: [Vec3, Vec3, Vec3] } {
+  const m = [
+    [inertia[0], inertia[3], inertia[4]],
+    [inertia[3], inertia[1], inertia[5]],
+    [inertia[4], inertia[5], inertia[2]],
+  ]
+  const v = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+  const norm = Math.hypot(inertia[0], inertia[1], inertia[2], Math.SQRT2 * inertia[3], Math.SQRT2 * inertia[4], Math.SQRT2 * inertia[5])
+  for (let sweep = 0; sweep < 32; sweep++) {
+    if (Math.hypot(m[0]![1]!, m[0]![2]!, m[1]![2]!) <= 1e-17 * norm) break
+    for (const [p, q] of [[0, 1], [0, 2], [1, 2]] as const) {
+      if (m[p]![q] === 0) continue
+      const theta = (m[q]![q]! - m[p]![p]!) / (2 * m[p]![q]!)
+      const t = Math.abs(theta) > 1e150 ? 0.5 / theta : Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1))
+      const c = 1 / Math.sqrt(t * t + 1)
+      const s = t * c
+      // A ← Jᵀ A J and V ← V J, with J the identity except J_pp = J_qq = c, J_pq = s, J_qp = −s.
+      for (const row of m) {
+        const [akp, akq] = [row[p]!, row[q]!]
+        row[p] = c * akp - s * akq
+        row[q] = s * akp + c * akq
+      }
+      for (let k = 0; k < 3; k++) {
+        const [apk, aqk] = [m[p]![k]!, m[q]![k]!]
+        m[p]![k] = c * apk - s * aqk
+        m[q]![k] = s * apk + c * aqk
+      }
+      for (const row of v) {
+        const [vp, vq] = [row[p]!, row[q]!]
+        row[p] = c * vp - s * vq
+        row[q] = s * vp + c * vq
+      }
+    }
+  }
+  const order = [0, 1, 2].sort((a, b) => m[a]![a]! - m[b]![b]!)
+  const col = (j: number): Vec3 => [v[0]![j]!, v[1]![j]!, v[2]![j]!]
+  const [e1, e2] = [col(order[0]!), col(order[1]!)]
+  const e3: Vec3 = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]
+  return { moments: order.map((j) => m[j]![j]!) as Vec3, axes: [e1, e2, e3] }
+}
+
 // ---- totals ---------------------------------------------------------------------
 
 export function massProperties(bodies: readonly BodyInput[]): MassProperties {

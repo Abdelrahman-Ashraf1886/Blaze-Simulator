@@ -7,18 +7,17 @@
 import type { AssemblyDocument } from '../../../electron/ipc/contract'
 import { runChecks, type Finding } from '../../domain/checks'
 import { calculate, DEFAULT_LOAD_CASE, type ElectricalResult, type LoadCase } from '../../domain/electrical'
-import { horizontalOffset, massFindings, type Vec3 } from '../../domain/mass'
-import { propulsionDefinition, type ReferenceDensity, type ReadyItem } from '../../domain/propulsion'
+import { horizontalOffset, massFindings, principalAxes, type Vec3 } from '../../domain/mass'
+import type { ReferenceDensity, ReadyItem } from '../../domain/propulsion'
 import { wiringFindings, escOfMotor } from '../../domain/wiring'
 import type { FrameGeometry } from '../../three/frame-geometry'
 import { checkInput } from '../workshop/check-input'
 import type { AssetBounds } from '../workshop/assembly-ops'
-import { linkedComponent, type ComponentIndex } from '../workshop/links'
+import type { ComponentIndex } from '../workshop/links'
 import { massState, type MassState } from '../workshop/mass-input'
-import { propulsionState } from '../workshop/propulsion-input'
 import { wiringParts } from '../workshop/wiring-input'
-import { thrustIndicator, type Indicator } from '../flight/indicators'
-import { airDensityFor, conditionBlockers, conditionsOf, type FlightBlocker, type FlightConditions } from '../flight/readiness'
+import { assemblyThrust, type Indicator, type MaxThrust } from '../flight/indicators'
+import { conditionBlockers, conditionsOf, type FlightBlocker, type FlightConditions } from '../flight/readiness'
 
 export interface MotorDensity {
   partId: string
@@ -41,6 +40,10 @@ export interface Analysis {
   airDensityKgM3: number | null
   /** `thrustIndicator`: the flight page's maximum T/W (4.5 solver, pack sag, air density of the flight). */
   thrust: Indicator
+  /** `maxThrust`: the numbers behind the indicator (per motor, pack, total, T/W); null while the indicator is unknown. */
+  maxThrust: MaxThrust | null
+  /** `principalAxes` of the inertia tensor; null with the inertia. */
+  principal: ReturnType<typeof principalAxes> | null
   motorDensities: MotorDensity[]
   /** `calculate` with the Electrical Designer's starting load case. */
   loadCase: LoadCase
@@ -58,12 +61,8 @@ export interface Analysis {
 export function analyse(doc: AssemblyDocument, geo: FrameGeometry, components: ComponentIndex, assets: AssetBounds, tolerancePct: number): Analysis {
   const mass = massState(doc, geo, components, assets)
   const { mp, motors, hover } = mass
-  const propulsion = propulsionState(doc, geo, components)
   const conditions = conditionsOf(doc)
-  const battery = doc.parts.find((p) => p.kind === 'battery')
-  const definition = propulsionDefinition(propulsion.motors, battery ? linkedComponent(battery, components) : null)
-  const airDensityKgM3 = conditions.ambientAltitudeM === null ? null : airDensityFor(conditions.ambientAltitudeM, conditions.temperatureC)
-  const thrust = thrustIndicator(definition, propulsion.ready, mp.totalMassKg, !!mp.com && mp.missingMass.length === 0, airDensityKgM3)
+  const { indicator: thrust, numbers: maxThrustNumbers, propulsion, air: airDensityKgM3 } = assemblyThrust(doc, geo, components, mass, conditions)
   const parts = wiringParts(doc, geo, components)
   const wires = doc.wires ?? []
   return {
@@ -74,6 +73,8 @@ export function analyse(doc: AssemblyDocument, geo: FrameGeometry, components: C
     conditions,
     airDensityKgM3,
     thrust,
+    maxThrust: maxThrustNumbers,
+    principal: mp.inertia ? principalAxes(mp.inertia) : null,
     motorDensities: propulsion.motors.map((m) => ({ partId: m.slot.partId, name: m.slot.name, density: m.fit?.referenceDensity ?? null })),
     loadCase: DEFAULT_LOAD_CASE,
     electrical: calculate(parts, wires, DEFAULT_LOAD_CASE),

@@ -1,8 +1,13 @@
+import type { AssemblyDocument } from '../../../electron/ipc/contract'
 import type { Finding } from '../../domain/checks'
 import { horizontalOffset, massFindings, STANDARD_GRAVITY } from '../../domain/mass'
-import { IDEAL_MAP, steadyState, type PropulsionDefinition, type ReadyItem } from '../../domain/propulsion'
+import { IDEAL_MAP, propulsionDefinition, steadyState, type PropulsionDefinition, type ReadyItem } from '../../domain/propulsion'
+import type { FrameGeometry } from '../../three/frame-geometry'
+import { linkedComponent, type ComponentIndex } from '../workshop/links'
 import type { MassState } from '../workshop/mass-input'
+import { propulsionState } from '../workshop/propulsion-input'
 import type { FlightFrame } from './frame'
+import { airDensityFor, type FlightConditions } from './readiness'
 
 // Physical hover floor: maximum thrust must at least equal weight.
 export const MIN_THRUST_TO_WEIGHT = 1
@@ -46,6 +51,39 @@ export function thrustIndicator(propulsion: PropulsionDefinition | null, ready: 
   // The engine flies each motor's k_T and k_Q scaled by ρ / ρ_ref,i (flight.rs `scale_to_air_density`), with ρ_ref,i
   // the air density that motor's data was taken at (in the propulsion definition): so does this.
   if (airKgM3 === null) return { state: 'unknown', detail: 'Enter the ambient altitude (Flight setup): thrust and torque scale with the air density of the flight relative to the density of the propeller data.' }
+  const { thrustToWeight: ratio } = maxThrust(propulsion, airKgM3, massKg)
+  return result(ratio < MIN_THRUST_TO_WEIGHT, `Maximum T/W ${ratio.toFixed(2)} at full throttle with pack voltage sag, air density ${airKgM3.toFixed(3)} kg/m³ (physical hover floor ${MIN_THRUST_TO_WEIGHT.toFixed(1)}; below this cannot hover).`)
+}
+
+export interface MotorMaxThrust {
+  partId: string
+  /** Thrust at full throttle, N. */
+  thrustN: number
+  /** Shaft speed at full throttle, rad/s. */
+  omegaRadS: number
+  /** Motor (phase-side, DC-equivalent) current, A. */
+  motorCurrentA: number
+  /** Current drawn from the pack through its ESC, A. */
+  supplyCurrentA: number
+}
+
+export interface MaxThrust {
+  motors: MotorMaxThrust[]
+  /** The pack's terminal voltage with every motor at full throttle, V. */
+  packVoltageV: number
+  /** Sum of the supply currents, A. */
+  packCurrentA: number
+  totalThrustN: number
+  /** Total thrust over weight (m·g). */
+  thrustToWeight: number
+}
+
+/**
+ * Full-throttle steady state of all motors sharing the sagging pack, at the air density of the flight.
+ * The engine flies each motor's k_T and k_Q scaled by ρ / ρ_ref,i (flight.rs `scale_to_air_density`), with ρ_ref,i
+ * the air density that motor's data was taken at (in the propulsion definition): so does this. Pure.
+ */
+export function maxThrust(propulsion: PropulsionDefinition, airKgM3: number, massKg: number): MaxThrust {
   const { battery, motors } = propulsion
   const models = motors.map((m) => ({
     electrical: { kv: m.kvRadPerSV, kt: 1 / m.kvRadPerSV, resistance: m.resistanceOhm, noLoadCurrent: m.noLoadCurrentA, noLoadCondition: null },
@@ -64,9 +102,46 @@ export function thrustIndicator(propulsion: PropulsionDefinition | null, ready: 
     if (voltage + battery.internalResistanceOhm * current > battery.openCircuitVoltageV) high = voltage
     else low = voltage
   }
-  const maxThrustN = atVoltage((low + high) / 2).reduce((sum, s, i) => sum + models[i]!.kT * s.omega ** 2, 0)
-  const ratio = maxThrustN / (massKg * STANDARD_GRAVITY)
-  return result(ratio < MIN_THRUST_TO_WEIGHT, `Maximum T/W ${ratio.toFixed(2)} at full throttle with pack voltage sag, air density ${airKgM3.toFixed(3)} kg/m³ (physical hover floor ${MIN_THRUST_TO_WEIGHT.toFixed(1)}; below this cannot hover).`)
+  const packVoltageV = (low + high) / 2
+  const states = atVoltage(packVoltageV)
+  const perMotor = states.map((s, i): MotorMaxThrust => ({
+    partId: motors[i]!.partId,
+    thrustN: models[i]!.kT * s.omega ** 2,
+    omegaRadS: s.omega,
+    motorCurrentA: s.motorCurrent,
+    supplyCurrentA: s.supplyCurrent,
+  }))
+  const totalThrustN = perMotor.reduce((sum, m) => sum + m.thrustN, 0)
+  return {
+    motors: perMotor,
+    packVoltageV,
+    packCurrentA: states.reduce((sum, s) => sum + s.supplyCurrent, 0),
+    totalThrustN,
+    thrustToWeight: totalThrustN / (massKg * STANDARD_GRAVITY),
+  }
+}
+
+/**
+ * The inputs of `thrustIndicator` for an assembly, as the flight page and the analysis page both read them:
+ * the propulsion definition from the linked motors, props and battery, and the air density of the flight
+ * conditions (null until the ambient altitude is entered).
+ */
+export function thrustInputs(doc: AssemblyDocument, geo: FrameGeometry, components: ComponentIndex, conditions: FlightConditions) {
+  const propulsion = propulsionState(doc, geo, components)
+  const battery = doc.parts.find((p) => p.kind === 'battery')
+  const definition = propulsionDefinition(propulsion.motors, battery ? linkedComponent(battery, components) : null)
+  const air = conditions.ambientAltitudeM === null ? null : airDensityFor(conditions.ambientAltitudeM, conditions.temperatureC)
+  return { propulsion, definition, air }
+}
+
+/** The assembly's maximum-thrust indicator and, when it can be solved, the numbers behind it. */
+export function assemblyThrust(doc: AssemblyDocument, geo: FrameGeometry, components: ComponentIndex, mass: MassState, conditions: FlightConditions) {
+  const { propulsion, definition, air } = thrustInputs(doc, geo, components, conditions)
+  const complete = !!mass.mp.com && mass.mp.missingMass.length === 0
+  const indicator = thrustIndicator(definition, propulsion.ready, mass.mp.totalMassKg, complete, air)
+  // The solve is run only where the indicator reached it: it is not "unknown" for lack of data.
+  const numbers = indicator.state !== 'unknown' && definition && air !== null ? maxThrust(definition, air, mass.mp.totalMassKg) : null
+  return { indicator, numbers, propulsion, definition, air }
 }
 
 /** Warning iff any allocation axis is saturated continuously for >=1 s.

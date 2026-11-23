@@ -8,7 +8,6 @@ import { cn } from '@/lib/utils'
 import { STANDARD_GRAVITY } from '@/domain/mass'
 import type { Finding } from '@/domain/checks'
 import type { Calc } from '@/domain/electrical'
-import type { ReadyLink } from '@/domain/propulsion'
 import { fromSI, type Unit } from '@/domain/units'
 import { useProjects } from '@/stores/projects'
 import { useComponents } from '@/stores/components'
@@ -17,6 +16,7 @@ import { useAssembly } from '../workshop/assembly-store'
 import { useAssets } from '../workshop/asset-store'
 import { useComponentIndex } from '../workshop/component-index'
 import { useWorkshopView } from '../workshop/view-store'
+import { focusWhenPresent, useFollow } from '../flight/FlightSetup'
 import type { FlightLink } from '../flight/readiness'
 import { analyse, type Analysis } from './analysis'
 
@@ -74,29 +74,19 @@ function LoadAnalysis({ project }: { project: Project }) {
 
 const num = (si: number, unit: Unit, digits: number) => fromSI(si, unit).toFixed(digits)
 
-/** Focuses `id` once the page that holds it has rendered (a link into another page). */
-function focusWhenPresent(id: string, tries = 60) {
-  const el = document.getElementById(id)
-  if (el) {
-    el.scrollIntoView({ block: 'center' })
-    el.focus()
-  } else if (tries > 0) requestAnimationFrame(() => focusWhenPresent(id, tries - 1))
-}
-
-type Target = ReadyLink | FlightLink | { to: 'electrical' }
-function useFollow(projectId: string) {
+type Target = FlightLink | { to: 'electrical' }
+/** The flight page's link following (fields, parts, the library), plus the Electrical Designer. */
+function useTargetFollow(projectId: string) {
   const navigate = useNavigate()
+  const follow = useFollow(projectId)
   return (link: Target) => {
-    if (link.to === 'component') return void navigate(`/components?id=${encodeURIComponent(link.componentId)}&field=${encodeURIComponent(link.field)}`)
     if (link.to === 'electrical') return void navigate(`/electrical/${projectId}`)
     if (link.to === 'flight-field') {
+      // The shared follow focuses a field already on screen; this page is not the flight page.
       void navigate(`/flight/${projectId}`)
       return focusWhenPresent(link.elementId)
     }
-    if (link.to === 'part') useWorkshopView.getState().selectPart(link.partId)
-    void navigate(`/workshop/${projectId}`)
-    const id = link.to === 'frame-mass' ? 'frame-mass' : link.to === 'body-drag' ? `body-cd-${link.axis}` : link.to === 'environment' ? link.elementId : null
-    if (id) focusWhenPresent(id)
+    follow(link)
   }
 }
 
@@ -152,7 +142,7 @@ function CalcReadout({ label, c, unit, scale = 1, digits = 2, testId }: { label:
 const ELECTRICAL_RULES = new Set(['battery-cells', 'esc-current', 'esc-outputs', 'battery-current'])
 
 function AnalysisView({ project, doc, a }: { project: Project; doc: AssemblyDocument; a: Analysis }) {
-  const follow = useFollow(project.id)
+  const follow = useTargetFollow(project.id)
   return (
     <div data-testid="analysis-page">
       <PageHeader title={`${project.name} · Engineering Analysis`} />
@@ -226,9 +216,24 @@ function MassSection({ a, follow }: { a: Analysis; follow: (l: Target) => void }
               ))}
             </tbody>
           </table>
-          <p className="mt-1 text-[11.5px] leading-relaxed text-fg-subtle" data-testid="analysis-principal-none">
-            Principal moments: not available. No calculation of them exists yet; the tensor above is complete.
-          </p>
+          {a.principal && (
+            <>
+              <h3 className="mb-1 mt-3 text-[12px] font-medium text-fg-muted" title="Eigenvalues of the tensor, ascending, by the Jacobi method (principalAxes, src/domain/mass.ts); the axes are in body coordinates, right-handed">
+                Principal moments <span className="font-normal text-fg-subtle">kg·m²</span>
+              </h3>
+              <table className="num w-full border-t border-line text-right text-[12px]" data-testid="analysis-principal">
+                <tbody>
+                  {a.principal.moments.map((l, i) => (
+                    <tr key={i} className="border-b border-line/60">
+                      <td className="py-1 text-left text-fg-muted">I{i + 1}</td>
+                      <td className="py-1" data-testid={`analysis-principal-${i + 1}`}>{l.toFixed(6)}</td>
+                      <td className="py-1 text-fg-subtle" title="Principal axis (x, y, z) in body axes">{a.principal!.axes[i]!.map((c) => c.toFixed(3)).join(' / ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
         </>
       ) : (
         <Missing>Not available: needs at least one part with a mass.</Missing>
@@ -290,10 +295,37 @@ function PropulsionSection({ a, follow }: { a: Analysis; follow: (l: Target) => 
       <p className={cn('border-b border-line/60 py-1.5 text-[12.5px] leading-relaxed', a.thrust.state === 'warning' ? 'text-warn' : a.thrust.state === 'unknown' ? 'text-fg-subtle' : 'text-fg')} data-testid="analysis-thrust" data-state={a.thrust.state} title="Full throttle, all motors sharing the sagging pack, each motor's thrust scaled from its reference density to the flight's (thrustIndicator, src/features/flight/indicators.ts)">
         {a.thrust.state === 'unknown' ? 'Not available: ' : ''}{a.thrust.detail}
       </p>
-      <h3 className="mb-1 mt-4 text-[12px] font-medium text-fg-muted">Per motor</h3>
-      <p className="mb-1 text-[11.5px] leading-relaxed text-fg-subtle" data-testid="analysis-motor-max-none">
-        Maximum thrust and current of each motor: not available. The flight test reports only the summed maximum T/W above.
-      </p>
+      {a.maxThrust ? (
+        <>
+          <Readouts>
+            <Readout label="Maximum T/W" value={<span data-testid="analysis-tw">{a.maxThrust.thrustToWeight.toFixed(2)}</span>} title="Total full-throttle thrust ÷ (m·g) (maxThrust, src/features/flight/indicators.ts)" />
+            <Readout label="Total thrust" value={num(a.maxThrust.totalThrustN, 'N', 2)} unit="N" title="Σ k_T,i (ρ/ρ_ref,i) ω_i² at the sagging pack voltage" />
+            <Readout label="Pack voltage at full throttle" value={a.maxThrust.packVoltageV.toFixed(2)} unit="V" title="Solves V + R_pack · Σ I_supply(V) = V_oc" />
+            <Readout label="Pack current at full throttle" value={a.maxThrust.packCurrentA.toFixed(1)} unit="A" title="Σ of the motors' supply currents" />
+          </Readouts>
+          <h3 className="mb-1 mt-4 text-[12px] font-medium text-fg-muted">Per motor at full throttle</h3>
+          <table className="num w-full border-t border-line text-right text-[12px]" data-testid="analysis-motor-max">
+            <thead>
+              <tr className="text-fg-subtle"><th className="py-1 text-left font-normal">Motor</th><th className="font-normal">Thrust</th><th className="font-normal">Speed</th><th className="font-normal" title="Motor current; the pack supplies the supply current">Current</th></tr>
+            </thead>
+            <tbody>
+              {a.maxThrust.motors.map((m, i) => (
+                <tr key={m.partId} className="border-b border-line/60" data-testid="analysis-motor-max-row">
+                  <td className="py-1 text-left text-fg-muted">{a.motorDensities[i]?.name ?? m.partId}</td>
+                  <td title="k_T (ρ/ρ_ref) ω²">{num(m.thrustN, 'N', 2)} <span className="text-fg-subtle">N</span></td>
+                  <td>{num(m.omegaRadS, 'rpm', 0)} <span className="text-fg-subtle">rpm</span></td>
+                  <td title={`Supply current from the pack: ${m.supplyCurrentA.toFixed(1)} A`}>{m.motorCurrentA.toFixed(1)} <span className="text-fg-subtle">A</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : (
+        <p className="mb-1 mt-2 text-[11.5px] leading-relaxed text-fg-subtle" data-testid="analysis-motor-max-none">
+          Maximum T/W and each motor&apos;s maximum thrust and current: not available until the data above is complete.
+        </p>
+      )}
+      <h3 className="mb-1 mt-4 text-[12px] font-medium text-fg-muted">Reference density per motor</h3>
       {a.motorDensities.length === 0 ? (
         <Missing>No motor mounts on this frame.</Missing>
       ) : (

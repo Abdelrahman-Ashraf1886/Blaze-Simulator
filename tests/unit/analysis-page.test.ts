@@ -10,11 +10,11 @@ import { describe, expect, it } from 'vitest'
 import type { Component, QuantityValue } from '../../electron/ipc/component-fields'
 import type { AssemblyDocument, FrameParams } from '../../electron/ipc/contract'
 import { calculate, DEFAULT_LOAD_CASE } from '../../src/domain/electrical'
-import { horizontalOffset, massFindings } from '../../src/domain/mass'
+import { horizontalOffset, massFindings, principalAxes } from '../../src/domain/mass'
 import { propulsionDefinition } from '../../src/domain/propulsion'
 import { wiringFindings } from '../../src/domain/wiring'
 import { analyse } from '../../src/features/analysis/analysis'
-import { thrustIndicator } from '../../src/features/flight/indicators'
+import { maxThrust, thrustIndicator } from '../../src/features/flight/indicators'
 import { airDensityFor, conditionBlockers, EMPTY_CONDITIONS } from '../../src/features/flight/readiness'
 import { addPart, updatePart } from '../../src/features/workshop/assembly-ops'
 import { linkedComponent } from '../../src/features/workshop/links'
@@ -69,6 +69,14 @@ describe('a fixture build: every value is the source function’s result', () =>
     expect(a.airDensityKgM3).toBe(air)
     expect(a.thrust).toEqual(thrustIndicator(definition, propulsion.ready, a.mass.mp.totalMassKg, true, air))
     expect(a.thrust.detail).toContain('Maximum T/W')
+    // The numbers behind it: the same solve, per motor, and the indicator's text is made from them.
+    const numbers = maxThrust(definition!, air, a.mass.mp.totalMassKg)
+    expect(a.maxThrust).toEqual(numbers)
+    expect(a.maxThrust!.motors).toHaveLength(4)
+    expect(a.thrust.detail).toContain(`Maximum T/W ${numbers.thrustToWeight.toFixed(2)} `)
+    expect(numbers.totalThrustN).toBeCloseTo(numbers.motors.reduce((s, m) => s + m.thrustN, 0), 12)
+    expect(numbers.motors.every((m) => m.thrustN > 0 && m.motorCurrentA > 0 && m.omegaRadS > 0)).toBe(true)
+    expect(a.principal).toEqual(principalAxes(a.mass.mp.inertia!))
   })
 
   it('each motor’s reference density and its source come from the propulsion fit', () => {

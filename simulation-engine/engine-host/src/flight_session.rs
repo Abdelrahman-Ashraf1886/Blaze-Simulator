@@ -41,6 +41,10 @@ struct StartParams {
     /// ISA density at the user's altitude (`src/domain/atmosphere.ts`), kg/m³.
     #[serde(default)]
     air_density_kg_m3: Option<f64>,
+    /// The air density the motors' k_T and k_Q were fitted at, kg/m³ (the data's, or the
+    /// user's entry where no source states it); thrust and torque scale as ρ / ρ_ref.
+    #[serde(default)]
+    reference_density_kg_m3: Option<f64>,
     cutoff: CutoffRequest,
     /// Overrides of the PX4 v1.13.3 defaults by exact parameter name.
     #[serde(default)]
@@ -133,6 +137,9 @@ pub fn start(
     let Some(rho) = p.air_density_kg_m3.filter(|r| r.is_finite() && *r > 0.0) else {
         return bad("airDensityKgM3 must be a positive number (ISA at the user's altitude)".into());
     };
+    let Some(rho_ref) = p.reference_density_kg_m3.filter(|r| r.is_finite() && *r > 0.0) else {
+        return bad("referenceDensityKgM3 must be a positive number (the air density the propeller data was measured or computed at)".into());
+    };
     let sim = match Simulation::with_environment(vehicle, SimConfig::default(), &environment, p.start_position_m.unwrap_or([0.0; 3])) {
         Ok(s) => s,
         Err(e) => return bad(e),
@@ -145,6 +152,9 @@ pub fn start(
         CutoffRequest::VoltageV(v) => Cutoff::VoltageV(v),
         CutoffRequest::ChargeMah(q) => Cutoff::ChargeMah(q),
     };
+    if let Err(e) = flight.scale_to_air_density(rho_ref, rho) {
+        return bad(e);
+    }
     if let Err(e) = flight.set_cutoff(cutoff) {
         return bad(format!("cutoff: {e}"));
     }

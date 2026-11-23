@@ -85,6 +85,7 @@ fn start() -> Value {
         "environment": ground(),
         "startPositionM": [0.0, 0.0, REST_Z],
         "airDensityKgM3": 1.225,
+        "referenceDensityKgM3": 1.225,
         "cutoff": {"type": "chargeMah", "value": 1000.0},
     })
 }
@@ -214,6 +215,11 @@ fn refusals_keep_the_sidecar_alive() {
         r["cutoff"] = cutoff;
         e.refused(r, "INVALID_PARAMS", "");
     }
+    let mut r = start();
+    r.as_object_mut().unwrap().remove("referenceDensityKgM3");
+    e.refused(r.clone(), "INVALID_PARAMS", "referenceDensityKgM3");
+    r["referenceDensityKgM3"] = json!(-1.0);
+    e.refused(r, "INVALID_PARAMS", "referenceDensityKgM3");
     let mut r = start();
     r.as_object_mut().unwrap().remove("airDensityKgM3");
     e.refused(r.clone(), "INVALID_PARAMS", "airDensityKgM3");
@@ -360,4 +366,40 @@ fn climb_then_release_holds_a_vertical_speed_of_zero() {
         vz = e.ok(step(100, climb(0.0)))["diagnostic"]["state"]["linearVelocityMps"][2].as_f64().unwrap();
     }
     assert!(vz.abs() < 0.1, "released after 4 s: {vz} m/s");
+}
+
+/// Thrust and torque scale as rho / rho_ref, so the same build must spin faster in thin air. In a hover the
+/// thrust per motor is W / 4 whatever the air, so k_T' w^2 = W / 4 gives w ∝ sqrt(rho_ref / rho): flown at
+/// 3000 m (ISA, 0.9093 kg/m³, USSA 1976 Table I) against sea level the speed rises by sqrt(1.225 / 0.9093)
+/// = 1.1607 and the throttle rises with it, the pack draws more current, and the same density as the data's
+/// changes nothing.
+#[test]
+fn the_same_build_hovers_faster_in_thin_air_as_rho_over_rho_ref_predicts() {
+    let hover = |rho: f64| -> (f64, f64, f64) {
+        let mut e = Engine::loaded();
+        let mut request = start();
+        request["airDensityKgM3"] = json!(rho);
+        e.ok(request);
+        let mut last = Value::Null;
+        for _ in 0..150 {
+            last = e.ok(step(100, json!({"altitudeM": 1.0})));
+        }
+        let d = &last["diagnostic"];
+        let motors = d["motors"].as_array().unwrap();
+        let mean = |key: &str| motors.iter().map(|m| m[key].as_f64().unwrap()).sum::<f64>() / 4.0;
+        let z = d["state"]["comM"][2].as_f64().unwrap();
+        assert!((z - 1.0).abs() < 0.02, "holds 1 m at {rho} kg/m³: {z}");
+        (mean("rpm"), mean("throttle"), d["battery"]["currentA"].as_f64().unwrap())
+    };
+    let (rpm0, throttle0, amps0) = hover(1.225);
+    let (rpm3, throttle3, amps3) = hover(0.9093);
+    let predicted = (1.225f64 / 0.9093).sqrt();
+    assert!((rpm3 / rpm0 - predicted).abs() < 0.005 * predicted, "speed ratio {} vs predicted {predicted}", rpm3 / rpm0);
+    assert!(throttle3 > throttle0, "hover throttle rises: {throttle0} -> {throttle3}");
+    assert!(amps3 > amps0, "and so does the current: {amps0} -> {amps3}");
+    // Thrust per motor is the same weight share in both.
+    let mut e = Engine::loaded();
+    e.ok(start());
+    let thrust = (0..150).map(|_| e.ok(step(100, json!({"altitudeM": 1.0})))).last().unwrap()["diagnostic"]["motors"][0]["thrustN"].as_f64().unwrap();
+    assert!((thrust - 9.80665 / 4.0).abs() < 0.01 * thrust, "{thrust} N per motor");
 }

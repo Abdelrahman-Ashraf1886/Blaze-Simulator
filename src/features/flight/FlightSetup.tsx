@@ -46,6 +46,7 @@ export function FlightSetup({ projectId, blockers, engineBlock, locked }: { proj
     <Section title="Flight setup" count={blockers.length}>
       <div data-testid="flight-conditions">
         <NumberField key={`alt:${c.ambientAltitudeM}`} id="flight-altitude" label="Ambient altitude" unit="m" placeholder="not set" initial={show(c.ambientAltitudeM)} parse={optional(ISA_MIN_ALTITUDE_M, ISA_MAX_ALTITUDE_M, 'm', 1)} onCommit={(v) => c.set({ ambientAltitudeM: v })} />
+        <NumberField key={`rho:${c.referenceDensityKgM3}`} id="flight-reference-density" label="Air density of the propeller data" unit="kg/m³" placeholder="not set" initial={show(c.referenceDensityKgM3)} parse={optional(0.01, 20, 'kg/m³', 0.0001)} onCommit={(v) => c.set({ referenceDensityKgM3: v })} />
         <NumberField key={`temp:${c.temperatureC}`} id="flight-temperature" label="Air temperature (blank: standard atmosphere)" unit="°C" placeholder="standard" initial={show(c.temperatureC)} parse={optional(-273, 200, '°C', 0.1)} onCommit={(v) => c.set({ temperatureC: v })} />
         <div className="flex items-center justify-between gap-3 border-b border-line/60 py-1.5">
           <label htmlFor="flight-cutoff-type" className="text-[12.5px] text-fg-muted">Battery cut-off at</label>

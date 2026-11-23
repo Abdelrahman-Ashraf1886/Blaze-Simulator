@@ -252,6 +252,8 @@ export const FlightSessionStartParamsSchema = z.strictObject({
   startPositionM: vec3.optional(),
   /** ISA density at the user's altitude (src/domain/atmosphere.ts), kg/m³. */
   airDensityKgM3: num.refine((v) => v > 0, 'must be positive'),
+  /** The air density the propeller data (k_T, k_Q) was measured or computed at, kg/m³: thrust and torque scale as ρ / ρ_ref. No default. */
+  referenceDensityKgM3: num.refine((v) => v > 0, 'must be positive'),
   /** The user's choice; no default. */
   cutoff: z.discriminatedUnion('type', [
     z.strictObject({ type: z.literal('voltageV'), value: num.refine((v) => v > 0, 'must be positive') }),

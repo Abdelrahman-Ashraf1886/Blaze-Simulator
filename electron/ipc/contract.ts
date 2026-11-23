@@ -342,6 +342,8 @@ export interface FlightStartInput {
   environment: unknown
   /** ISA density at the user's altitude and temperature (src/domain/atmosphere.ts), kg/m³. */
   airDensityKgM3: number
+  /** The density the propeller data was measured or computed at, kg/m³ (the user's entry; thrust and torque scale as ρ / ρ_ref). */
+  referenceDensityKgM3: number
   /** The user's battery cut-off: no default. */
   cutoff: { type: 'voltageV' | 'chargeMah'; value: number }
   /** Body origin at the start, world frame, m. */

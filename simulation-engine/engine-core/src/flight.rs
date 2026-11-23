@@ -181,6 +181,26 @@ impl Flight {
         Ok(())
     }
 
+    /// Scales the rotors' thrust and torque coefficients from the density of the data
+    /// they were fitted at (`reference_kg_m3`) to the density of this flight
+    /// (`air_kg_m3`): T = k_T ω² and Q = k_Q ω² both scale as ρ/ρ_ref (4.8). The
+    /// motor model then gives ω, current and battery use at the new loading. Both
+    /// densities must be given and positive: no source states ρ_ref for every data
+    /// set, so it is the user's entry where none does, never assumed.
+    pub fn scale_to_air_density(&mut self, reference_kg_m3: f64, air_kg_m3: f64) -> Result<(), String> {
+        for (name, rho) in [("reference density", reference_kg_m3), ("air density", air_kg_m3)] {
+            if !(rho.is_finite() && rho > 0.0) {
+                return Err(format!("the {name} must be a positive number (got {rho})"));
+            }
+        }
+        let ratio = air_kg_m3 / reference_kg_m3;
+        for m in &mut self.propulsion.motors {
+            m.k_thrust *= ratio;
+            m.k_torque *= ratio;
+        }
+        Ok(())
+    }
+
     /// Why the run ended, once the cut-off was reached. An ended flight no longer steps.
     pub fn ended(&self) -> Option<EndReason> {
         self.ended

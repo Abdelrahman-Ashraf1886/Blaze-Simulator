@@ -160,6 +160,7 @@ const startInput = (): FlightStartInput => ({
   aero: quad.aero,
   environment: { ground: { friction: 0.5, restitution: 0 }, obstacles: [] },
   airDensityKgM3: 1.225,
+  referenceDensityKgM3: 1.225,
   cutoff: { type: 'chargeMah', value: 1000 },
   startPositionM: [0, 0, REST_Z],
 })
@@ -331,7 +332,7 @@ describe('EngineFlightSource', () => {
 
 // ---- readiness gating ---------------------------------------------------------------------------------
 
-const readyConditions: FlightConditions = { ambientAltitudeM: 120, temperatureC: null, cutoffType: 'voltageV', cutoffValue: 13.2 }
+const readyConditions: FlightConditions = { ambientAltitudeM: 120, referenceDensityKgM3: 1.225, temperatureC: null, cutoffType: 'voltageV', cutoffValue: 13.2 }
 const payload = (): EnginePayload => ({
   vehicle: quad.vehicle as unknown as EnginePayload['vehicle'],
   propulsion: quad.propulsion as unknown as EnginePayload['propulsion'],
@@ -344,6 +345,7 @@ describe('readiness gating', () => {
   it('lists the flight conditions that are not entered, linked to their fields', () => {
     expect(conditionBlockers(EMPTY_CONDITIONS).map((b) => [b.id, b.link])).toEqual([
       ['flight-altitude', { to: 'flight-field', elementId: 'flight-altitude' }],
+      ['flight-reference-density', { to: 'flight-field', elementId: 'flight-reference-density' }],
       ['flight-cutoff', { to: 'flight-field', elementId: 'flight-cutoff-value' }],
     ])
     expect(conditionBlockers({ ...readyConditions, cutoffValue: null }).map((b) => b.id)).toEqual(['flight-cutoff'])
@@ -357,6 +359,7 @@ describe('readiness gating', () => {
     expect(gate.input).toMatchObject({ cutoff: { type: 'voltageV', value: 13.2 }, startPositionM: [0, 0, REST_Z] })
     expect('ambientAltitudeM' in gate.input).toBe(false) // the engine takes the density, not the altitude
     expect(gate.input.airDensityKgM3).toBe(airDensityFor(120, null))
+    expect(gate.input.referenceDensityKgM3).toBe(1.225) // the user's entry, passed through
     const hot = flightGate({ ok: true, payload: payload() }, { ...readyConditions, temperatureC: 35 })
     expect(hot.ok && hot.input.airDensityKgM3).toBeLessThan(airDensityFor(120, null))
   })
@@ -368,7 +371,7 @@ describe('readiness gating', () => {
   })
 
   it('a missing cut-off or altitude blocks a complete build', () => {
-    for (const [missing, id] of [[{ cutoffValue: null }, 'flight-cutoff'], [{ ambientAltitudeM: null }, 'flight-altitude']] as const) {
+    for (const [missing, id] of [[{ cutoffValue: null }, 'flight-cutoff'], [{ ambientAltitudeM: null }, 'flight-altitude'], [{ referenceDensityKgM3: null }, 'flight-reference-density']] as const) {
       const gate = flightGate({ ok: true, payload: payload() }, { ...readyConditions, ...missing })
       expect(gate.ok).toBe(false)
       expect(gate.ok ? [] : gate.blockers.map((b) => b.id)).toEqual([id])
@@ -379,7 +382,7 @@ describe('readiness gating', () => {
     const item: ReadyItem = { id: 'ground-friction', label: 'Ground friction coefficient', detail: 'x', link: { to: 'environment', elementId: 'ground-friction' } }
     const gate = flightGate({ ok: false, blockers: [item] }, EMPTY_CONDITIONS)
     expect(gate.ok).toBe(false)
-    expect(gate.ok ? [] : gate.blockers.map((b) => b.id)).toEqual(['ground-friction', 'flight-altitude', 'flight-cutoff'])
+    expect(gate.ok ? [] : gate.blockers.map((b) => b.id)).toEqual(['ground-friction', 'flight-altitude', 'flight-reference-density', 'flight-cutoff'])
   })
 
   it('a real, empty assembly is not ready: the checklist, not a payload', () => {
@@ -419,6 +422,7 @@ describe('IPC validation', () => {
       environment: { ground: { friction: 0.5, restitution: 0 }, obstacles: [] },
       startPositionM: [0, 0, REST_Z],
       airDensityKgM3: 1.225,
+      referenceDensityKgM3: 1.225,
       cutoff: { type: 'chargeMah', value: 1000 },
       gains: { MC_ROLL_P: 7 },
     })
@@ -430,6 +434,8 @@ describe('IPC validation', () => {
     ['a zero cut-off', (p: Record<string, unknown>) => { p.cutoff = { type: 'voltageV', value: 0 } }],
     ['an unknown cut-off type', (p: Record<string, unknown>) => { p.cutoff = { type: 'capacity', value: 5 } }],
     ['no air density', (p: Record<string, unknown>) => { delete p.airDensityKgM3 }],
+    ['no reference density', (p: Record<string, unknown>) => { delete p.referenceDensityKgM3 }],
+    ['a zero reference density', (p: Record<string, unknown>) => { p.referenceDensityKgM3 = 0 }],
     ['a zero air density', (p: Record<string, unknown>) => { p.airDensityKgM3 = 0 }],
     ['a gain that is not a PX4 name', (p: Record<string, unknown>) => { p.gains = { mc_roll_p: 7 } }],
     ['no start position', (p: Record<string, unknown>) => { delete p.startPositionM }],

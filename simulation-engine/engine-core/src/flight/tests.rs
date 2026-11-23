@@ -366,3 +366,29 @@ fn a_cutoff_ends_the_run_and_freezes_it() {
         assert!(f.set_cutoff(Cutoff::ChargeMah(bad)).is_err());
     }
 }
+
+/// Thrust T = k_T w^2 and drag torque Q = k_Q w^2 scale as rho / rho_ref (4.8): at half the reference
+/// density the same rotor speed gives half the thrust and half the torque, the reaction torque on the body
+/// follows, and a density equal to the reference changes nothing. Invalid densities are refused.
+#[test]
+fn the_coefficients_scale_with_the_air_density_ratio() {
+    let v = vehicle(1.0, &[([0.2, 0.0, 0.0], Spin::Ccw)]);
+    let loads = |rho: f64, rho_ref: f64| {
+        let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+        f.scale_to_air_density(rho_ref, rho).unwrap();
+        f.set_rotor_speeds(&[500.0]).unwrap();
+        (f.rotor_loads(Vector::ZERO), f.motors()[0].thrust_n, f.motors()[0].drag_torque_nm)
+    };
+    let (base, t1, q1) = loads(1.225, 1.225);
+    close(t1, 5.0, 1e-12, "unchanged at the reference density");
+    close(q1, 0.025, 1e-15, "drag torque unchanged");
+    let (thin, t2, q2) = loads(0.6125, 1.225);
+    close(t2, 2.5, 1e-12, "half the density, half the thrust");
+    close(q2, 0.0125, 1e-15, "half the drag torque");
+    close(thin.force_body_n.z, 0.5 * base.force_body_n.z, 1e-12, "thrust on the body");
+    close(thin.torque_body_nm.z, 0.5 * base.torque_body_nm.z, 1e-15, "reaction torque on the body");
+    let mut f = Flight::new(&v, propulsion(&v), None, None).unwrap();
+    for (reference, air) in [(0.0, 1.2), (1.2, 0.0), (-1.0, 1.2), (f64::NAN, 1.2), (1.2, f64::INFINITY)] {
+        assert!(f.scale_to_air_density(reference, air).is_err(), "{reference} {air}");
+    }
+}

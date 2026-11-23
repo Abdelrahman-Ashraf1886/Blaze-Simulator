@@ -1,5 +1,104 @@
 # Development log
 
+## 2026-11-23 — Phase 4 closes: Engineering Analysis page, spinning propellers, render-test fix
+
+Phase 4 (physics, collisions, flight behaviour) is complete: 4.1–4.9 are merged and `CURRENT_PHASE` is 5. These are the last changes made to it.
+
+**Built**
+- **Engineering Analysis page** (`src/features/analysis/`, route `/analysis`, no longer locked):
+  - one view of a saved build's analyses: mass properties (total mass, weight, CoM, horizontal offset, the inertia tensor with its principal moments and axes), hover balance, propulsion, electrical, the Ready-to-fly list and the scenarios;
+  - `analysis.ts` only wires functions the workshop, the electrical designer and the flight page already use, so the page and its sources cannot disagree. Each value's tooltip names the function or formula it comes from; a value that cannot be computed shows "not available" with the reason;
+  - per-motor maximum thrust and current, and the T/W number, were added after the first version.
+- **Principal moments and axes in TypeScript** (`principalAxes` in `src/domain/mass.ts`): cyclic Jacobi, the same method and conventions as the engine's `principal_axes` (`vehicle.rs`). Moments are sorted ascending; the axes are right-handed.
+- **Propellers spin in the flight view** (`rotor-spin.ts`, `FlightViewport.tsx`):
+  - each propeller turns at the simulated rotor speed, CCW positive and CW negative seen from above;
+  - at a speed where the blades would alias at the display rate (Nyquist for the blade count) a disc is drawn instead of blades. The 900 rpm limit for a two-blade propeller at 60 frames/s is a display convention, not a physics parameter (stated in the code).
+- **Render-test fix**: the SSR render tests (`flight-view-render`, `rotor-spin`) no longer start Vite's file watcher. The main checkout's root contains `.claude/worktrees`, and watching it made `rotor-spin` time out.
+
+**Verified**
+- New tests: `analysis-page.test.ts`, `principal-axes.test.ts`, `rotor-spin.test.ts` and e2e `analysis.spec.ts`; `app.spec.ts` was updated for the unlocked page.
+- Both merges were reviewed. No full-suite count was recorded with these commits, so none is given here.
+
+**Still open**
+- Wind and ground effect (listed under Phase 4 in the ROADMAP) were deferred by the Phase 4 plan and are not built. The Phase 5 plan recommends Phase 6 for them; that is not decided.
+- The propeller angle in the flight view is integrated from the displayed rotor speed. It is a rendering, not a blade model.
+
+## 2026-11-23 — Phase 4, milestone 4.9: scripted scenarios
+
+Scripted acceptance runs on the mainline flight engine, a protocol command, and a page.
+
+**Built**
+- **Part A, engine core** (`engine-core/src/scenario.rs`, `scenario/builtins.rs`):
+  - the plant is `ClosedLoop` (the PX4 controller flying the 4.6 motors, battery and drag) built on the modified vehicle. The controller is built from the nominal vehicle's motor geometry and its estimate is the true state, so it never sees the true CoM or the payload;
+  - a `Scenario` is a name, a duration, modifications (a payload; a part shift, which moves the part's mass, shape and true thrust pose but not the controller's nominal pose), a script (attitude or Euler angles, yaw rate, altitude and climb rate per segment) and checks: altitude, attitude, no sustained saturation, saturation observed, attitude lost, cannot climb, hover throttle, rate trim, thrust balance. The report holds each check's measured value and verdict, summary metrics and the state hash;
+  - five built-ins: `balanced_hover`, `payload`, `overweight_payload`, `com_offset`, `com_offset_beyond_authority`. The base scenario runs 20 s from the vehicle's CoM height; its checks look at the last second: altitude within 2 cm, attitude within 0.01 rad, at most 10 consecutive saturated 1 ms steps. The predictions (hover command with a payload, the thrust split for an offset) are computed from the same propulsion data, scaled to the flight's air density, with the shared pack sag;
+  - the tolerances are acceptance policy, not sourced physical parameters (stated in the code). Air density, its reference density and the gains are always given; none is defaulted.
+- **Part B, `scenario.run`** (`engine-host/src/scenario_run.rs`, `electron/main/engine/scenario-run.ts`):
+  - a built-in by name and parameters, or a full `Scenario`; the config gives the air density, the battery cut-off, optional gain overrides, and optionally a ground and a start position;
+  - refusals carry the engine's own message under `NO_PROPULSION`, `REFERENCE_DENSITY_REQUIRED`, `CUTOFF_REQUIRED`, `INVALID_SCENARIO` or `INVALID_PARAMS`;
+  - a scenario is limited to 60 s of simulated time, 10 s with a ground, so the single-threaded engine keeps answering the supervisor's health ping. The code records a 60 s scenario of the 4.7 test quad taking 0.41 s in a release build on the development machine, and a 10 s one on a box ground taking 0.25 s.
+- **Scenarios page** (`src/features/scenarios/`): the built-ins, the one entry each needs (a payload mass, a CoM offset; no defaults), the run, and the report as rows: what is measured, the value, the limit, the verdict. A check whose window was never reached shows no value. A scenario that passes by showing the failure it predicts (`overweight_payload`, `com_offset_beyond_authority`) is marked, so a pass is not read as a flight that holds.
+
+**Verified**
+- engine-core `scenario/tests.rs`, including: the built-ins match their predictions; the controller never sees the payload or the CoM; modifications recompute the totals and leave the nominal vehicle unchanged; a 10 s run is deterministic and its JSON round-trips; invalid inputs are errors, not panics; a cut-off ends the run and fails acceptance; the air density scales the prediction and the flight; only the ratio to a motor's reference density matters.
+- Sidecar `tests/scenario_run.rs`; vitest `scenario-protocol` and `scenario-report`; e2e `scenarios.spec.ts`.
+- Both merges were reviewed.
+
+**Still open**
+- The error code of a `scenario.run` refusal is chosen by matching the message text (`e.contains("reference density")` in `scenario_run.rs`), so rewording a message changes the code. A typed error is being added on another branch.
+- The checks and tolerances are ours. They show that the build behaves as the model predicts, not that a real drone would.
+- The controller's estimate is the true state: no sensor noise, delay or estimator.
+- Wind and ground effect are not simulated (see the entry above).
+- Phase 5 work in progress: 5.3 (flight modes and loop) and 5.10a (hover thrust estimator).
+
+## 2026-11-23 — Phase 4, milestone 4.8: live flight and the flight view
+
+The renderer flies the PX4-controlled vehicle in the real engine and shows what acts on it.
+
+**Built**
+- **Part A, flight view and debug panel** (`src/features/flight/`), first on demo data:
+  - a Z-up view of the assembly posed from the frame, with the ground, obstacles, a follow camera and the CoM marker;
+  - keyboard sticks with heading hold (the stick limits are UI limits, not controller tuning);
+  - a debug panel with every value the plan lists, and indicators: hover balance (the existing tolerance setting; no invented CoM limit), motor layout, active contacts, maximum T/W from the 4.5 steady-state solver with the shared pack sag (floor 1.0), and sustained allocator saturation.
+- **Part B, the engine session** (`engine-host/src/flight_session.rs`, `electron/main/engine/flight-session.ts`):
+  - `flight.session.start` builds what a controller `sim.run` builds, plus the user's battery cut-off (voltage or charge; no default); `flight.session.step` advances up to 100 fixed 1 ms steps with one setpoint held; `flight.session.end` drops the session;
+  - the engine never runs on its own clock, so a session is deterministic: any chunking of the same setpoint ends in the same state hash as one controller `sim.run` of the same duration;
+  - new error codes `CUTOFF_REQUIRED` and `NO_SESSION`; the protocol version stays 2;
+  - `EngineFlightSource` feeds the page from the session. The page lists what is missing and does not start until the Ready-to-fly list and the flight conditions are complete.
+- **Loads by source** (`flight.rs`, for the debug panel): the thrust force, body drag, arm torque, the held rotor drag torque, the spin-up reaction and the gyroscopic torque of the last step. Their torques sum to the torque applied.
+- **Battery cut-off** (`Cutoff`): the run ends when the pack voltage under load falls to the value, or the charge drawn reaches it. It overshoots by at most one step, and an ended flight does not step again.
+- **Air-density scaling of k_T and k_Q** (`Flight::scale_to_air_density`): each motor's coefficients scale by ρ/ρ_ref, where ρ_ref is the density its propeller data was taken at, stated by that data's source or entered by the user, per motor. It scales from the coefficients as loaded, so calling it again replaces the scaling instead of compounding it. `sim.run` scales like the session, and the T/W indicator uses the scaled coefficients.
+- **Flight conditions saved per project** (migration `0012_flight_conditions.sql`, `assemblies.flight_json`): ambient altitude (sets the ISA air density), temperature (null = standard) and the cut-off type and value. Null means not entered, and the flight test lists it as missing.
+- The estimate's attitude is normalised before the controller's unit-quaternion assert, and a long yawing run flies on (tests `the_estimate_is_normalised_before_the_controllers_unit_assert`, `a_long_yawing_run_flies_on`).
+
+**Verified**
+- Sidecar `tests/flight_session.rs`; engine-core flight and closed-loop tests (loads by source and drag, the cut-off, the coefficient scaling); vitest `flight-view`, `flight-live` and `flight-conditions`; the SSR render test; e2e `flight-live.spec.ts`.
+- The part B commit messages state that the full `test:all` passed after the review fixes.
+
+**Still open**
+- Not simulated: wind, ground effect, inflow, blade flapping, thermal limits.
+- The estimate is the true state: no sensors, noise or delay.
+- A motor whose propeller data has no reference density stops the run; no value is assumed.
+- A bouncing flat box still rebounds about half the expected height (rapier; see 4.4). The flight view's ground contact is subject to it.
+- Phase 5 flight modes (5.3) are in progress.
+
+## 2026-11-23 — Phase 4 follow-ups: propeller placement, legacy projects, hull worker threads, clippy
+
+**Built**
+- **A propeller added onto its motor** (`placement.ts`, `assembly-ops.ts`): a propeller aimed at a motor mount rests on the motor on that mount, not on the arm. When no spot is free the message says why: which parts collide and their sizes and, only after the existing search failed, the motor spacing (in the test, at 135 mm spacing a 254 mm disc on a bare mount intersects the next motor). The clearance rules are unchanged. One undo removes only the new propeller, and dropping it on the mount uses the same rule.
+- **Legacy projects upgraded** (`seatPropsOnMotors` in `assembly-ops.ts`, run from `WorkshopPage.tsx` once the component library is loaded): a propeller resting directly on a motor mount is moved onto the motor on it. The first in document order gets the motor; one already attached takes precedence; extras stay where they are and are reported by the interference findings, not stacked. The twist about the motor shaft is kept. It is an undoable, saved edit, and a no-op when nothing needs moving.
+- **Hull computation on worker threads** (`electron/main/assets/hull-async.ts`, `hull-worker.ts`): `modelHull` runs on a lazy pool of up to 2 worker threads, started on first use and ended after 30 s without work, never keeping the process alive. The model's bytes are transferred, not copied; a worker that throws or exits rejects its jobs and is replaced on the next call. Import and the start-up hull back-fill use it (`importAssetFileAsync`, `backfillHullsAsync`), and main ends the workers on `will-quit`.
+- **Clippy**: the existing warnings in `vehicle.rs` are fixed; behaviour is unchanged.
+
+**Verified**
+- `placement.test.ts`, `assembly-ops.test.ts` and e2e `prop-on-mount.spec.ts` (add onto the selected motor, one undo, drop on the mount, a taller neighbour that clears the normal propeller but obstructs an oversized one).
+- `hull-worker.test.ts`: the same hull and the same errors as the synchronous `modelHull`, several calls at once, and a worker that dies. The worker is built the way electron-vite builds it and started from a temporary folder.
+- The merges were reviewed.
+
+**Still open**
+- Hull computation no longer blocks main's event loop (4.4's open item). The 4.4 figure of about 1 s for 200 000 vertices was not re-measured on a worker.
+- A part's placement uses its placeholder size until a component is linked, so a large placeholder can be refused (4.4's open item).
+
 ## 2026-11-22 — Phase 4, milestone 4.7: the controller flies the vehicle
 
 The PX4 v1.13.3 controller (`controller.rs`, merged earlier) now flies the 4.5/4.6 plant:
@@ -106,6 +205,27 @@ everything; the controller that sets them is 4.7.
     real engine. Its GPS sits 40 mm aft, so equal thrust pitches it nose-up, as
     r × F says. Holding it level is 4.7's job.
 
+## 2026-11-22 — Phase 4, milestone 4.7 (controller module): the PX4 controller in engine-core
+
+The controller as its own pure module, merged before it flew the vehicle (the entry above). It was written by Codex and reviewed; it was not wired into the engine host or the protocol until 4.4 and 4.5 had merged.
+
+**Built** (`engine-core/src/controller.rs`)
+- **Gains**: all 38 PX4 v1.13.3 defaults, each with its source line; `defaults_match_reference` asserts they equal `database/reference/physics.v1.json`. `Gains::validate` checks a set before use.
+- **Angle loop**: PX4's reduced attitude control with the yaw weight, and a vertical position/velocity hold.
+- **Rate loop** (`RateControl`): P, I, D, feed-forward and K, integrator limits, and directional anti-windup. D uses a finite difference of the caller's filtered estimate.
+- **Allocation** (`Allocator`): from the nominal motor geometry about the frame centre, a pseudo-inverse with PX4's mix normalisation, and PX4's sequential desaturation with airmode disabled: thrust is only reduced, roll then pitch, yaw gets 15 % headroom. Ported from PX4's `ControlAllocationPseudoInverse.cpp` and `ControlAllocationSequentialDesaturation.cpp` (the BSD-3 notice is kept). Rank-deficient or invalid geometry is refused.
+- **Frames**: PX4's FRD/NED is mapped to the engine's FLU/Z-up (documented in the module header). The collective is positive up, the negative of PX4's NED thrust-z.
+- **Deviations** (stated in the module): the caller supplies filtered estimates; no arming, landed detection, sensor filtering or horizontal control; no hover thrust estimator (`MPC_THR_HOVER` stays fixed although `MPC_USE_HTE` defaults on).
+- The controller never receives the true CoM or inertia.
+
+**Verified** (17 tests at the merge, in `controller/tests.rs`)
+- Hand-calculated allocation for an X quad, a rectangular quad, a hexa and a tilted motor; the desaturation order and the 15 % yaw headroom; rate-loop limits, freeze and unwind; the vertical equation, limits and reset.
+- Closed loops in `sim::Simulation` against a test actuator: hover, a 10° roll step, CoM trims of 2 cm and 6 cm, loss of attitude at a 25 cm offset, and the determinism hash.
+- The first review round replaced a row-sum normalisation and a thrust-preserving desaturation that differed from PX4.
+
+**Still open**
+- No horizontal control and no hover thrust estimator in this module. Horizontal position control has since merged as Phase 5.1; the hover thrust estimator is Phase 5.10, its core (5.10a) in progress.
+
 ## 2026-11-22 — Phase 4, milestone 4.4 follow-ups: placement, hulls, environment, live drag, contact limits
 
 The 4.4 entry below left five issues open, and three e2e tests had hidden one of them with a 50 mm overlap tolerance. This entry fixes them; the workarounds are gone.
@@ -165,18 +285,16 @@ The 4.4 entry below left five issues open, and three e2e tests had hidden one of
 - Development databases that ran the first 0010 get the missing columns from `repairUnshippedMigrations` (database.ts), with the same constraints.
 - A test checks that migration files are numbered without gaps and that `MIGRATIONS` runs them in file order, so the merge with 4.5 keeps 0010 → 0011.
 
-**Verified** (partly: the machine ran out of memory, see Still open)
+**Verified**
 - Rust: debug and release workspaces green. 53 tests: engine-core 41, protocol 5, sidecar 8; plus 3 ignored studies.
 - vitest: 285 tests, 31 files, all green, against the real engine binary. Typecheck and lint clean.
-- Playwright, run file by file:
-  - green: collisions (5), checks, electrical, phase3-acceptance, acceptance, parts;
-  - not re-run after the last fix: the full 43-test suite in one `test:all`. Three runs died with "out of memory" on this machine (about 2 GB of a 28 GB commit limit free; other applications held the rest).
-- Performance, run alone: 1080p 53.5 rendered fps, median frame 16.7 ms, 50 parts. The 4K half died with the same out-of-memory error.
+- Playwright: the full 43-test suite ran to the end in one go (5.9 min). 42 passed; phase3-acceptance timed out on its first click, straight after the performance test, with 4.5 GB of virtual memory free. Rerun alone and after the performance test, it passed. An earlier `test:all` (Rust, typecheck, lint and vitest green) lost the live-drag test the same way and then died; that test then passed 20 of 20 in repeated runs of its file. Both failures were timeouts under memory pressure, not wrong results.
+- Performance, 50 parts: 1080p 59.5 rendered fps, median frame 16.6 ms, p95 16.8 ms; 4K 40.8 fps, median 17.0 ms, p95 33.4 ms.
 
 Screenshots: `documentation/screenshots/4.4-interference-highlight.png`, `4.4-collision-debug-view.png`, `4.4-model-hull-debug-view.png`, `4.4-environment-drop-test.png`.
 
 **Still open**
-- A full `npm run test:all` in one go, and the 4K performance number: rerun when memory allows.
+- A fully green `npm run test:all` in a single run: on this machine the e2e suite only passes when memory is not short (above).
 - A bouncing flat box rebounds about half the expected height (rapier; above).
 - Long simulations with ground contact stop at the 2 s compute budget.
 - Hull computation runs on main's thread: about 1 s for a 200 000-vertex model.

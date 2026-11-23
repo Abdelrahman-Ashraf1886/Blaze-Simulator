@@ -68,6 +68,16 @@ export const STARTING_SHAPES: Record<PartKind, PartShape> = {
 
 export type AttachTarget = { kind: 'mount'; id: string } | { kind: 'part'; id: string } | { kind: 'none' }
 
+/** A propeller targeted at a motor mount rests on its motor, not on the arm. */
+function partTarget(doc: AssemblyDocument, kind: PartKind, target: AttachTarget): AttachTarget {
+  if (kind === 'propeller' && target.kind === 'mount' && /^motor-\d+$/.test(target.id)) {
+    const motor = doc.parts.find((p) => p.kind === 'motor' && p.parentId === null && p.mountId === target.id)
+    if (motor) return { kind: 'part', id: motor.id }
+    // Keep the requested target so placeClear can explain the missing motor.
+  }
+  return target
+}
+
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
 
 /** Size of a shape along its local X, Y, Z in metres (null for a model whose file is unknown). */
@@ -164,6 +174,7 @@ function insertPart(
   id: string,
   shapeOf: ShapeOf = ownShape,
 ): { doc: AssemblyDocument; part: AssemblyPart } {
+  target = partTarget(doc, kind, target)
   const { position } = restingPose(doc, shape, target, frameTop, assets, shapeOf)
   const part: AssemblyPart = {
     id,
@@ -338,6 +349,7 @@ export function attach(
 ): AssemblyDocument {
   const part = doc.parts.find((p) => p.id === id)
   if (!part) return doc
+  target = partTarget(doc, part.kind, target)
   if (target.kind === 'part' && subtreeIds(doc, id).has(target.id)) return doc // would create a loop
   if (target.kind === 'none') {
     const pose = decompose(worldMatrix(doc, geo, id))

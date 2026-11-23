@@ -22,6 +22,19 @@ let n = 0
 const ids = () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`
 
 describe('assembly operations', () => {
+  it('resolves mount-targeted props for insertion and reattachment using the motor effective height', () => {
+    const geo = buildFrame('hex-x', FRAME)
+    const motor = addPart(empty(), 'motor', { kind: 'mount', id: 'motor-3' }, 0, ids())
+    const shapeOf = (p: typeof motor.part) => p.kind === 'motor' ? { type: 'cylinder' as const, radius: 0.014, height: 0.05 } : p.shape
+    const prop = addPart(motor.doc, 'propeller', { kind: 'mount', id: 'motor-3' }, 0, ids(), {}, shapeOf)
+    expect(prop.part).toMatchObject({ parentId: motor.part.id, mountId: null })
+    expect(prop.part.position[2]).toBeCloseTo(0.029)
+    const detached = attach(prop.doc, geo, prop.part.id, { kind: 'none' })
+    const reattached = attach(detached, geo, prop.part.id, { kind: 'mount', id: 'motor-3' }, {}, shapeOf)
+    expect(reattached.parts.find((p) => p.id === prop.part.id)).toMatchObject({ parentId: motor.part.id, mountId: null })
+    expect(reattached.parts.find((p) => p.id === prop.part.id)!.position[2]).toBeCloseTo(0.029)
+  })
+
   it('adds parts resting on a mount, a part, or the frame top, with numbered names and no mass', () => {
     let doc = empty()
     const m = addPart(doc, 'motor', { kind: 'mount', id: 'motor-1' }, 0.004, ids())

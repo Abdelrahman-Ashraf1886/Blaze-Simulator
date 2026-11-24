@@ -3,7 +3,7 @@ import { existsSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
-import { createHandlers } from '../ipc/handlers'
+import { createHandlers, createTerrainHandlers, importTerrain } from '../ipc/handlers'
 import { backfillHullsAsync, importAssetFileAsync, removeAssetFiles, resolveAssetUrl } from './assets/store'
 import { shutdownHullWorkers } from './assets/hull-async'
 import { safeFileName, savePngSchema } from './screenshot'
@@ -234,6 +234,16 @@ function start(): void {
     if (picked.canceled || !picked.filePaths[0]) return { ok: true, data: null }
     return importAssetFileAsync(picked.filePaths[0], assetsDir, repos)
   })
+  ipcMain.handle(Channels.terrainImport, (event, payload: unknown) => importTerrain(payload, async () => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      title: 'Import terrain',
+      properties: ['openFile' as const],
+      filters: [{ name: 'Esri ASCII grid', extensions: ['asc'] }],
+    }
+    const picked = await (win ? dialog.showOpenDialog(win, options) : dialog.showOpenDialog(options))
+    return picked.canceled ? undefined : picked.filePaths[0]
+  }, assetsDir, repos))
   ipcMain.handle(Channels.componentsExportPack, async (event, payload: unknown): Promise<IpcResult<{ path: string; count: number } | null>> => {
     const parsed = z.object({ ids: z.array(z.uuid()).min(1, 'Nothing to export').max(5000), name: z.string().max(200) }).safeParse(payload)
     if (!parsed.success) return { ok: false, error: { code: 'VALIDATION', message: parsed.error.issues[0]!.message } }
@@ -309,7 +319,7 @@ function start(): void {
       platform: `${process.platform}-${process.arch}`,
     },
   }))
-  for (const [channel, handler] of Object.entries(handlers)) {
+  for (const [channel, handler] of Object.entries({ ...handlers, ...createTerrainHandlers(repos, assetsDir) })) {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload))
   }
   // Same validation and storage as the async save; used only while a window unloads.

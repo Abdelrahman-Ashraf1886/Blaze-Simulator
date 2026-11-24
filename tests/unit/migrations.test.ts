@@ -28,6 +28,43 @@ describe('migration order', () => {
   })
 })
 
+describe('terrain asset migration', () => {
+  it('upgrades v13, preserves models and their checks, and permits terrain without model metadata', () => {
+    const path = join(dbDir, 'old-v13.db')
+    const old = new Database(path)
+    for (const m of MIGRATIONS.slice(0, 13)) old.exec(m)
+    old.pragma('user_version = 13')
+    const modelId = 'a'.repeat(64)
+    const terrainId = 'b'.repeat(64)
+    const bounds = { min: [0, 0, 0], max: [1, 2, 3] }
+    const hull = { points: [[0, 0, 0], [1, 0, 0], [0, 2, 0], [0, 0, 3]] }
+    const importedAt = '2026-01-01T00:00:00.000Z'
+    old.prepare(`INSERT INTO assets (id, filename, format, bytes, triangles, bounds_json, hull_json, imported_at)
+      VALUES (?, 'model.glb', 'glb', 100, 4, ?, ?, ?)`)
+      .run(modelId, JSON.stringify(bounds), JSON.stringify(hull), importedAt)
+    old.close()
+
+    const db = openDatabase(path)
+    try {
+      expect(schemaVersion(db)).toBe(MIGRATIONS.length)
+      const repos = createRepositories(db)
+      expect(repos.assets.list()).toEqual([{ id: modelId, filename: 'model.glb', format: 'glb', bytes: 100, triangles: 4, bounds, hull, importedAt, warnings: [] }])
+      const update = (assignment: string) => db.prepare(`UPDATE assets SET ${assignment} WHERE id = ?`).run(modelId)
+      for (const assignment of [
+        'triangles = NULL', 'triangles = -1', 'bounds_json = NULL', "bounds_json = 'bad JSON'",
+        "hull_json = 'bad JSON'", "format = 'obj'", 'bytes = 0', "filename = ''", "id = 'short'",
+        'imported_at = NULL', 'terrain_nodata_value = -42',
+      ]) expect(() => update(assignment), assignment).toThrow(/constraint/i)
+      expect(repos.terrain.add({ id: terrainId, filename: 'terrain.asc', bytes: 80 }, -42)).toMatchObject({ format: 'asc' })
+      expect(db.prepare('SELECT triangles, bounds_json, hull_json FROM assets WHERE id = ?').get(terrainId))
+        .toEqual({ triangles: null, bounds_json: null, hull_json: null })
+      expect(() => db.prepare('UPDATE assets SET triangles = 1 WHERE id = ?').run(terrainId)).toThrow(/constraint/i)
+    } finally {
+      db.close()
+    }
+  })
+})
+
 describe('the unshipped 0010', () => {
   it('a database that ran the first 0010 (interference_json only) gets the new columns and keeps its data', () => {
     const path = join(dbDir, 'old-v10.db')

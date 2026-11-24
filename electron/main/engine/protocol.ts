@@ -138,7 +138,7 @@ const gains = z.record(z.string().regex(/^[A-Z][A-Z0-9_]*$/, 'use the exact PX4 
 // database/reference/physics.v1.json:1084-1109 gives the mixer enum and factor bounds.
 const mixerShape = {
   airmode: num.int().min(0).max(2).optional(),
-  thrustModelFactor: num.min(0).max(1).refine((v): boolean => v === 0, 'must be zero until thrust-model support in milestone 5.9').optional(),
+  thrustModelFactor: num.min(0).max(1).optional(),
 }
 
 const controllerSetpoint = z.strictObject(controllerSetpointShape)
@@ -175,7 +175,6 @@ export const ControllerRequestSchema = z.strictObject({
   checkControllerSetpoint(c, ctx, false)
   if (c.mode === undefined) {
     if (c.airmode !== undefined) ctx.addIssue({ code: 'custom', path: ['airmode'], message: 'requires mode' })
-    if (c.thrustModelFactor !== undefined) ctx.addIssue({ code: 'custom', path: ['thrustModelFactor'], message: 'requires mode' })
   }
 })
 
@@ -480,6 +479,7 @@ export const ScenarioConfigSchema = z.strictObject({
     z.strictObject({ type: z.literal('chargeMah'), value: positive }),
   ]),
   gains: ControllerRequestSchema.shape.gains,
+  thrustModelFactor: mixerShape.thrustModelFactor,
   environment: EnvironmentSchema.optional(),
   /** With an environment: the body origin at the start, world frame. */
   startPositionM: vec3.optional(),

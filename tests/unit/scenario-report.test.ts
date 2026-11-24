@@ -145,16 +145,17 @@ describe('the engine request', () => {
     vehicle: { v: 1 }, propulsion: { p: 1 }, aero: { a: 1 }, environment: { ground: null, obstacles: [] },
     airDensityKgM3: 1.1, cutoff: { type: 'voltageV' as const, value: 14.2 }, startPositionM: [0, 0, 0.1] as [number, number, number],
   }
-  const ready = { ok: true, input } as unknown as FlightGate
+  const ready: FlightGate = { ok: true, input, thrustFit: null }
   const blocked: FlightGate = { ok: false, blockers: [{ id: 'flight-cutoff', label: 'Battery cut-off', detail: '', link: null }] }
   const by = (name: string) => BUILTINS.find((b) => b.name === name)!
 
-  it('is the build, the air density and the cut-off of the flight conditions, with no ground, gains or defaults', () => {
+  it('sends flight conditions and the effective factor, including an explicit saved override', () => {
     expect(scenarioRunInput(ready, by('balanced_hover'), NO_ENTRIES)).toEqual({
       vehicle: input.vehicle, propulsion: input.propulsion, aero: input.aero,
       scenario: { type: 'builtin', name: 'balanced_hover' },
-      config: { airDensityKgM3: 1.1, cutoff: { type: 'voltageV', value: 14.2 } },
+      config: { airDensityKgM3: 1.1, cutoff: { type: 'voltageV', value: 14.2 }, thrustModelFactor: 0 },
     })
+    expect(scenarioRunInput(ready, by('balanced_hover'), NO_ENTRIES, { THR_MDL_FAC: 0.5 })?.config.thrustModelFactor).toBe(0.5)
   })
   it('carries the entered parameter of the scenario that takes one, and no other', () => {
     const entries = { payloadMassKg: 0.25, comOffsetM: 0.02 }

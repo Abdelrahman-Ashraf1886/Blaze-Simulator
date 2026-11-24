@@ -1,5 +1,57 @@
 # Development log
 
+## 2026-11-24 — Phase 5, milestone 5.9
+
+- **A.** `PositionControl` now owns vertical control in both loops. With `MPC_USE_HTE = 0`, the five scenario hashes match the 4.7 controller. With the estimator enabled, it uses height above the ground beneath the vehicle and treats free space as airborne. The Part A scenario altitude errors changed by less than 1e-5 m. [Hash regression](../simulation-engine/engine-core/src/scenario/tests.rs#L120-L136) · [Estimator sample](../simulation-engine/engine-core/src/flight_loop.rs#L86-L107)
+- **B.** Both loops pass each allocated motor command through the same PX4 inverse before propulsion. Saturation reporting and anti-windup use the allocator output. Zero passes the original commands through bit for bit. The sidecar accepts `thrustModelFactor` and `THR_MDL_FAC` from the controller or run configuration, rejects conflicting values and defaults to zero. The step-test trim converts the solved physical throttle into thrust space so the initialized rotor speed still matches the hold command. [Motor output](../simulation-engine/engine-core/src/thrust_model.rs#L8-L49) · [Host validation](../simulation-engine/engine-host/src/engine.rs#L606-L620) · [Step initialization](../simulation-engine/engine-core/src/step_test.rs#L253-L264)
+- The app fits equal-command build thrust at nominal pack voltage with shared sag and sea-level ISA density. It uses the 5.2 sampling grid, PX4's throttle bounds and the 4.9 pack-voltage solve. Scenario requests send the build factor. Tuning shows the build factor or saved override, its relative-thrust fit errors, pack state and origin. The resolver uses zero when a fit is unavailable. Live flights, step tests and scenarios send the derived factor, or the saved override when there is one, and the flight and tuning pages show which. [Fit](../src/domain/thrust-curve.ts#L115-L176)
+- The local PX4 snapshot did not contain `src/lib/mixer_module/functions.hpp` or `motor_params.c`. This change uses the existing inverse and its source citations. [Prior port](../simulation-engine/engine-core/src/thrust_model.rs#L1-L13)
+
+### 4.9 catalogue Quad X baselines
+
+The headless test reconstructed the 4.9 Quad X from its seeded components and recorded fixture entries. The fit used four MN3110 KV470s with P13×4.4 props, a nominal 14.8 V Tattu 4S pack with 12 mΩ shared resistance, a 550 mm diagonal and a 300 g frame. The 4.9 runs used sea-level ISA air, free space and a 12 V cutoff, with 200 g added mass and 5 mm offset where those scenarios request an entry. The fit was **0.4909184903334239**, with 5.3382% RMS and 10.2200% maximum relative-thrust error. [4.9 inputs](../tests/e2e/scenarios.spec.ts#L33-L65) · [Headless comparison](../tests/unit/scenario-protocol.test.ts#L265-L313)
+
+All five passed at both factors using the 4.9 criteria. The overweight and beyond-authority checks passed by observing the predicted failures. Values below are rounded. Motor values are in vehicle order with one value shown where all four agree.
+
+| Scenario and measured quantities | Factor 0 | Factor 0.49091849 | Cause |
+| --- | --- | --- | --- |
+| Balanced hover, final / last-second max altitude error (m) | −1.11770e−5 / 1.78762e−5 | +7.13730e−5 / 1.13268e−4 | The first command rises from 0.500000 to 0.616111, increasing early lift. The controller settles from a different transient. |
+| Balanced hover, mean / peak / last-second mean throttle and charge (mAh) | 0.530980 / 0.628162 / 0.52975963 and 34.3077 | 0.530994 / 0.701168 / 0.52976039 and 34.5828 | The transient uses more battery charge and reaches a higher peak. The plant's required steady hover throttle is about 0.529760. |
+| Payload, final / last-second max altitude error (m) | −4.42496e−5 / 7.07883e−5 | +3.24408e−5 / 5.14727e−5 | The same first-command increase reduces the payload's initial shortfall in lift and shifts its settling response. |
+| Payload, mean / peak / last-second mean throttle and charge (mAh) | 0.586270 / 0.654745 / 0.58498217 and 42.6324 | 0.586291 / 0.714425 / 0.58498296 and 42.8991 | The changed transient accounts for most of the throttle and charge difference. The heavier quad needs about 0.584983 to hover. |
+| Overweight, final altitude error (m) / maximum climb velocity at full throttle (m/s) | −556.591 / −5.66965 | −555.960 / −5.58084 | The higher initial duty reduces the fall during spool-up. Both reach full throttle and keep descending because the load exceeds thrust. |
+| Overweight, mean / peak throttle and charge (mAh) | 0.996713 / 1 and 123.904 | 0.997502 / 1 and 124.270 | The inverse raises intermediate commands during spool-up and maps full thrust to full throttle. |
+| CoM offset, final / last-second max altitude error (m), peak attitude error (deg) | −1.11434e−5 / 1.78224e−5 and 0.633388 | +7.13860e−5 / 1.13288e−4 and 0.714209 | The inverse raises the initial lift and changes the differential thrust response while the rate integral trims the offset. |
+| CoM offset, pitch integral, thrust-balance measurement (N), charge (mAh) | −0.0121541 / 0.29888294 / 34.3155 | −0.0125087 / 0.29888363 / 34.5907 | A different differential command produces nearly the same physical thrust split dictated by the offset. The transient draws more charge. |
+| CoM offset, throttle mean / peak, alternating motor pairs | [0.539533, 0.522328] / [0.640734, 0.615673] | [0.539534, 0.522354] / [0.711500, 0.691368] | The offset still biases the same pair upward. The initial inverse raises both pairs' peaks. |
+| Beyond authority, peak attitude error (deg), final altitude error (m), saturated fraction | 179.95469 / −89.39154 / 0.9570 | 179.99987 / −88.46186 / 0.9572 | The first-command lift increase reduces the drop. Different intermediate commands change the tumbling trajectory and hence when the allocator clips. The shifted CoM remains beyond trim authority. |
+| Beyond authority, mean throttles and charge (mAh) | [0.794807, 0.223481, 0.783078, 0.194144] and 30.8284 | [0.779731, 0.214663, 0.797737, 0.235690] and 30.6397 | The altered tumble redistributes the motor duty and net current. All four reach 1 in both runs. |
+
+First throttle is 0.500000 / 0.616111 on all five scenarios. The roll trim in CoM offset
+is −4.92e−18 / −8.78e−18, at numerical roundoff. The hashes follow the different
+flight and propulsion states.
+
+| Scenario | Factor 0 hash | Derived factor hash |
+| --- | --- | --- |
+| `balanced_hover` | `b4d5732073603b5b` | `d84d378ce0b70e99` |
+| `payload` | `39ad58438e739b44` | `fefe22d4f8ed12b8` |
+| `overweight_payload` | `07f31b231caec2b9` | `fa14918d4c4faee6` |
+| `com_offset` | `a1a0af78cfe05825` | `314d7fc1c5f70dea` |
+| `com_offset_beyond_authority` | `01059c09483c7c6b` | `649b32eb9bf9b2db` |
+
+### Position hold and step tests
+
+The same quad flew 2 m horizontal and altitude steps and a 10°/s roll-rate step.
+Both factors settled within the measured 2% band in each run. The rise and settling
+times below are measured from the step, with 10 ms trace samples. Signed final
+error is target minus the last measurement. [Test inputs](../tests/unit/scenario-protocol.test.ts#L286-L313) · [Metric definitions](../src/domain/step-response.ts#L30-L46)
+
+| Step | Factor 0, rise / settle (s), final error, overshoot | Derived factor, rise / settle (s), final error, overshoot |
+| --- | --- | --- |
+| Horizontal position | 1.286 / 6.725, +0.01116 m, 13.19% | 1.282 / 6.710, +0.01088 m, 13.29% |
+| Altitude | 1.780 / 3.847, +0.00179 m, none | 1.594 / 3.699, +0.00207 m, none |
+| Roll rate | 0.06794 / 0.94582, −3.51e−8 rad/s, 11.73% | 0.06896 / 0.95893, −3.53e−8 rad/s, 11.76% |
+
 ## 2026-11-23 — Phase 4 closes: Engineering Analysis page, spinning propellers, render-test fix
 
 Phase 4 (physics, collisions, flight behaviour) is complete: 4.1–4.9 are merged and `CURRENT_PHASE` is 5. These are the last changes made to it.

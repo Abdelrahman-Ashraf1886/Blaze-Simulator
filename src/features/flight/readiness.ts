@@ -13,6 +13,7 @@ import { lowestPoint } from '../../domain/collisions'
 import { simEnvironment, type SimEnvironment } from '../../domain/environment'
 import { vehicleDefinition, type VehicleDefinition } from '../../domain/mass'
 import { propulsionDefinition, type PropulsionDefinition, type ReadyLink } from '../../domain/propulsion'
+import { fitBuildThrustCurve, type BuildThrustCurveFit } from '../../domain/thrust-curve'
 import type { FrameGeometry } from '../../three/frame-geometry'
 import { bodyAreas } from '../workshop/aero-input'
 import type { AssetBounds } from '../workshop/assembly-ops'
@@ -73,6 +74,7 @@ export function conditionBlockers(c: FlightConditions): FlightBlocker[] {
 export interface EnginePayload {
   vehicle: VehicleDefinition
   propulsion: PropulsionDefinition
+  thrustFit: BuildThrustCurveFit | null
   aero: { cdBody: [number, number, number]; areaM2: [number, number, number] }
   environment: SimEnvironment
   /** The vehicle resting on the ground: its lowest point at z = 0. */
@@ -106,6 +108,8 @@ export function enginePayload(doc: AssemblyDocument, geo: FrameGeometry, compone
     payload: {
       vehicle,
       propulsion: definition,
+      // Fixed sea-level ISA reference from the 4.9 baseline (scenarios.spec.ts:104).
+      thrustFit: fitBuildThrustCurve(propulsion.motors, definition.battery, airDensityFor(0, null)),
       aero: { cdBody: cd as [number, number, number], areaM2: area },
       environment: env.environment,
       startPositionM: [0, 0, -low],
@@ -113,7 +117,7 @@ export function enginePayload(doc: AssemblyDocument, geo: FrameGeometry, compone
   }
 }
 
-export type FlightGate = { ok: true; input: FlightStartInput } | { ok: false; blockers: FlightBlocker[] }
+export type FlightGate = { ok: true; input: FlightStartInput; thrustFit: BuildThrustCurveFit | null } | { ok: false; blockers: FlightBlocker[] }
 
 /** Ready to fly: the build is complete and the conditions are entered. Otherwise everything still open. */
 export function flightGate(result: PayloadResult, c: FlightConditions): FlightGate {
@@ -123,6 +127,7 @@ export function flightGate(result: PayloadResult, c: FlightConditions): FlightGa
   const { payload } = result
   return {
     ok: true,
+    thrustFit: payload.thrustFit,
     input: {
       vehicle: payload.vehicle,
       propulsion: payload.propulsion,

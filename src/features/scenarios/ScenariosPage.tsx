@@ -119,13 +119,20 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
   const canRun = (info: BuiltinInfo) => scenarioRunInput(gate, info, entries) !== null && engineBlock === null
 
   const runOne = async (info: BuiltinInfo) => {
-    const input = scenarioRunInput(gate, info, entries)
-    if (!input) return
+    if (!canRun(info)) return
     const set = (state: RunState) => {
       if (alive.current && current.current === gate) setFlown((prev) => ({ gate, byName: { ...(prev.gate === gate ? prev.byName : {}), [info.name]: state } }))
     }
     set({ status: 'running' })
     try {
+      // A saved THR_MDL_FAC wins over the build's derived factor (P5-D4); read when flown.
+      const tuning = await getApi().tuning.get(project.id)
+      if (!tuning.ok) {
+        set({ status: 'error', message: `Saved tuning: ${tuning.error.message}` })
+        return
+      }
+      const input = scenarioRunInput(gate, info, entries, tuning.data.overrides)
+      if (!input) return
       const r = await getApi().engine.scenarioRun(input)
       set(r.ok ? { status: 'done', result: r.data } : { status: 'error', message: r.error.message })
     } catch (e) {

@@ -4,6 +4,8 @@
  * conditions. Pure (no React, no IPC); the engine refuses an incomplete or invalid request too.
  */
 import type { ScenarioRunInput } from '../../../electron/ipc/contract'
+import type { TuningOverrides } from '../../domain/controller-params'
+import { thrustFactor } from '../../domain/thrust-curve'
 import type { BuiltinScenarioName } from '../../../electron/main/engine/protocol'
 import type { FlightGate } from '../flight/readiness'
 
@@ -78,9 +80,9 @@ export function missingEntry(info: BuiltinInfo, entries: ScenarioEntries): strin
 /**
  * The engine request for one built-in, from the flight gate (the build and the flight conditions: air density
  * and cut-off) and the user's entries. Null while the build or the conditions are not ready, or an entry is missing.
- * The gains are the PX4 defaults, as the flight test flies them.
+ * The baseline uses the PX4 gains with the build's effective thrust factor.
  */
-export function scenarioRunInput(gate: FlightGate, info: BuiltinInfo, entries: ScenarioEntries): ScenarioRunInput | null {
+export function scenarioRunInput(gate: FlightGate, info: BuiltinInfo, entries: ScenarioEntries, saved?: TuningOverrides): ScenarioRunInput | null {
   if (!gate.ok || missingEntry(info, entries)) return null
   const { vehicle, propulsion, aero, airDensityKgM3, cutoff } = gate.input
   return {
@@ -93,6 +95,6 @@ export function scenarioRunInput(gate: FlightGate, info: BuiltinInfo, entries: S
       ...(info.entry === 'payloadMassKg' ? { massKg: entries.payloadMassKg! } : {}),
       ...(info.entry === 'comOffsetM' ? { offsetM: entries.comOffsetM! } : {}),
     },
-    config: { airDensityKgM3, cutoff },
+    config: { airDensityKgM3, cutoff, thrustModelFactor: thrustFactor(gate.thrustFit, saved) },
   }
 }

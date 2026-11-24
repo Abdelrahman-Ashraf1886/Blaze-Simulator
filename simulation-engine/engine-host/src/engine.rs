@@ -447,9 +447,22 @@ pub(crate) fn parse_environment(id: u64, environment: Option<serde_json::Value>)
 /// The PX4 controller around `flight`, with the request's gain overrides, and its checked setpoint.
 pub(crate) fn controlled(vehicle: &Vehicle, p: &Propulsion, flight: Flight, c: &ControllerRequest) -> Result<(ClosedLoop, Setpoint), String> {
     let sp = setpoint(c).map_err(|e| format!("controller: {e}"))?;
-    let gains = gains_with_overrides(c.gains.as_ref()).map_err(|e| format!("controller.gains: {e}"))?;
-    let cl = ClosedLoop::new(vehicle, flight, p.yaw_ratio(), gains).map_err(|e| format!("controller: {e}"))?;
+    let (gains, factor) = closed_loop_gains(c.gains.clone(), c.thrust_model_factor)
+        .map_err(|e| format!("controller: {e}"))?;
+    let cl = ClosedLoop::new(vehicle, flight, p.yaw_ratio(), gains)
+        .and_then(|loop_| loop_.with_thrust_model(factor))
+        .map_err(|e| format!("controller: {e}"))?;
     Ok((cl, sp))
+}
+
+pub(crate) fn closed_loop_gains(
+    mut overrides: Option<Map<String, Value>>,
+    thrust_model_factor: Option<f64>,
+) -> Result<(Gains, f64), String> {
+    let parameter = overrides.as_mut().and_then(|gains| gains.remove("THR_MDL_FAC"));
+    let factor = resolve_thrust_model(thrust_model_factor, parameter.as_ref())?;
+    let gains = gains_with_overrides(overrides.as_ref()).map_err(|e| format!("gains: {e}"))?;
+    Ok((gains, factor))
 }
 
 /// The controller setpoint of a request, checked (finite, unit attitude).
@@ -489,6 +502,7 @@ pub(crate) struct ManualFlightGains {
     position: PositionGains,
     hover: HoverThrustParams,
     airmode: u8,
+    thrust_model_factor: f64,
 }
 
 impl ManualFlightGains {
@@ -509,9 +523,7 @@ impl ManualFlightGains {
             ("HTE_VZ_THR".into(), json!(self.hover.hte_vz_thr)),
             ("HTE_THR_RANGE".into(), json!(self.hover.hte_thr_range)),
             ("MC_AIRMODE".into(), json!(self.airmode)),
-            // 5.9 owns enabling this factor; validate_thrust_model admits only
-            // the default from database/reference/physics.v1.json:1102-1109.
-            ("THR_MDL_FAC".into(), json!(0.0)),
+            ("THR_MDL_FAC".into(), json!(self.thrust_model_factor)),
         ]);
         parameters
     }
@@ -534,7 +546,7 @@ pub(crate) fn manual_flight_with_gains(
         let numeric = || value.as_f64().ok_or_else(|| format!("{name} must be a finite number"));
         match name.as_str() {
             "MC_AIRMODE" => mixer_airmode = Some(parse_airmode("MC_AIRMODE", numeric()?)?),
-            "THR_MDL_FAC" => validate_thrust_model("THR_MDL_FAC", numeric()?)?,
+            "THR_MDL_FAC" => {},
             "HTE_HT_NOISE" => hover.hte_ht_noise = numeric()?,
             "HTE_ACC_GATE" => hover.hte_acc_gate = numeric()?,
             "HTE_HT_ERR_INIT" => hover.hte_ht_err_init = numeric()?,
@@ -555,9 +567,7 @@ pub(crate) fn manual_flight_with_gains(
             return Err("airmode and MC_AIRMODE must agree".into());
         }
     }
-    if let Some(value) = thrust_model_factor {
-        validate_thrust_model("thrustModelFactor", value)?;
-    }
+    let thrust_model_factor = resolve_thrust_model(thrust_model_factor, overrides.and_then(|g| g.get("THR_MDL_FAC")))?;
     let gain_error = |e| format!("controller.gains: {e}");
     let position = position_control::gains_with_overrides(Some(&position_overrides)).map_err(gain_error)?;
     let gains = gains_with_overrides(Some(&rate_overrides)).map_err(gain_error)?;
@@ -567,8 +577,9 @@ pub(crate) fn manual_flight_with_gains(
     // MC_AIRMODE default and enum: database/reference/physics.v1.json:1084-1092.
     let airmode = airmode.or(mixer_airmode).unwrap_or(0);
     let flight_loop = FlightLoop::new(vehicle, flight, propulsion.yaw_ratio(), gains, position, airmode, hover)
+        .and_then(|loop_| loop_.with_thrust_model(thrust_model_factor))
         .map_err(|e| format!("controller: {e}"))?;
-    Ok((flight_loop, ManualFlightGains { gains, position, hover, airmode }))
+    Ok((flight_loop, ManualFlightGains { gains, position, hover, airmode, thrust_model_factor }))
 }
 
 /// The caller drops the run/session on any failure, including non-finite demands
@@ -592,13 +603,18 @@ fn parse_airmode(name: &str, value: f64) -> Result<u8, String> {
     }
 }
 
-fn validate_thrust_model(name: &str, value: f64) -> Result<(), String> {
-    // THR_MDL_FAC bounds: database/reference/physics.v1.json:1102-1109.
-    if !(0.0..=1.0).contains(&value) {
-        return Err(format!("{name} must be in [0, 1]"));
+fn resolve_thrust_model(field: Option<f64>, parameter: Option<&Value>) -> Result<f64, String> {
+    let parameter = parameter.map(|value| {
+        value.as_f64().ok_or_else(|| "THR_MDL_FAC must be a finite number".to_owned())
+    }).transpose()?;
+    // THR_MDL_FAC bounds and default: database/reference/physics.v1.json:1102-1109.
+    for (name, value) in [("thrustModelFactor", field), ("THR_MDL_FAC", parameter)] {
+        if value.is_some_and(|v| !(0.0..=1.0).contains(&v)) {
+            return Err(format!("{name} must be in [0, 1]"));
+        }
     }
-    if value != 0.0 {
-        return Err(format!("{name} must be zero until thrust-model support in milestone 5.9"));
+    if field.zip(parameter).is_some_and(|(a, b)| a != b) {
+        return Err("thrustModelFactor and THR_MDL_FAC must agree".into());
     }
-    Ok(())
+    Ok(field.or(parameter).unwrap_or(0.0))
 }

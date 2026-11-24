@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/page-header'
 import { EmptyState, Section } from '@/components/section'
 import { Button } from '@/components/ui/button'
 import { effectiveParams, type TuningOverrides } from '@/domain/controller-params'
+import { thrustFactorReadout } from '@/domain/thrust-curve'
 import { runChecks } from '@/domain/checks'
 import { getApi } from '@/services/api'
 import { useProjects } from '@/stores/projects'
@@ -122,7 +123,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     void load()
     return () => { alive = false }
   }, [project.id, tuningAttempt])
-  const tuning = saved === null ? null : flightStartWithTuning(mode, saved)
+  const tuning = saved === null ? null : flightStartWithTuning(mode, saved, gate.ok ? gate.thrustFit : null)
   const linearThrottle = saved !== null && effectiveParams(saved).MPC_THR_CURVE === 1
   const [running, setRunning] = useState(false)
   const [engineError, setEngineError] = useState<string | null>(null)
@@ -271,6 +272,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
         {tuningError ? <p role="alert" className="text-fault">Saved tuning: {tuningError}{' '}
           <button className="text-accent" type="button" onClick={() => { setTuningError(null); setTuningAttempt(tuningAttempt + 1) }}>Retry</button>
         </p> : tuning === null ? <p role="status">Loading saved tuning…</p> : null}
+        {saved !== null && gate.ok && <p data-testid="thrust-factor">{thrustFactorReadout(gate.thrustFit, saved)}</p>}
         {tuning && tuning.unsupported.length > 0 && (
           <p className="text-warn" role="status">Attitude hold cannot use these saved overrides: {tuning.unsupported.join(', ')}. Choose a PX4 mode to apply them.</p>
         )}
@@ -291,7 +293,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
               headingHold.current = updateHeadingHold(headingHold.current, keys.current, heading(latest.current))
               setHeldHeading(headingHold.current.headingRad)
             }}>
-            <FlightViewport frame={frame} doc={display} geo={geo} />
+            <FlightViewport frame={frame} doc={display} geo={geo} projectId={project.id} running={running} />
           </div>
           <div className="shrink-0 space-y-1 border-t border-line px-3 py-2 text-[12px] text-fg-muted">
             <p>Live engine: this build&apos;s mass, motors, battery and drag, flown by the PX4-style controller. It starts on the ground; ground and obstacles are the project environment.</p>

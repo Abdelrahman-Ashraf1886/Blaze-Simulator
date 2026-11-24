@@ -14,10 +14,9 @@
 //! engine answers no health ping while it runs, and the supervisor kills an engine that
 //! stays silent for 3 s); with a ground (contact steps cost far more) at most
 //! `MAX_SCENARIO_WITH_GROUND_S`.
-use crate::engine::loaded_vehicle;
-use crate::protocol::{ErrorCode, Response};
+use crate::engine::{closed_loop_gains, loaded_vehicle};
+use crate::protocol::{present, ErrorCode, Response};
 use engine_core::aero::BodyDrag;
-use engine_core::closed_loop::gains_with_overrides;
 use engine_core::environment::Environment;
 use engine_core::flight::{Cutoff, Flight, ScaleToAirDensityError};
 use engine_core::propulsion::Propulsion;
@@ -85,6 +84,8 @@ struct ConfigRequest {
     /// Overrides of the PX4 v1.13.3 defaults by exact parameter name.
     #[serde(default)]
     gains: Option<Map<String, Value>>,
+    #[serde(default, deserialize_with = "present")]
+    thrust_model_factor: Option<f64>,
     /// Ground and obstacles (needs `startPositionM`); absent = free space from the origin.
     #[serde(default)]
     environment: Option<Value>,
@@ -153,9 +154,9 @@ pub fn handle(
         };
         return Response::err(Some(id), code, e.to_string());
     }
-    let gains = match gains_with_overrides(p.config.gains.as_ref()) {
-        Ok(g) => g,
-        Err(e) => return bad(format!("config.gains: {e}")),
+    let (gains, thrust_model_factor) = match closed_loop_gains(p.config.gains, p.config.thrust_model_factor) {
+        Ok(resolved) => resolved,
+        Err(e) => return bad(format!("config.{e}")),
     };
     let ground = match (p.config.environment, p.config.start_position_m) {
         (None, None) => None,
@@ -169,7 +170,7 @@ pub fn handle(
             }
         },
     };
-    let config = ScenarioConfig { gains, air_density_kg_m3: rho, cutoff: Some(cutoff), ground };
+    let config = ScenarioConfig { gains, thrust_model_factor, air_density_kg_m3: rho, cutoff: Some(cutoff), ground };
     let scenario = match build(&p.scenario, vehicle, propulsion, &config) {
         Ok(s) => s,
         Err(e) => return invalid_scenario(e),

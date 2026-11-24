@@ -2,6 +2,7 @@
 
 mod engine;
 mod flight_session;
+mod flight_environment;
 mod protocol;
 mod scenario_run;
 mod step_test_run;
@@ -22,7 +23,7 @@ fn main() {
         }
         let (response, stop) = match parse_request(&line) {
             Err(error) => (error, false),
-            Ok(req) => engine.handle(req),
+            Ok(req) => engine.handle(req, line),
         };
         if writeln!(stdout, "{}", response.to_line()).and_then(|_| stdout.flush()).is_err() {
             break; // host closed the pipe

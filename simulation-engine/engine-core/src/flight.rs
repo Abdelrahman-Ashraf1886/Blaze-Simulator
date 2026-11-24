@@ -163,14 +163,26 @@ pub struct StepLoads {
     pub wind_invalid: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+// Keep the reason, since the rejected numeric payload may itself be non-finite.
+#[derive(Serialize)]
+#[serde(remote = "InvalidInput", tag = "reason", rename_all = "camelCase")]
+enum GroundEffectInvalidInput {
+    HubHeight(#[serde(skip_serializing)] f64),
+    Radius(#[serde(skip_serializing)] f64),
+    Airspeed(#[serde(skip_serializing)] f64),
+    Thrust(#[serde(skip_serializing)] f64),
+    AirDensity(#[serde(skip_serializing)] f64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum RotorGroundEffect {
     Inactive,
     Applied { below_tested_range: bool },
     /// Use free-air thrust and retain the reason. With radii and density checked
     /// at setup, only a non-finite hub height, airspeed or free-air thrust can
     /// be rejected by the model during a step.
-    InvalidInput(InvalidInput),
+    InvalidInput(#[serde(with = "GroundEffectInvalidInput")] InvalidInput),
     InvalidWind,
     /// A non-finite result from scaling. Use free-air thrust.
     NonFiniteThrust,

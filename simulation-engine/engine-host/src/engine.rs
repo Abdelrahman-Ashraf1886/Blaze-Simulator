@@ -1,5 +1,6 @@
 //! Request dispatch and the sidecar's state (the loaded vehicle).
 
+use crate::flight_environment;
 use crate::protocol::{Command, ControllerRequest, ErrorCode, FlightLoopDiagnostic, HelloResult, PongResult, Request, Response, PROTOCOL_VERSION};
 use engine_core::aero::BodyDrag;
 use engine_core::environment::{ContactEvent, Environment};
@@ -113,6 +114,8 @@ impl Plant {
 struct RunArgs {
     duration_s: f64,
     environment: Option<serde_json::Value>,
+    wind: Option<Value>,
+    ground_effect: Option<Value>,
     start_position_m: Option<[f64; 3]>,
     dt_s: Option<f64>,
     force: Option<[f64; 3]>,
@@ -142,7 +145,7 @@ impl Engine {
     }
 
     /// Handles one request; the flag is true when the engine should exit.
-    pub fn handle(&mut self, req: Request) -> (Response, bool) {
+    pub fn handle(&mut self, req: Request, line: String) -> (Response, bool) {
         let id = req.id;
         match req.command {
             Command::Hello => (
@@ -162,17 +165,20 @@ impl Engine {
             ),
             Command::Shutdown => (Response::ok(id, serde_json::json!({})), true),
             Command::FlightSessionStart { params } => (
-                crate::flight_session::start(id, params, &mut self.session, self.vehicle.as_ref(), self.propulsion.as_ref(), self.aero),
+                crate::flight_session::start(id, params, line, &mut self.session, self.vehicle.as_ref(), self.propulsion.as_ref(), self.aero),
                 false,
             ),
-            Command::FlightSessionStep { params } => (crate::flight_session::step(id, params, &mut self.session), false),
+            Command::FlightSessionStep { params } => (crate::flight_session::step(id, params, line, &mut self.session), false),
             Command::FlightSessionEnd => (crate::flight_session::end(id, &mut self.session), false),
+            Command::FlightSessionLog { params } => (crate::flight_session::log(id, params, self.session.as_ref()), false),
             Command::ScenarioRun { params } => (crate::scenario_run::handle(id, params, self.vehicle.as_ref(), self.propulsion.as_ref(), self.aero), false),
             Command::StepTestRun { params } => (crate::step_test_run::handle(id, params, self.vehicle.as_ref(), self.propulsion.as_ref(), self.aero), false),
             Command::VehicleLoad { vehicle, propulsion, aero } => (self.load(id, vehicle, propulsion, aero), false),
             Command::SimRun {
                 duration_s,
                 environment,
+                wind,
+                ground_effect,
                 start_position_m,
                 dt_s,
                 force_body_n,
@@ -185,6 +191,8 @@ impl Engine {
                 let args = RunArgs {
                     duration_s,
                     environment,
+                    wind,
+                    ground_effect,
                     start_position_m,
                     dt_s,
                     force: force_body_n,
@@ -252,12 +260,17 @@ impl Engine {
     }
 
     fn run(&self, id: u64, args: RunArgs) -> Response {
-        let RunArgs { duration_s, environment, start_position_m, dt_s, force, torque, throttle, rotor_speeds, air_density, controller } = args;
+        let RunArgs { duration_s, environment, wind, ground_effect, start_position_m, dt_s, force, torque, throttle, rotor_speeds, air_density, controller } = args;
         let bad = |m: String| Response::err(Some(id), ErrorCode::InvalidParams, m);
         let vehicle = match loaded_vehicle(id, self.vehicle.as_ref()) {
             Ok(v) => v,
             Err(r) => return r,
         };
+        if self.propulsion.is_none() {
+            if let Some(message) = flight_environment::propulsion_required(wind.as_ref(), ground_effect.as_ref(), "") {
+                return bad(message);
+            }
+        }
         let environment = match parse_environment(id, environment) {
             Ok(e) => e,
             Err(r) => return r,
@@ -311,6 +324,9 @@ impl Engine {
                 };
                 if let Err(e) = fl.scale_to_air_density(rho) {
                     return bad(e.to_string());
+                }
+                if let Err(e) = flight_environment::configure(&mut fl, wind.as_ref(), ground_effect.as_ref(), "") {
+                    return bad(e);
                 }
                 if let Some(w) = &rotor_speeds {
                     if let Err(e) = fl.set_rotor_speeds(w) {
@@ -387,6 +403,10 @@ impl Engine {
             }
         }
         let (contacts, contacts_dropped) = sim.contacts();
+        let hash_words = match &plant {
+            Plant::Manual(loop_, _) => loop_.hash_words(),
+            _ => plant.flight().map(Flight::hash_words).unwrap_or_default(),
+        };
         Response::ok(
             id,
             SimRunResult {
@@ -395,7 +415,7 @@ impl Engine {
                 duration_s: steps as f64 * dt,
                 gravity_mps2: config.gravity_mps2,
                 state: sim.state(),
-                state_hash: hash_hex(sim.state_hash_with(&plant.flight().map(Flight::hash_words).unwrap_or_default())),
+                state_hash: hash_hex(sim.state_hash_with(&hash_words)),
                 contacts,
                 contacts_dropped,
                 motors: plant.flight().map(Flight::motors),

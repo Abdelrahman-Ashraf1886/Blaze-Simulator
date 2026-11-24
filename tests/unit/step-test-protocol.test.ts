@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   isEngineResponse,
   MAX_SCENARIO_S,
@@ -10,7 +10,10 @@ import {
   VehicleLoadResultSchema,
   type StepTestRunParams,
 } from '../../electron/main/engine/protocol'
-import { runStepTest } from '../../electron/main/engine/step-test'
+import { runStepTest, stepTest } from '../../electron/main/engine/step-test'
+import { Channels, type DesktopApi } from '../../electron/ipc/contract'
+import type { FlightGate } from '../../src/features/flight/readiness'
+import { EMPTY_STEP_TEST, measuredSamples, readStepTest, STEP_CHOICES, stepTestInput } from '../../src/features/tuning/step-test-input'
 
 // The scenario protocol's quad and propulsion fixture (scenario-protocol.test.ts:20–37).
 const armM = 0.15
@@ -57,6 +60,11 @@ const params: StepTestRunParams = {
     thrustModelFactor: 0,
   },
 }
+const aero = { cdBody: [1, 1, 1], areaM2: [0.01, 0.01, 0.01] } // flight-live.test.ts:35
+const { vehicle, propulsion } = load
+const gate: FlightGate = { ok: true, input: {
+  vehicle, propulsion, aero, ...params.config, environment: { ground: null, obstacles: [] }, startPositionM: [0, 0, 0],
+} }
 const command = { type: 'stepTest.run', ...params } as const
 const binaryPath = join(__dirname, '../../simulation-engine/target/release', process.platform === 'win32' ? 'drone-engine.exe' : 'drone-engine')
 
@@ -78,6 +86,44 @@ function result(response: ReturnType<typeof engine>[number] | undefined) {
   if (!response.ok) throw new Error(response.error.message)
   return response.result
 }
+
+describe('step test form and request', () => {
+  const draft = {
+    step: 'Roll rate', amplitude: String(angleRad), holdS: String(params.test.holdS),
+    durationS: String(params.test.durationS), decimationSteps: String(params.test.decimationSteps),
+  }
+
+  it('starts blank and maps every choice and SI amplitude to the protocol', () => {
+    expect(readStepTest(EMPTY_STEP_TEST)).toEqual({ test: null, errors: {
+      step: 'Choose a step.', amplitude: 'Enter an amplitude.', holdS: 'Enter a value.',
+      durationS: 'Enter a value.', decimationSteps: 'Enter a value.',
+    } })
+    for (const { label, unit, ...selection } of STEP_CHOICES) {
+      const amplitudeKey = unit === 'rad/s' ? 'amplitudeRadps' : unit === 'rad' ? 'amplitudeRad' : 'amplitudeM'
+      expect(readStepTest({ ...draft, step: label })).toEqual({
+        test: { ...params.test, step: { ...selection, [amplitudeKey]: angleRad } }, errors: {},
+      })
+    }
+  })
+
+  it('uses the protocol bounds and names the field that needs correcting', () => {
+    expect(readStepTest({ ...draft, step: 'Yaw attitude', amplitude: String(Math.PI * 2) }).errors.amplitude).toBeDefined()
+    expect(readStepTest({ ...draft, holdS: draft.durationS }).errors.holdS).toContain('at least one simulation step')
+    expect(readStepTest({ ...draft, durationS: String(MAX_SCENARIO_S + dtS) }).errors.durationS).toBeDefined()
+    expect(readStepTest({ ...draft, decimationSteps: '1.5' }).errors.decimationSteps).toBeDefined()
+  })
+
+  it('uses saved gains and the flight gate for the vehicle, air density and cut-off', () => {
+    const { test } = readStepTest(draft)
+    expect(stepTestInput(gate, test, params.config.gains!)).toEqual({
+      vehicle, propulsion, aero, test: params.test,
+      config: { airDensityKgM3, cutoff: params.config.cutoff, gains: params.config.gains },
+    })
+    expect(stepTestInput({ ok: false, blockers: [] }, test, {})).toBeNull()
+    expect(stepTestInput(gate, test, null)).toBeNull()
+    expect(stepTestInput(gate, null, {})).toBeNull()
+  })
+})
 
 describe('stepTest.run protocol', () => {
   it('requires explicit timing, step and conditions and bounds free-space runs', () => {
@@ -113,6 +159,10 @@ describe('stepTest.run protocol', () => {
       return result(first)
     }, params)
     expect(run).toEqual(StepTestRunResultSchema.parse(result(replay)))
+    expect(measuredSamples(run.trace).map(({ t }) => t)).toEqual(run.trace.samples.map(({ timeS }) => timeS))
+    const lastSignal = run.trace.samples.at(-1)?.signal
+    expect(lastSignal?.kind).toBe('rate')
+    expect(measuredSamples(run.trace).at(-1)?.y).toBe(lastSignal?.kind === 'rate' ? lastSignal.measuredRadps : undefined)
     expect(run.endReason).toBe('duration')
     expect(run.error).toBeNull()
     expect(run.stepTimeS).toBe(params.test.holdS)
@@ -135,6 +185,34 @@ describe('stepTest.run protocol', () => {
       }
       expect(report.trace.samples[1]?.signal.kind).toBe(index === 0 ? 'attitude' : 'position')
       expect(report.trace.samples[1]?.commandedAttitudeXyzw).toHaveLength(4)
+    }
+  })
+
+  it('round-trips preload IPC with a validated vehicle, test and real engine response', async () => {
+    const [loaded, flown] = engine({ ...load, aero }, command)
+    const output = StepTestRunResultSchema.parse(result(flown))
+    const engineApi = {
+      loadVehicle: vi.fn(async () => VehicleLoadResultSchema.parse(result(loaded))),
+      runStepTest: vi.fn(async (payload: StepTestRunParams) => runStepTest(async () => result(flown), payload)),
+    }
+    const invoke = vi.fn(async (_channel: string, payload: unknown) => stepTest(engineApi, payload))
+    const expose = vi.fn()
+    vi.doMock('electron', () => ({ contextBridge: { exposeInMainWorld: expose }, ipcRenderer: { invoke } }))
+    try {
+      await import('../../electron/preload/index')
+      const api = expose.mock.calls[0]![1] as DesktopApi
+      const payload = { vehicle, propulsion, aero, ...params }
+      expect(await api.engine.stepTest(payload)).toEqual({ ok: true, data: output })
+      expect(invoke).toHaveBeenCalledWith(Channels.engineStepTest, payload)
+      expect(engineApi.loadVehicle).toHaveBeenCalledWith(vehicle, { propulsion, aero })
+      expect(engineApi.runStepTest).toHaveBeenCalledWith(params)
+      expect(await api.engine.stepTest({ ...payload, test: { ...params.test, decimationSteps: 0 } }))
+        .toMatchObject({ ok: false, error: { code: 'VALIDATION', message: expect.stringContaining('test.decimationSteps') } })
+      expect(engineApi.loadVehicle).toHaveBeenCalledTimes(1)
+      engineApi.runStepTest.mockRejectedValueOnce(new Error('INVALID_PARAMS: engine refused the run'))
+      expect(await api.engine.stepTest(payload)).toMatchObject({ ok: false, error: { message: 'INVALID_PARAMS: engine refused the run' } })
+    } finally {
+      vi.doUnmock('electron')
     }
   })
 

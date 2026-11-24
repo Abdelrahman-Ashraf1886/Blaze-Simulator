@@ -23,6 +23,7 @@ export function demoFrame(timeS: number, motorCount = 4, bodyCom: Vec3 = [0, 0, 
     packVoltageV: 16.8 - timeS * 0.2, packCurrentA: 8, chargeUsedMah: timeS * 8 / 3.6,
     densityKgM3: 1.225,
     control: { torqueDemand: [0, 0, 0], rateIntegral: [0, 0, 0], saturation: { positive: [timeS >= 5 && timeS <= 7, false, false, false], negative: [false, false, false, false] } },
+    flightLoop: null,
     ended: timeS >= DEMO_DURATION_S ? 'chargeCutoff' : null, contacts: [],
   }
 }

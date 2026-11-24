@@ -81,6 +81,7 @@ describe('IPC handlers', () => {
       Channels.engineFlightStep,
       Channels.engineFlightEnd,
       Channels.engineScenarioRun,
+      Channels.engineStepTest,
       Channels.engineStatusChanged,
       Channels.assemblySaveSync,
       Channels.assetsImport,

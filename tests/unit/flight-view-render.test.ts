@@ -38,6 +38,32 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
     frame.control = null
     expect(render()).toContain('Voltage cut-off')
     expect(render()).toContain('Unavailable')
+
+    const { FlightModeStatus } = await server.ssrLoadModule('/src/features/flight/FlightModeStatus.tsx') as {
+      FlightModeStatus: ComponentType<{ frame: FlightFrame; linearThrottle: boolean }>
+    }
+    const renderMode = (linearThrottle: boolean) => renderToStaticMarkup(createElement(FlightModeStatus, { frame, linearThrottle }))
+    expect(renderMode(false)).toContain('Awaiting diagnostics')
+    frame.flightLoop = {
+      mode: 'stabilized',
+      requestedMode: 'position',
+      positionSetpointM: [null, null, null],
+      velocitySetpointMps: [0, null, 1],
+      accelerationSetpointMps2: [null, null, 0],
+      velocityIntegral: [null, 0, 1],
+      hoverThrust: { estimate: 0.5, standardDeviation: 0.1, valid: false },
+      saturation: { positive: [false, false, false, false], negative: [false, false, false, false] },
+    }
+    const loop = render()
+    for (const label of ['Position setpoint', 'Velocity setpoint', 'Acceleration setpoint', 'Velocity integral', 'Hover thrust estimate', 'Hover thrust standard deviation', 'Invalid', '0.000 / — / 1.000']) {
+      expect(loop).toContain(label)
+    }
+    expect(renderMode(false)).toContain('Position fell back to Stabilized on ground contact.')
+    expect(renderMode(false)).toContain('Centred throttle commands hover thrust with no altitude or position hold.')
+    expect(renderMode(true)).toContain('mid-range thrust (linear throttle curve)')
+    frame.flightLoop.mode = 'position'
+    expect(renderMode(false)).toContain('>Position</span>')
+    expect(renderMode(false)).not.toContain('fell back')
   } finally {
     await server.close()
   }

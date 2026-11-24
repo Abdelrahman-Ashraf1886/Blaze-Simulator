@@ -29,12 +29,14 @@ import {
   type HelloResult,
   type PropulsionDefinition,
   type ScenarioRunParams,
+  type StepTestRunParams,
   type ScenarioRunResult,
   type SimRunParams,
   type SimRunResult,
   type VehicleDefinition,
   type VehicleLoadResult,
 } from './protocol'
+import { runStepTest } from './step-test'
 
 export interface SupervisorOptions {
   binaryPath: string
@@ -190,6 +192,10 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
   async runScenario(params: ScenarioRunParams): Promise<ScenarioRunResult> {
     const checked = ScenarioRunParamsSchema.parse(params)
     return ScenarioRunResultSchema.parse(await this.request({ type: 'scenario.run', ...checked }))
+  }
+
+  runStepTest(params: StepTestRunParams) {
+    return runStepTest((command) => this.request(command), params)
   }
 
   private launch(state: 'starting' | 'restarting'): void {

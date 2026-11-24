@@ -56,9 +56,10 @@ impl BodyDrag {
         }
     }
 
-    /// Drag force in world axes on a body with attitude `q` moving at `v_world` through air of density `rho`.
-    pub fn force_world(&self, rho: f64, q: [f64; 4], v_world: Vec3) -> Vec3 {
-        let vb = rotate_inverse(q, v_world);
+    /// Drag force in world axes for attitude `q` and air density `rho`.
+    /// Supply the world-axis air-relative velocity (body velocity minus local wind).
+    pub fn force_world(&self, rho: f64, q: [f64; 4], air_velocity_world: Vec3) -> Vec3 {
+        let vb = rotate_inverse(q, air_velocity_world);
         let f = |i: usize, v: f64| -0.5 * rho * self.cd_body[i] * self.area_m2[i] * v * v.abs();
         rotate(q, Vec3::new(f(0, vb.x), f(1, vb.y), f(2, vb.z)))
     }

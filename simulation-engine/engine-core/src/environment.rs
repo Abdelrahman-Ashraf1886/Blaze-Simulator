@@ -468,11 +468,14 @@ impl Environment {
 
     /// Ground surface height in metres at world (x, y), excluding obstacles (D8).
     pub fn height_below(&self, x_m: f64, y_m: f64) -> Option<f64> {
-        if let Some(terrain) = &self.terrain {
-            terrain.height_at(x_m, y_m)
-        } else {
-            self.ground.map(|_| 0.0)
-        }
+        ground_height(self.ground.is_some(), self.terrain.as_ref(), x_m, y_m)
+    }
+}
+
+fn ground_height(plane: bool, terrain: Option<&Terrain>, x_m: f64, y_m: f64) -> Option<f64> {
+    match terrain {
+        Some(terrain) => terrain.height_at(x_m, y_m),
+        None => plane.then_some(0.0),
     }
 }
 
@@ -508,7 +511,8 @@ pub struct ContactEvent {
 /// The environment inserted into a world, and the running contact log.
 pub struct Placed {
     /// Environment colliders in insertion order (a few; looked up linearly).
-    objects: Vec<(ColliderHandle, Object)>,
+    /// The ground entry also retains the terrain grid when present.
+    objects: Vec<(ColliderHandle, Object, Option<Terrain>)>,
     /// Part index → part id (collider user_data is the index, see `Vehicle::build_body`).
     part_ids: Vec<String>,
     open: BTreeMap<(usize, Object), f64>,
@@ -573,21 +577,28 @@ impl Placed {
             let body = world.bodies.insert(RigidBodyBuilder::fixed().build());
             let c = with(ColliderBuilder::new(SharedShape::halfspace(Vector::Z)), g);
             let h = world.colliders.insert_with_parent(c, body, &mut world.bodies);
-            objects.push((h, Object::Ground));
+            objects.push((h, Object::Ground, None));
         } else if let Some(terrain) = &env.terrain {
             let (collider, pose) = terrain.collider();
             let body = world.bodies.insert(RigidBodyBuilder::fixed().pose(pose).build());
             let h = world.colliders.insert_with_parent(with(collider, &terrain.surface), body, &mut world.bodies);
-            objects.push((h, Object::Ground));
+            objects.push((h, Object::Ground, Some(terrain.clone())));
         }
         for o in &env.obstacles {
             let [x, y, z, w] = o.quaternion;
             let pose = Pose::from_parts(Vector::new(o.center[0], o.center[1], o.center[2]), Rotation::from_xyzw(x, y, z, w).normalize());
             let body = world.bodies.insert(RigidBodyBuilder::fixed().pose(pose).build());
             let h = world.colliders.insert_with_parent(with(o.shape.collider(), &o.surface), body, &mut world.bodies);
-            objects.push((h, Object::Obstacle(o.id.clone())));
+            objects.push((h, Object::Obstacle(o.id.clone()), None));
         }
         Placed { objects, part_ids, open: BTreeMap::new(), events: Vec::new(), dropped: 0 }
+    }
+
+    pub(crate) fn height_below(&self, x_m: f64, y_m: f64) -> Option<f64> {
+        match self.objects.first() {
+            Some((_, Object::Ground, terrain)) => ground_height(true, terrain.as_ref(), x_m, y_m),
+            _ => None,
+        }
     }
 
     /// Vehicle parts that start inside the ground or an obstacle, deeper than
@@ -602,7 +613,7 @@ impl Placed {
         let mut out = Vec::new();
         for &vh in world.bodies[vehicle].colliders() {
             let v = &world.colliders[vh];
-            for (eh, object) in &self.objects {
+            for (eh, object, _) in &self.objects {
                 let e = &world.colliders[*eh];
                 // The environment shape goes first: parry 0.31.1 mis-places a half-space given second.
                 let mut depth = query::contact(e.position(), e.shape(), v.position(), v.shape(), 0.0)
@@ -629,7 +640,7 @@ impl Placed {
                 continue;
             }
             let (a, b) = (pair.collider1, pair.collider2);
-            let find = |h: ColliderHandle| self.objects.iter().find(|(x, _)| *x == h).map(|(_, o)| o);
+            let find = |h: ColliderHandle| self.objects.iter().find(|(x, _, _)| *x == h).map(|(_, o, _)| o);
             let (part, object) = match (find(a), find(b)) {
                 (Some(o), None) => (b, o),
                 (None, Some(o)) => (a, o),

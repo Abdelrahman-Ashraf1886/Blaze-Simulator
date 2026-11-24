@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+import { getApi } from '@/services/api'
 import { GroundEffectSection, WindSection } from '../workshop/environment/FlightEnvironmentSections'
 import { CircleAlert, CircleCheck } from 'lucide-react'
 import { useNavigate } from 'react-router'
@@ -6,7 +8,7 @@ import { Section } from '@/components/section'
 import { ISA_MAX_ALTITUDE_M, ISA_MIN_ALTITUDE_M } from '@/domain/atmosphere'
 import { cn } from '@/lib/utils'
 import { useWorkshopView } from '../workshop/view-store'
-import type { CutoffType, FlightBlocker, FlightConditions, FlightLink } from './readiness'
+import type { CutoffType, EnginePayload, FlightBlocker, FlightConditions, FlightLink } from './readiness'
 
 /** Empty text clears the value (not set); otherwise a number in [min, max]. */
 const optional = (min: number, max: number, unit: string, step: number) => (text: string) => {
@@ -41,12 +43,14 @@ export function useFollow(projectId: string) {
  * The flight conditions the user enters (no defaults) and, until the build can fly, the checklist of everything
  * still missing, each item linked to its field.
  */
-export function FlightSetup({ projectId, conditions: c, onChange, blockers, engineBlock, locked }: {
+export function FlightSetup({ projectId, conditions: c, onChange, blockers, environment, terrainId, engineBlock, locked }: {
   projectId: string
   conditions: FlightConditions
   /** Saves the change with the project (an undo step, like the environment's values). */
   onChange: (label: string, patch: Partial<FlightConditions>) => void
   blockers: readonly FlightBlocker[]
+  environment?: EnvironmentPreview
+  terrainId?: string | null
   engineBlock: string | null
   locked: boolean
 }) {
@@ -82,7 +86,7 @@ export function FlightSetup({ projectId, conditions: c, onChange, blockers, engi
         <WindSection wind={c.wind} onChange={(wind) => onChange('Set wind', { wind })} />
         <GroundEffectSection value={c.groundEffect} onChange={(groundEffect) => onChange('Set ground effect', { groundEffect })} />
       </div>
-      <p className="mt-1 text-[11.5px] leading-relaxed text-fg-subtle">Saved with the project.</p>
+      <FlightEnvironmentSummary environment={environment} terrainId={terrainId} />
       {locked && <p className="mt-1 text-[11.5px] text-fg-subtle">Conditions apply to the next start.</p>}
       {blockers.length === 0 ? (
         <p className="mt-2 flex items-center gap-2 text-[12.5px] text-ok" data-testid="flight-ready">
@@ -90,7 +94,7 @@ export function FlightSetup({ projectId, conditions: c, onChange, blockers, engi
         </p>
       ) : (
         <div data-testid="flight-blockers" className="mt-2">
-          <p className="text-[12px] leading-relaxed text-fg-subtle">No source states these for this build. The flight will not start until each is entered.</p>
+          <p className="text-[12px] leading-relaxed text-fg-subtle">Resolve these items before starting a flight.</p>
           <ul className="mt-1 border-t border-line">
             {blockers.map((item) => {
               const body = (
@@ -119,4 +123,32 @@ export function FlightSetup({ projectId, conditions: c, onChange, blockers, engi
       {engineBlock && <p className="mt-2 text-[12.5px] text-warn" data-testid="flight-engine-block">{engineBlock}</p>}
     </Section>
   )
+}
+
+type EnvironmentPreview = Pick<EnginePayload, 'environment' | 'wind' | 'groundEffect'>
+
+export function FlightEnvironmentSummary({ environment, terrainId }: { environment?: EnvironmentPreview; terrainId?: string | null }) {
+  const [terrainName, setTerrainName] = useState<{ id: string; filename: string }>()
+  useEffect(() => {
+    if (!terrainId) return
+    let active = true
+    void (async () => {
+      try {
+        const list = await getApi().terrain.list()
+        const selected = list.ok ? list.data.find(({ id }) => id === terrainId) : undefined
+        if (active && selected) setTerrainName(selected)
+      } catch {
+        // The filename is display metadata. The grid read gates the simulation.
+      }
+    })()
+    return () => { active = false }
+  }, [terrainId])
+  if (!environment) return null
+  const { environment: geometry, wind, groundEffect } = environment
+  const surface = geometry.terrain
+    ? `Terrain (${terrainName && terrainName.id === terrainId ? terrainName.filename : terrainId ?? 'selected grid'})`
+    : geometry.ground ? 'Ground plane' : 'Free space'
+  return <p className="mt-2 text-[12px] text-fg-muted" data-testid="flight-environment-summary">
+    Next flight uses {surface} · Wind {wind != null ? 'on' : 'off'} · Ground effect {groundEffect ? 'on' : 'off'}
+  </p>
 }

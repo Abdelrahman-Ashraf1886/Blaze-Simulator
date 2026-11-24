@@ -1,6 +1,6 @@
 import '@/three/setup'
 import { Canvas, useFrame } from '@react-three/fiber'
-import { GizmoHelper, GizmoViewport } from '@react-three/drei'
+import { GizmoHelper, GizmoViewport, Html } from '@react-three/drei'
 import { Suspense, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { DoubleSide, Quaternion, Vector3, type Group, type Mesh } from 'three'
 import type { AssemblyDocument, AssemblyPart, Spin } from '../../../electron/ipc/contract'
@@ -14,7 +14,7 @@ import { useComponentIndex } from '../workshop/component-index'
 import { linkedComponent, type ComponentIndex } from '../workshop/links'
 import { PropellerModel } from '@/three/part-models'
 import { toSI, type Unit } from '@/domain/units'
-import { frameToPose, type FlightFrame } from './frame'
+import { frameToPose, windArrow, type FlightFrame } from './frame'
 import { integrateRotorAngle, ROTOR_BLUR_THRESHOLD_RADPS, rotorIsBlurred } from './rotor-spin'
 import { readPref, writePref } from '@/lib/prefs'
 import { CameraRig, FlightCameraControls } from './camera-controls'
@@ -135,6 +135,24 @@ function SpinningPropeller({ rotor, frame, geo }: { rotor: Rotor; frame: FlightF
   </group>
 }
 
+const arrowAxis = new Vector3(0, 1, 0)
+const arrowOrigin = new Vector3()
+
+function WindArrow({ frame, lengthM }: { frame: FlightFrame; lengthM: number }) {
+  const args = useMemo(() => [arrowAxis, arrowOrigin, lengthM, '#8cdbff'] as const, [lengthM])
+  const wind = frame.environmentLoads && windArrow(frame.environmentLoads.windComWorldMps)
+  if (!wind) return null
+  const orientation = new Quaternion().setFromUnitVectors(arrowAxis, new Vector3(...wind.direction))
+  return <group position={frame.comM} quaternion={orientation}>
+    <arrowHelper args={args} />
+    <Html position={[0, lengthM, 0]} pointerEvents="none">
+      <span className="whitespace-nowrap rounded bg-chrome px-1.5 py-0.5 text-xs text-fg num" data-testid="flight-wind-speed">
+        Wind {wind.speedMps.toPrecision(3)} m/s
+      </span>
+    </Html>
+  </group>
+}
+
 export function FlightViewport({ frame, doc, geo, projectId, running = false }: {
   frame: FlightFrame; doc: AssemblyDocument; geo: FrameGeometry; projectId?: string; running?: boolean
 }) {
@@ -213,6 +231,7 @@ export function FlightViewport({ frame, doc, geo, projectId, running = false }: 
             <sphereGeometry args={[0.012, 16, 12]} />
             <meshBasicMaterial color="#d9a03f" depthTest={false} />
           </mesh>
+          <WindArrow frame={frame} lengthM={doc.frame.motorDiagonal} />
           <GizmoHelper alignment="bottom-right" margin={[48, 48]}>
             <GizmoViewport disabled axisColors={['#e0605a', '#6fc27a', '#5aa7e0']} labelColor="#101215" />
           </GizmoHelper>

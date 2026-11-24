@@ -11,6 +11,28 @@ const optionalVector = (v: readonly (number | null)[], unit: Unit) => v.map((n) 
 const axes = (v: AxisVector, unit: Unit) => vector([v.x, v.y, v.z], unit)
 export const endReason = (ended: FlightFrame['ended']) => ended === 'voltageCutoff' ? 'Voltage cut-off' : ended === 'chargeCutoff' ? 'Charge cut-off' : null
 
+function EnvironmentLoads({ loads }: { loads: NonNullable<FlightFrame['environmentLoads']> }) {
+  const counts = { inactive: 0, applied: 0, invalidInput: 0, invalidWind: 0, nonFiniteThrust: 0 }
+  let belowRange = 0
+  for (const status of loads.groundEffectStatus) {
+    counts[status.type]++
+    if (status.type === 'applied' && status.belowTestedRange) belowRange++
+  }
+  return <Section title="Environment loads">
+    <Readouts>
+      <Readout label="Wind at CoM (world X / Y / Z)" value={vector(loads.windComWorldMps, 'm/s')} unit="m/s" />
+      <Readout label="Ground-effect added thrust" value={value(loads.groundEffectAddedThrustN, 'N')} unit="N" />
+      <Readout label="Ground-effect motors" value={loads.groundEffectStatus.length === 0 ? 'Off' :
+        `${counts.applied} applied / ${counts.inactive} inactive / ${counts.invalidInput} invalid inputs / ${counts.invalidWind} invalid wind / ${counts.nonFiniteThrust} non-finite thrust`} />
+    </Readouts>
+    {loads.windAboveRange && <p className="text-warn">Above the shear model’s height range. The engine held wind at the top of the profile for this step.</p>}
+    {loads.windInvalid && <p className="text-warn">A wind calculation failed this step. Wind drag or the gust’s progress may be affected.</p>}
+    {(counts.invalidInput > 0 || counts.invalidWind > 0 || counts.nonFiniteThrust > 0) &&
+      <p className="text-warn">The engine skipped ground-effect thrust on motors with an invalid calculation this step.</p>}
+    {belowRange > 0 && <p className="text-warn">Ground effect was applied below the tested height range on {belowRange} {belowRange === 1 ? 'motor' : 'motors'}.</p>}
+  </Section>
+}
+
 export function DebugPanel({ frame, mass, indicators, source = 'demo' }: { frame: FlightFrame; mass: MassProperties; indicators: Record<string, Indicator>; source?: 'demo' | 'live' }) {
   const loop = frame.flightLoop
   const saturation = loop?.saturation ?? frame.control?.saturation
@@ -70,6 +92,7 @@ export function DebugPanel({ frame, mass, indicators, source = 'demo' }: { frame
           </div>
         ))}
       </Section>
+      {frame.environmentLoads && <EnvironmentLoads loads={frame.environmentLoads} />}
       <Section title="Torque (body X / Y / Z)">
         <Readouts>
           {([['Arm', frame.armTorqueNm], ['Drag reaction', frame.dragReactionTorqueNm], ['Spin-up reaction', frame.spinUpReactionTorqueNm], ['Rotor gyro', frame.rotorGyroTorqueNm], ['Total', frame.totalTorqueNm]] as const).map(([label, v]) => (

@@ -121,12 +121,62 @@ export type Environment = z.infer<typeof EnvironmentSchema>
  * setpoint and gains). `altitudeM` is the CoM height (null/absent = hold `climbRateMps`); `attitude` a
  * unit quaternion x y z w (absent = level); `gains` overrides by exact PX4 name, e.g. { MC_ROLL_P: 7 }.
  */
-export const ControllerRequestSchema = z.strictObject({
+const flightMode = z.enum(['rates', 'stabilized', 'altitude', 'position'])
+// FlightModes::step checks the four PX4 axes and the normalized rates collective.
+const stickAxis = num.min(-1).max(1)
+const controllerSetpointShape = {
   altitudeM: num.nullable().optional(),
   climbRateMps: num.optional(),
   attitude: quat.optional(),
   yawRateRadps: num.optional(),
-  gains: z.record(z.string().regex(/^[A-Z][A-Z0-9_]*$/, 'use the exact PX4 parameter name'), num).optional(),
+  mode: flightMode.optional(),
+  sticks: z.strictObject({ forward: stickAxis, right: stickAxis, yawRight: stickAxis, throttle: stickAxis }).optional(),
+  bodyRadps: vec3.optional(),
+  collective: num.min(0).max(1).optional(),
+}
+const gains = z.record(z.string().regex(/^[A-Z][A-Z0-9_]*$/, 'use the exact PX4 parameter name'), num).optional()
+// database/reference/physics.v1.json:1084-1109 gives the mixer enum and factor bounds.
+const mixerShape = {
+  airmode: num.int().min(0).max(2).optional(),
+  thrustModelFactor: num.min(0).max(1).refine((v): boolean => v === 0, 'must be zero until thrust-model support in milestone 5.9').optional(),
+}
+
+const controllerSetpoint = z.strictObject(controllerSetpointShape)
+type ControllerSetpoint = z.infer<typeof controllerSetpoint>
+
+function checkControllerSetpoint(c: ControllerSetpoint, ctx: z.RefinementCtx, canInheritMode: boolean) {
+  const issue = (field: keyof ControllerSetpoint, message: string) => ctx.addIssue({ code: 'custom', path: [field], message })
+  const hasRates = c.bodyRadps !== undefined || c.collective !== undefined
+  const hasModeInput = hasRates || c.sticks !== undefined
+  const mode = c.mode ?? (canInheritMode && hasModeInput ? (hasRates ? 'rates' : 'sticks') : undefined)
+  if (mode === undefined) {
+    if (hasModeInput) issue('mode', 'required for sticks, bodyRadps or collective')
+    return
+  }
+  if (c.altitudeM != null) issue('altitudeM', 'for the 4.7 controller')
+  if (c.climbRateMps !== undefined) issue('climbRateMps', 'for the 4.7 controller')
+  if (c.attitude !== undefined) issue('attitude', 'for the 4.7 controller')
+  if (c.yawRateRadps !== undefined) issue('yawRateRadps', 'for the 4.7 controller')
+  if (mode === 'rates') {
+    if (c.sticks !== undefined) issue('sticks', 'requires stabilized, altitude or position mode')
+    if (c.bodyRadps === undefined) issue('bodyRadps', 'required in rates mode')
+    if (c.collective === undefined) issue('collective', 'required in rates mode')
+  } else {
+    if (c.sticks === undefined) issue('sticks', 'required in stabilized, altitude and position modes')
+    if (hasRates) issue('bodyRadps', 'bodyRadps and collective require rates mode')
+  }
+}
+
+export const ControllerRequestSchema = z.strictObject({
+  ...controllerSetpointShape,
+  ...mixerShape,
+  gains,
+}).superRefine((c, ctx) => {
+  checkControllerSetpoint(c, ctx, false)
+  if (c.mode === undefined) {
+    if (c.airmode !== undefined) ctx.addIssue({ code: 'custom', path: ['airmode'], message: 'requires mode' })
+    if (c.thrustModelFactor !== undefined) ctx.addIssue({ code: 'custom', path: ['thrustModelFactor'], message: 'requires mode' })
+  }
 })
 
 export const SimRunParamsSchema = z.strictObject({
@@ -146,7 +196,12 @@ export const SimRunParamsSchema = z.strictObject({
   airDensityKgM3: num.refine((v) => v > 0, 'must be positive').optional(),
   /** With propulsion (4.7): the PX4 v1.13.3 controller flies to this setpoint instead of fixed throttles. */
   controller: ControllerRequestSchema.optional(),
-})
+}).refine(({ controller, dtS }) => {
+  if (controller?.mode === undefined || dtS === undefined) return true
+  // Same cadence check as FlightLoop::step (ekf2_params.c:53).
+  const intervalS = 10_000 / 1_000_000
+  return intervalS / Math.round(intervalS / dtS) === dtS
+}, { path: ['dtS'], message: 'must divide 10 ms when controller.mode is given' })
 export type SimRunParams = z.infer<typeof SimRunParamsSchema>
 
 export type EngineCommand =
@@ -203,6 +258,19 @@ export const SimStateSchema = z.strictObject({
   angularVelocityBodyRadps: vec3,
 })
 
+const saturationFlags = z.tuple([z.boolean(), z.boolean(), z.boolean(), z.boolean()])
+const saturation = z.strictObject({ positive: saturationFlags, negative: saturationFlags })
+const nullableVec3 = z.tuple([num.nullable(), num.nullable(), num.nullable()])
+const FlightLoopDiagnosticSchema = z.strictObject({
+  mode: flightMode,
+  positionSetpointM: nullableVec3,
+  velocitySetpointMps: nullableVec3,
+  accelerationSetpointMps2: nullableVec3,
+  saturation,
+  hoverThrust: z.strictObject({ estimate: num.nullable(), variance: num.nullable(), valid: z.boolean() }),
+  velocityIntegral: nullableVec3,
+})
+
 export const SimRunResultSchema = z.strictObject({
   steps: z.number().int().positive(),
   dtS: num,
@@ -223,6 +291,7 @@ export const SimRunResultSchema = z.strictObject({
   controller: z
     .strictObject({ saturatedSteps: z.number().int().nonnegative(), rateIntegral: vec3, collectiveThrust: num })
     .optional(),
+  flightLoop: FlightLoopDiagnosticSchema.optional(),
 })
 export type SimRunResult = z.infer<typeof SimRunResultSchema>
 
@@ -260,14 +329,18 @@ export const FlightSessionStartParamsSchema = z.strictObject({
     z.strictObject({ type: z.literal('voltageV'), value: num.refine((v) => v > 0, 'must be positive') }),
     z.strictObject({ type: z.literal('chargeMah'), value: num.refine((v) => v > 0, 'must be positive') }),
   ]),
-  gains: ControllerRequestSchema.shape.gains,
+  gains,
+  /** Selects FlightLoop for the session, with the initial mode and fixed mixer settings. */
+  controller: z.strictObject({ mode: flightMode, ...mixerShape }).optional(),
 })
 export type FlightSessionStartParams = z.infer<typeof FlightSessionStartParamsSchema>
 
-export const FlightSessionSetpointSchema = ControllerRequestSchema.omit({ gains: true }).refine(
-  (c) => c.attitude === undefined || Math.abs(c.attitude.reduce((n, x) => n + x * x, 0) - 1) < 1e-9,
-  'attitude must be a unit quaternion',
-)
+export const FlightSessionSetpointSchema = controllerSetpoint
+  .refine(
+    (c) => c.attitude === undefined || Math.abs(c.attitude.reduce((n, x) => n + x * x, 0) - 1) < 1e-9,
+    'attitude must be a unit quaternion',
+  )
+  .superRefine((c, ctx) => checkControllerSetpoint(c, ctx, true))
 export type FlightSessionSetpoint = z.infer<typeof FlightSessionSetpointSchema>
 export const FlightSessionStepParamsSchema = z.strictObject({
   steps: num.int().min(1).max(MAX_SESSION_STEPS),
@@ -294,18 +367,16 @@ export const FlightDiagnosticSchema = z.strictObject({
     totalTorqueNm: vec3,
   }),
   airDensityKgM3: num,
-  /** The controller's last step; null before the first step. */
+  /** The 4.7 controller's last step; null until it has stepped. */
   control: z
     .strictObject({
       torqueDemand: vec3,
       rateIntegral: vec3,
       collectiveThrust: num,
-      saturation: z.strictObject({
-        positive: z.tuple([z.boolean(), z.boolean(), z.boolean(), z.boolean()]),
-        negative: z.tuple([z.boolean(), z.boolean(), z.boolean(), z.boolean()]),
-      }),
+      saturation,
     })
     .nullable(),
+  flightLoop: FlightLoopDiagnosticSchema.optional(),
 })
 export type FlightDiagnostic = z.infer<typeof FlightDiagnosticSchema>
 

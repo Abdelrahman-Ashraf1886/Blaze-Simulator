@@ -25,7 +25,9 @@ import {
 
 const finite = z.number().refine(Number.isFinite, 'must be finite')
 
-/** The session's start request plus the vehicle it loads first; the start position is required here. */
+/** The session's start request, including optional FlightLoop settings, plus the vehicle it loads first.
+ * The start position is required here.
+ */
 export const flightStartSchema = FlightSessionStartParamsSchema.extend({
   vehicle: VehicleDefinitionSchema,
   propulsion: PropulsionDefinitionSchema,

@@ -5,10 +5,10 @@
  * through the same handlers.
  */
 import { join } from 'node:path'
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { FlightStartInput, FlightStepInput, FlightStepResult, IpcResult } from '../../electron/ipc/contract'
 import { flightEnd, flightStart, flightStep, type EngineForFlight } from '../../electron/main/engine/flight-session'
-import { FlightDiagnosticSchema, FlightSessionStartParamsSchema, FlightSessionStepParamsSchema, FlightSessionStepResultSchema, SimRunParamsSchema } from '../../electron/main/engine/protocol'
+import { FlightDiagnosticSchema, FlightSessionStartParamsSchema, FlightSessionStepParamsSchema, FlightSessionStepResultSchema, SimRunParamsSchema, SimRunResultSchema } from '../../electron/main/engine/protocol'
 import { EngineSupervisor } from '../../electron/main/engine/supervisor'
 import type { ReadyItem } from '../../src/domain/propulsion'
 import { EngineFlightSource, idleFrame, MAX_STEP_MS, stepsForElapsed, toEngineSetpoint, toFlightFrame } from '../../src/features/flight/EngineFlightSource'
@@ -491,7 +491,7 @@ const sup = new EngineSupervisor({ binaryPath })
 afterAll(() => sup.stop())
 
 describe('a real engine session', () => {
-  it('starts, steps in chunks (contacts and a valid last diagnostic) and ends, through the IPC handlers', async () => {
+  beforeAll(async () => {
     sup.start()
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`engine start timed out: ${JSON.stringify(sup.status)}`)), 8000)
@@ -502,6 +502,9 @@ describe('a real engine session', () => {
       sup.on('status', check)
       check()
     })
+  }, 10000)
+
+  it('starts, steps in chunks (contacts and a valid last diagnostic) and ends, through the IPC handlers', async () => {
     const setpoint = { attitude: [0, 0, 0, 1] as [number, number, number, number], yawRateRadps: 0, climbRateMps: 0 }
     expect(err(await flightStep(sup, { steps: 1, setpoint }))?.message).toMatch(/^NO_SESSION/)
     const input = startInput()
@@ -533,6 +536,109 @@ describe('a real engine session', () => {
       durationS: 0.1, environment: { ground: { friction: 0.5, restitution: 0 }, obstacles: [] }, startPositionM: [0, 0, REST_Z],
       airDensityKgM3: 1.0066, controller: { climbRateMps: 0 },
     }))
-    expect(batch.stateHash).toBe(last!.stateHash)
+    // Captured with the unchanged 204382e engine and this same quad and request.
+    expect(batch.stateHash).toBe('c4a35c8e9770cbcc')
+    expect(last!.stateHash).toBe(batch.stateHash)
+    expect(batch.flightLoop).toBeUndefined()
+    expect(last!.diagnostic.flightLoop).toBeUndefined()
   }, 20000)
+
+  const air = { environment: { ground: null, obstacles: [] }, startPositionM: v3(0, 0, REST_Z), airDensityKgM3: 1.225 }
+  const centeredSticks = { forward: 0, right: 0, yawRight: 0, throttle: 0 }
+  const steps = 20
+  // A full estimator interval spans multiple requests (PX4 ekf2_params.c:53).
+  const durationS = steps * 0.001
+
+  it.each([
+    { mode: 'rates', bodyRadps: v3(0, 0, 0), collective: 0.5 },
+    { mode: 'stabilized', sticks: centeredSticks },
+    { mode: 'altitude', sticks: centeredSticks },
+    { mode: 'position', sticks: centeredSticks },
+  ] as const)('parses actual $mode diagnostics and hashes the same in chunks and one run', async ({ mode, ...setpoint }) => {
+    const gains = {
+      MC_ROLL_P: 7, MPC_XY_P: 1, MPC_POS_MODE: 0, MPC_THR_HOVER: 0.55, MPC_USE_HTE: 0,
+      MC_AIRMODE: 2, THR_MDL_FAC: 0, HTE_HT_ERR_INIT: 0.2,
+    }
+    const mixer = { airmode: 2, thrustModelFactor: 0 }
+    const started = await flightStart(sup, { ...startInput(), ...air, gains, controller: { mode, ...mixer } })
+    if (!started.ok) throw new Error(started.error.message)
+    expect(started.data.diagnostic.flightLoop).toBeUndefined()
+
+    const first = await flightStep(sup, { steps: 7, setpoint })
+    if (!first.ok) throw new Error(first.error.message)
+    const last = await flightStep(sup, { steps: steps - 7, setpoint })
+    if (!last.ok) throw new Error(last.error.message)
+    expect(last.data.diagnostic.control).toBeNull()
+    const diag = FlightSessionStepResultSchema.parse(last.data).diagnostic.flightLoop!
+    expect(diag.mode).toBe(mode)
+    expect(diag.hoverThrust.estimate).toBeCloseTo(gains.MPC_THR_HOVER)
+    expect(diag.hoverThrust.variance).toBeGreaterThanOrEqual(gains.HTE_HT_ERR_INIT ** 2)
+    expect(diag.hoverThrust.valid).toBe(false)
+    if (mode === 'rates' || mode === 'stabilized') {
+      expect(diag.positionSetpointM).toEqual([null, null, null])
+      expect(diag.velocitySetpointMps).toEqual([null, null, null])
+      expect(diag.accelerationSetpointMps2).toEqual([null, null, null])
+    } else {
+      expect(diag.accelerationSetpointMps2.every(Number.isFinite)).toBe(true)
+      if (mode === 'altitude') expect(diag.positionSetpointM.slice(0, 2)).toEqual([null, null])
+    }
+    expect(await flightEnd(sup)).toEqual({ ok: true, data: { ended: true } })
+
+    const batch = SimRunResultSchema.parse(await sup.runSim({
+      ...air, durationS, controller: { mode, ...setpoint, ...mixer, gains },
+    }))
+    expect(batch.controller).toBeUndefined()
+    expect(batch.flightLoop).toEqual(diag)
+    expect(batch.stateHash).toBe(last.data.stateHash)
+  })
+
+  it('changes modes within a session and reports the ground stand-in', async () => {
+    const started = await flightStart(sup, { ...startInput(), controller: { mode: 'rates' } })
+    if (!started.ok) throw new Error(started.error.message)
+    const settled = await sup.stepFlightSession({ steps, setpoint: { bodyRadps: v3(0, 0, 0), collective: 0 } })
+    expect(settled.diagnostic.flightLoop?.mode).toBe('rates')
+    const hold = await sup.stepFlightSession({ steps, setpoint: { mode: 'position', sticks: { ...centeredSticks, throttle: -1 } } })
+    expect(hold.diagnostic.flightLoop?.mode).toBe('stabilized')
+    expect(hold.diagnostic.flightLoop?.positionSetpointM).toEqual([null, null, null])
+    expect(hold.diagnostic.state.steps).toBe(2 * steps)
+    expect(await flightEnd(sup)).toEqual({ ok: true, data: { ended: true } })
+  })
+
+  it('names refused mode inputs and parameter overrides', async () => {
+    const controller = { mode: 'position', sticks: centeredSticks } as const
+    const request = { ...air, durationS, controller }
+    for (const [gains, message] of [
+      [{ MPC_XY_P: -1 }, /MPC_XY_P/],
+      [{ MC_ROLL_P: -1 }, /MC_ROLL_P/],
+      [{ MPC_POS_MODE: 3 }, /MPC_POS_MODE/],
+      [{ HTE_ACC_GATE: 0 }, /HTE_ACC_GATE/],
+      [{ HTE_UNKNOWN: 1 }, /HTE_UNKNOWN/],
+      [{ MPC_USE_HTE: -1 }, /MPC_USE_HTE/],
+      [{ MC_AIRMODE: 3 }, /MC_AIRMODE/],
+      [{ THR_MDL_FAC: 2 }, /THR_MDL_FAC.*\[0, 1\]/],
+      [{ THR_MDL_FAC: 0.5 }, /THR_MDL_FAC.*5\.9/],
+    ] as const) {
+      await expect(sup.runSim({ ...request, controller: { ...controller, gains } })).rejects.toThrow(message)
+    }
+    await expect(sup.runSim({ ...request, controller: { ...controller, airmode: 0, gains: { MC_AIRMODE: 1 } } })).rejects.toThrow(/airmode and MC_AIRMODE/)
+    await expect(sup.runSim({ ...request, controller: { ...controller, airmode: 1.5 } })).rejects.toThrow(/airmode/)
+    await expect(sup.runSim({ ...request, controller: { ...controller, thrustModelFactor: 0.5 } })).rejects.toThrow(/thrustModelFactor.*5\.9/s)
+    await expect(sup.runSim({ ...request, dtS: 0.004 })).rejects.toThrow(/dtS.*divide 10 ms/s)
+    await expect(sup.runSim({ ...request, controller: { ...controller, sticks: { ...centeredSticks, yawRight: 2 } } })).rejects.toThrow(/yawRight/)
+    expect(FlightSessionStepParamsSchema.safeParse({ steps, setpoint: { mode: 'rates', collective: 0.5 } }).success).toBe(false)
+    expect(FlightSessionStepParamsSchema.safeParse({ steps, setpoint: { mode: 'position', sticks: centeredSticks, gains: {} } }).success).toBe(false)
+  })
+
+  it('reports a FlightLoop step error and discards the session', async () => {
+    // Reproduce the allowed gains / infeasible horizontal thrust case in position_control/tests.rs:135-150.
+    const gains = { MPC_THR_HOVER: 0.1, MPC_THR_MIN: 0.05, MPC_THR_MAX: 0.2, MPC_TILTMAX_AIR: 89, MPC_MAN_TILT_MAX: 89 }
+    const mode = 'altitude' as const
+    const setpoint = { sticks: { ...centeredSticks, forward: 1, throttle: 1 } }
+    const started = await flightStart(sup, { ...startInput(), ...air, controller: { mode }, gains })
+    if (!started.ok) throw new Error(started.error.message)
+    const failure = /INVALID_PARAMS: nonfinite thrust\/integral/
+    await expect(sup.stepFlightSession({ steps, setpoint })).rejects.toThrow(failure)
+    await expect(sup.stepFlightSession({ steps, setpoint })).rejects.toThrow(/NO_SESSION/)
+    await expect(sup.runSim({ ...air, durationS, controller: { mode, ...setpoint, gains } })).rejects.toThrow(failure)
+  })
 })

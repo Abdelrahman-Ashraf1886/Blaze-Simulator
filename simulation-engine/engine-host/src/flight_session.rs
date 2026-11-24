@@ -8,12 +8,12 @@
 //! The engine never runs on its own clock, so a session is deterministic: any
 //! chunking of the same setpoint ends in the same state hash as one `sim.run`
 //! in controller mode of the same duration (rotors and battery included).
-use crate::engine::{controlled, loaded_vehicle, parse_environment, setpoint};
-use crate::protocol::{ControllerRequest, ErrorCode, Response};
+use crate::engine::{controlled, loaded_vehicle, manual_flight, parse_environment, setpoint, step_manual};
+use crate::protocol::{present, ControllerRequest, ErrorCode, FlightLoopDiagnostic, FlightModeRequest, Response};
 use engine_core::aero::BodyDrag;
 use engine_core::closed_loop::{ClosedLoop, ControlDiagnostic};
-use engine_core::controller::Setpoint;
 use engine_core::flight::{BatteryReading, Cutoff, EndReason, Flight, MotorReading, StepLoads};
+use engine_core::flight_loop::FlightLoop;
 use engine_core::propulsion::Propulsion;
 use engine_core::sim::{hash_hex, SimConfig, SimState, Simulation, DEFAULT_DT_S};
 use engine_core::vehicle::Vehicle;
@@ -27,8 +27,22 @@ pub const MAX_SESSION_STEPS: u64 = 100;
 
 pub struct Session {
     sim: Simulation,
-    cl: ClosedLoop,
+    controller: SessionController,
     air_density_kg_m3: f64,
+}
+
+enum SessionController {
+    Legacy(Box<ClosedLoop>),
+    Manual { loop_: Box<FlightLoop>, mode: FlightModeRequest },
+}
+
+impl SessionController {
+    fn flight(&self) -> &Flight {
+        match self {
+            Self::Legacy(cl) => cl.flight(),
+            Self::Manual { loop_, .. } => loop_.flight(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -45,6 +59,18 @@ struct StartParams {
     /// Overrides of the PX4 v1.13.3 defaults by exact parameter name.
     #[serde(default)]
     gains: Option<Map<String, Value>>,
+    #[serde(default, deserialize_with = "present")]
+    controller: Option<ManualControllerParams>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManualControllerParams {
+    mode: FlightModeRequest,
+    #[serde(default, deserialize_with = "present")]
+    airmode: Option<f64>,
+    #[serde(default, deserialize_with = "present")]
+    thrust_model_factor: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -58,7 +84,7 @@ enum CutoffRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StepParams {
     steps: u64,
-    /// altitudeM, climbRateMps, attitude, yawRateRadps as in `sim.run`'s `controller`; no gains here.
+    /// The held setpoint, with an optional mode change for FlightLoop sessions.
     setpoint: ControllerRequest,
 }
 
@@ -72,24 +98,32 @@ struct Diagnostic<'a> {
     /// What acted on the body over the last step, by source; zero before the first step.
     loads: &'a StepLoads,
     air_density_kg_m3: f64,
-    /// The controller's last step; null before the first step.
+    /// The 4.7 controller's last step; null until it has stepped.
     control: Option<ControlDiagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    flight_loop: Option<FlightLoopDiagnostic>,
 }
 
 fn diagnostic(s: &Session) -> Diagnostic<'_> {
     let state = s.sim.state();
+    let flight = s.controller.flight();
+    let (control, flight_loop) = match &s.controller {
+        SessionController::Legacy(cl) => ((state.steps > 0).then(|| cl.control()), None),
+        SessionController::Manual { loop_, .. } => (None, loop_.last_step().map(FlightLoopDiagnostic::from)),
+    };
     Diagnostic {
         state,
-        motors: s.cl.flight().motors(),
-        battery: s.cl.flight().battery(),
-        loads: s.cl.flight().loads(),
+        motors: flight.motors(),
+        battery: flight.battery(),
+        loads: flight.loads(),
         air_density_kg_m3: s.air_density_kg_m3,
-        control: (state.steps > 0).then(|| s.cl.control()),
+        control,
+        flight_loop,
     }
 }
 
 fn end_reason(s: &Session) -> Option<&'static str> {
-    s.cl.flight().ended().map(|r| match r {
+    s.controller.flight().ended().map(|r| match r {
         EndReason::VoltageCutoff => "voltageCutoff",
         EndReason::ChargeCutoff => "chargeCutoff",
     })
@@ -151,13 +185,20 @@ pub fn start(
     if let Err(e) = flight.set_cutoff(cutoff) {
         return bad(format!("cutoff: {e}"));
     }
-    // The setpoint of this request is only level; every step brings its own.
-    let controller = ControllerRequest { altitude_m: None, climb_rate_mps: 0.0, attitude: None, yaw_rate_radps: 0.0, gains: p.gains };
-    let cl = match controlled(vehicle, propulsion, flight, &controller) {
-        Ok((cl, _)) => cl,
-        Err(e) => return bad(e),
+    let controller = if let Some(c) = p.controller {
+        match manual_flight(vehicle, propulsion, flight, p.gains.as_ref(), c.airmode, c.thrust_model_factor) {
+            Ok(loop_) => SessionController::Manual { loop_: Box::new(loop_), mode: c.mode },
+            Err(e) => return bad(e),
+        }
+    } else {
+        // The setpoint of this request is only level; every step brings its own.
+        let c = ControllerRequest { gains: p.gains, ..ControllerRequest::default() };
+        match controlled(vehicle, propulsion, flight, &c) {
+            Ok((cl, _)) => SessionController::Legacy(Box::new(cl)),
+            Err(e) => return bad(e),
+        }
     };
-    let session = Session { sim, cl, air_density_kg_m3: rho };
+    let session = Session { sim, controller, air_density_kg_m3: rho };
     let response = Response::ok(
         id,
         json!({
@@ -186,24 +227,49 @@ pub fn step(id: u64, mut params: Map<String, Value>, slot: &mut Option<Session>)
     if p.setpoint.gains.is_some() {
         return bad("gains are set by flight.session.start, not per step".into());
     }
-    let sp: Setpoint = match setpoint(&p.setpoint) {
-        Ok(s) => s,
-        Err(e) => return bad(format!("setpoint: {e}")),
-    };
+    if p.setpoint.airmode.is_some() || p.setpoint.thrust_model_factor.is_some() {
+        return bad("airmode and thrustModelFactor are set by flight.session.start".into());
+    }
     // Contact times are products `k · dt` of the step index (`Simulation::step`), so the
     // window [t0, t1) compares exactly: an event belongs to the steps run here when its
     // start or end time falls in it. A step that reaches the cut-off still advances the body.
     let first = session.sim.state().steps;
     let mut ran = 0;
-    while ran < p.steps && session.cl.flight().ended().is_none() {
-        session.cl.step(&mut session.sim, &sp);
-        ran += 1;
+    match &mut session.controller {
+        SessionController::Legacy(cl) => {
+            if p.setpoint.mode.is_some() {
+                return bad("setpoint.mode requires controller.mode at flight.session.start".into());
+            }
+            let sp = match setpoint(&p.setpoint) {
+                Ok(s) => s,
+                Err(e) => return bad(format!("setpoint: {e}")),
+            };
+            while ran < p.steps && cl.flight().ended().is_none() {
+                cl.step(&mut session.sim, &sp);
+                ran += 1;
+            }
+        }
+        SessionController::Manual { loop_, mode } => {
+            let selected = p.setpoint.mode.unwrap_or(*mode);
+            let command = match p.setpoint.flight_command(selected) {
+                Ok(command) => command,
+                Err(e) => return bad(format!("setpoint: {e}")),
+            };
+            while ran < p.steps && loop_.flight().ended().is_none() {
+                if let Err(e) = step_manual(loop_, &mut session.sim, command) {
+                    *slot = None;
+                    return bad(e);
+                }
+                ran += 1;
+            }
+            *mode = selected;
+        }
     }
     let (t0, t1) = (first as f64 * DEFAULT_DT_S, session.sim.state().steps as f64 * DEFAULT_DT_S);
     let within = |t: f64| t >= t0 && t < t1;
     let (all, contacts_dropped) = session.sim.contacts();
     let contacts: Vec<_> = all.into_iter().filter(|c| within(c.start_s) || c.end_s.is_some_and(within)).collect();
-    let hash = session.sim.state_hash_with(&session.cl.flight().hash_words());
+    let hash = session.sim.state_hash_with(&session.controller.flight().hash_words());
     Response::ok(
         id,
         json!({

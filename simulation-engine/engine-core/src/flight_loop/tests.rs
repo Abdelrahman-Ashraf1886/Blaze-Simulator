@@ -218,6 +218,34 @@ fn airborne_estimation_replays_the_same_hash() {
 }
 
 #[test]
+fn last_step_reports_resolved_setpoints_and_the_active_mode() {
+    use super::FlightMode;
+
+    let (mut sim, mut controller, _) = hover_fixture(true, SimConfig::default());
+    assert!(controller.last_step().is_none());
+    controller.step(&mut sim, FlightCommand::Altitude(Sticks::default())).unwrap();
+    let snapshot = controller.last_step().unwrap();
+    assert_eq!(snapshot.mode, FlightMode::Altitude);
+    assert!(snapshot.position_setpoint[..2].iter().all(|v| v.is_nan()));
+    assert!(snapshot.position_setpoint[2].is_finite());
+    assert_eq!(
+        snapshot.velocity_setpoint.map(f64::to_bits),
+        controller.velocity_feedback.unwrap().map(f64::to_bits),
+    );
+    assert!(snapshot.acceleration_setpoint.iter().all(|v| v.is_finite()));
+    assert_eq!(snapshot.velocity_integral, controller.position.velocity_integral());
+    assert_eq!(snapshot.hover_thrust, controller.hover_thrust_estimate());
+    assert_eq!(snapshot.saturation.positive, controller.saturation.positive);
+    assert_eq!(snapshot.saturation.negative, controller.saturation.negative);
+
+    controller.step(&mut sim, FlightCommand::Stabilized(Sticks::default())).unwrap();
+    let snapshot = controller.last_step().unwrap();
+    assert_eq!(snapshot.mode, FlightMode::Stabilized);
+    assert!(snapshot.position_setpoint.iter().chain(&snapshot.velocity_setpoint)
+        .chain(&snapshot.acceleration_setpoint).all(|v| v.is_nan()));
+}
+
+#[test]
 fn estimator_refuses_an_indivisible_step_before_advancing() {
     let config = SimConfig { dt_s: ESTIMATE_INTERVAL_S * 2.0 / 3.0, ..SimConfig::default() };
     let (mut sim, mut controller, _) = hover_fixture(true, config);

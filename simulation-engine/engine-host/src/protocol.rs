@@ -19,6 +19,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use engine_core::closed_loop::SaturationDiagnostic;
+use engine_core::flight_loop::{FlightLoopSnapshot, FlightMode};
+use engine_core::flight_modes::{FlightCommand, Sticks};
+
 pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -99,26 +103,149 @@ pub enum Command {
     },
 }
 
-/// The controller's setpoint and gain overrides for `sim.run`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+/// The controller setpoint and settings for `sim.run` and live flight.
+#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ControllerRequest {
     /// CoM height to hold, m (world z); absent or null = hold `climbRateMps`.
     #[serde(default)]
     pub altitude_m: Option<f64>,
     /// Vertical velocity setpoint (or feed-forward with an altitude), m/s, up positive.
-    #[serde(default)]
-    pub climb_rate_mps: f64,
+    #[serde(default, deserialize_with = "present")]
+    pub climb_rate_mps: Option<f64>,
     /// Attitude setpoint, unit quaternion x y z w (body → world); absent = level.
     #[serde(default)]
     pub attitude: Option<[f64; 4]>,
     /// Yaw-rate feed-forward about world +z, rad/s (CCW positive).
-    #[serde(default)]
-    pub yaw_rate_radps: f64,
+    #[serde(default, deserialize_with = "present")]
+    pub yaw_rate_radps: Option<f64>,
     /// Overrides of the PX4 v1.13.3 defaults by exact parameter name, e.g. {"MC_ROLL_P": 7}.
     #[serde(default)]
     pub gains: Option<serde_json::Map<String, Value>>,
+    #[serde(default, deserialize_with = "present")]
+    pub mode: Option<FlightModeRequest>,
+    #[serde(default, deserialize_with = "present")]
+    pub sticks: Option<StickRequest>,
+    #[serde(default, deserialize_with = "present")]
+    pub body_radps: Option<[f64; 3]>,
+    #[serde(default, deserialize_with = "present")]
+    pub collective: Option<f64>,
+    #[serde(default, deserialize_with = "present")]
+    pub airmode: Option<f64>,
+    #[serde(default, deserialize_with = "present")]
+    pub thrust_model_factor: Option<f64>,
 }
+
+// Distinguish omitted fields from explicit null, except for nullable legacy fields.
+pub(crate) fn present<'de, T: Deserialize<'de>, D: serde::Deserializer<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FlightModeRequest {
+    Rates,
+    Stabilized,
+    Altitude,
+    Position,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StickRequest {
+    pub forward: f64,
+    pub right: f64,
+    pub yaw_right: f64,
+    pub throttle: f64,
+}
+
+impl ControllerRequest {
+    pub(crate) fn manual_field(&self) -> Option<&'static str> {
+        [
+            ("sticks", self.sticks.is_some()),
+            ("bodyRadps", self.body_radps.is_some()),
+            ("collective", self.collective.is_some()),
+            ("airmode", self.airmode.is_some()),
+            ("thrustModelFactor", self.thrust_model_factor.is_some()),
+        ].into_iter().find_map(|(field, supplied)| supplied.then_some(field))
+    }
+
+    pub(crate) fn flight_command(&self, mode: FlightModeRequest) -> Result<FlightCommand, String> {
+        if self.altitude_m.is_some() || self.climb_rate_mps.is_some() || self.attitude.is_some() || self.yaw_rate_radps.is_some() {
+            return Err("altitudeM, climbRateMps, attitude and yawRateRadps are for the 4.7 controller".into());
+        }
+        // Keep request validation aligned with FlightModes::step.
+        let with_sticks: fn(Sticks) -> FlightCommand = match mode {
+            FlightModeRequest::Stabilized => FlightCommand::Stabilized,
+            FlightModeRequest::Altitude => FlightCommand::Altitude,
+            FlightModeRequest::Position => FlightCommand::Position,
+            FlightModeRequest::Rates => {
+                if self.sticks.is_some() {
+                    return Err("sticks are for stabilized, altitude and position modes".into());
+                }
+                let body_radps = self.body_radps.filter(|rates| rates.iter().all(|v| v.is_finite()))
+                    .ok_or("rates mode requires finite bodyRadps")?;
+                let collective = self.collective.filter(|v| (0.0..=1.0).contains(v))
+                    .ok_or("rates mode requires collective in [0, 1]")?;
+                return Ok(FlightCommand::Rates { body_radps, collective });
+            }
+        };
+        if self.body_radps.is_some() || self.collective.is_some() {
+            return Err("bodyRadps and collective require rates mode".into());
+        }
+        let StickRequest { forward, right, yaw_right, throttle } = self.sticks.ok_or("mode requires sticks")?;
+        for (field, value) in [("forward", forward), ("right", right), ("yawRight", yaw_right), ("throttle", throttle)] {
+            if !(-1.0..=1.0).contains(&value) {
+                return Err(format!("sticks.{field} must be in [-1, 1]"));
+            }
+        }
+        Ok(with_sticks(Sticks { forward, right, yaw_right, throttle }))
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FlightLoopDiagnostic {
+    mode: FlightModeRequest,
+    position_setpoint_m: [Option<f64>; 3],
+    velocity_setpoint_mps: [Option<f64>; 3],
+    acceleration_setpoint_mps2: [Option<f64>; 3],
+    saturation: SaturationDiagnostic,
+    velocity_integral: [Option<f64>; 3],
+    hover_thrust: HoverThrustDiagnostic,
+}
+
+#[derive(Debug, Serialize)]
+struct HoverThrustDiagnostic {
+    estimate: Option<f64>,
+    variance: Option<f64>,
+    valid: bool,
+}
+
+impl From<FlightLoopSnapshot> for FlightLoopDiagnostic {
+    fn from(snapshot: FlightLoopSnapshot) -> Self {
+        let finite = |v: f64| v.is_finite().then_some(v);
+        Self {
+            mode: match snapshot.mode {
+                FlightMode::Rates => FlightModeRequest::Rates,
+                FlightMode::Stabilized => FlightModeRequest::Stabilized,
+                FlightMode::Altitude => FlightModeRequest::Altitude,
+                FlightMode::Position => FlightModeRequest::Position,
+            },
+            position_setpoint_m: snapshot.position_setpoint.map(finite),
+            velocity_setpoint_mps: snapshot.velocity_setpoint.map(finite),
+            acceleration_setpoint_mps2: snapshot.acceleration_setpoint.map(finite),
+            saturation: snapshot.saturation,
+            velocity_integral: snapshot.velocity_integral.map(finite),
+            hover_thrust: HoverThrustDiagnostic {
+                estimate: finite(snapshot.hover_thrust.hover_thrust),
+                variance: finite(snapshot.hover_thrust.variance),
+                valid: snapshot.hover_thrust.valid,
+            },
+        }
+    }
+}
+
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Request {

@@ -51,6 +51,11 @@ pub enum Command {
         #[serde(flatten)]
         params: serde_json::Map<String, Value>,
     },
+    #[serde(rename = "stepTest.run")]
+    StepTestRun {
+        #[serde(flatten)]
+        params: serde_json::Map<String, Value>,
+    },
     /// Validates a `VehicleDefinition` and, if valid, makes it the vehicle
     /// that `sim.run` simulates. An invalid one clears the loaded vehicle.
     /// `propulsion` (optional, additive in 4.5) carries the per-motor

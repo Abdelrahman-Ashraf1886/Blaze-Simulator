@@ -54,6 +54,49 @@ fn rates_pass_through_without_stick_shaping() {
 }
 
 #[test]
+fn direct_setpoints_bypass_stick_shaping_and_reset_the_manual_task() {
+    let mut m = modes(4.0);
+    let state = rest();
+    let stick = FlightCommand::Stabilized(Sticks { forward: 1.0, ..Default::default() });
+    m.step(stick, &state, None, false, DT).unwrap();
+    let attitude = [0.0, 0.0, 1.0, 0.0];
+    let ModeSetpoint::Attitude { attitude: actual, yaw_rate, collective } = m.step(
+        FlightCommand::AttitudeSetpoint { attitude, yaw_rate: PI, collective: 0.5 },
+        &state, None, true, DT,
+    ).unwrap() else { panic!("expected direct attitude"); };
+    assert_eq!((actual, yaw_rate, collective), (attitude, PI, 0.5));
+    let ModeSetpoint::Attitude { attitude, .. } = m.step(
+        FlightCommand::Stabilized(Sticks::default()), &state, None, false, DT,
+    ).unwrap() else { panic!("expected stabilized attitude"); };
+    assert_eq!(attitude, [0.0, 0.0, 0.0, 1.0]);
+
+    let waypoint = PositionSetpoint { position: [0.0, 1.0, -1.0], ..Default::default() };
+    let ModeSetpoint::Position(actual) = m.step(
+        FlightCommand::PositionSetpoint(waypoint), &state, None, true, DT,
+    ).unwrap() else { panic!("expected direct position"); };
+    assert_eq!(actual.position, waypoint.position);
+    assert!(actual.velocity.iter().all(|x| x.is_nan()));
+    assert!(actual.yaw.is_nan());
+    let locked = position(&mut m, FlightCommand::Position(Sticks::default()), &state);
+    assert_eq!(locked.position, state.position);
+}
+
+#[test]
+fn direct_setpoints_refuse_invalid_quaternions_and_position_layers() {
+    let mut m = modes(4.0);
+    for command in [
+        FlightCommand::AttitudeSetpoint { attitude: [0.0; 4], yaw_rate: 0.0, collective: 0.5 },
+        FlightCommand::AttitudeSetpoint { attitude: [0.0, 0.0, 0.0, 1.0], yaw_rate: f64::NAN, collective: 0.5 },
+        FlightCommand::PositionSetpoint(PositionSetpoint { position: [0.0, f64::NAN, 0.0], ..Default::default() }),
+        FlightCommand::PositionSetpoint(PositionSetpoint { yaw: f64::INFINITY, ..Default::default() }),
+        FlightCommand::PositionSetpoint(PositionSetpoint::default()),
+    ] {
+        assert!(m.step(command, &rest(), None, false, DT).is_err());
+        assert_eq!(m.active, None);
+    }
+}
+
+#[test]
 fn stabilized_diagonal_limits_tilt_and_preserves_axis_angle_yaw() {
     let mut m = modes(4.0);
     let sticks = Sticks {

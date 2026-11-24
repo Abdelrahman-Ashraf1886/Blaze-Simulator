@@ -166,7 +166,8 @@ impl HoverStart {
         let loads = flight.rotor_loads(rapier3d_f64::math::Vector::ZERO);
         // Only the lift must match the weight. A real build's CoM is never exactly centred:
         // its torque is reported, and trimmed by the controller during the hold.
-        if !((loads.force_body_n[2] / weight - 1.0).abs() <= 1e-9) {
+        let lift_error = (loads.force_body_n[2] / weight - 1.0).abs();
+        if lift_error.is_nan() || lift_error > 1e-9 {
             return Err("the vehicle has no level hover at equal collective".into());
         }
         Ok(Self { flight, collective, imbalance_nm: loads.torque_body_nm.to_array() })

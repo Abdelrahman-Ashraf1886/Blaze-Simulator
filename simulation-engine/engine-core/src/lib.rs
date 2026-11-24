@@ -22,6 +22,7 @@ pub mod math;
 pub mod propulsion;
 pub mod takeoff;
 pub mod land_detector;
+pub mod auto_modes;
 pub mod scenario;
 pub mod step_test;
 pub mod trace;

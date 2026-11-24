@@ -79,6 +79,10 @@ impl Takeoff {
         self.state
     }
 
+    pub(crate) fn ramp_time_s(&self) -> f64 {
+        self.params.mpc_tko_ramp_t
+    }
+
     /// Velocity limit that yields zero thrust at zero measured velocity.
     /// Takeoff.cpp:42-46 uses `-g/P`: negative Z-up means a downward limit
     /// (equivalently `+g/P` in NED). Keep the PX4 gain floor in this formula.

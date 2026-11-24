@@ -238,7 +238,7 @@ fn acceleration_mode_limits_first_jerk_integrates_velocity_and_brakes() {
 }
 
 #[test]
-fn ground_contact_selects_stabilized_until_airborne() {
+fn landed_altitude_and_position_keep_the_position_task() {
     for cmd in [
         FlightCommand::Altitude(Sticks::default()),
         FlightCommand::Position(Sticks::default()),
@@ -246,7 +246,7 @@ fn ground_contact_selects_stabilized_until_airborne() {
         let mut m = modes(4.0);
         assert!(matches!(
             m.step(cmd, &rest(), None, true, DT).unwrap(),
-            ModeSetpoint::Attitude { .. }
+            ModeSetpoint::Position(_)
         ));
         assert!(matches!(
             m.step(cmd, &rest(), None, false, DT).unwrap(),

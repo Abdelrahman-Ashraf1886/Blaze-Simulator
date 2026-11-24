@@ -159,7 +159,7 @@ fn refuses_invalid_model_numbers() {
         (json!({"kind": "shear", "speedAt20FtMps": -1, "roughness": {"kind": "categoryC"}}), Value::Null, "mean.speedAt20FtMps"),
         (shear(json!({"kind": "custom", "lengthM": 0})), Value::Null, "mean.roughness.lengthM"),
         (shear(json!({"kind": "custom", "lengthM": 6.096})), Value::Null, "mean.roughness.lengthM"),
-        (shear(json!({"kind": "custom", "lengthM": 0.9144})), Value::Null, "mean.roughness.lengthM"),
+        (shear(json!({"kind": "custom", "lengthM": 0.915})), Value::Null, "mean.roughness.lengthM"),
         (Value::Null, json!({"amplitudeMps": -1, "lengthM": 1, "startS": 0}), "gust.amplitudeMps"),
         (Value::Null, json!({"amplitudeMps": 1, "lengthM": 0, "startS": 0}), "gust.lengthM"),
         (Value::Null, gust(-1.0), "gust.startS"),

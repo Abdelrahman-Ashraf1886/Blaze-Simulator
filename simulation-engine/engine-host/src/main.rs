@@ -25,7 +25,7 @@ fn main() {
             Err(error) => (error, false),
             Ok(req) => engine.handle(req, line),
         };
-        if writeln!(stdout, "{}", response.to_line()).and_then(|_| stdout.flush()).is_err() {
+        if writeln!(stdout, "{}", response.into_line()).and_then(|_| stdout.flush()).is_err() {
             break; // host closed the pipe
         }
         if stop {

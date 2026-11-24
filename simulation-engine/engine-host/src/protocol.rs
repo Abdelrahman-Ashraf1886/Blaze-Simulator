@@ -399,7 +399,7 @@ impl Response {
         Self::SessionLogLine(line)
     }
 
-    pub fn to_line(self) -> String {
+    pub fn into_line(self) -> String {
         match self {
             Self::SessionLogLine(line) => line,
             response => serde_json::to_string(&response).expect("responses always serialize"),
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn malformed_json_is_invalid_json_without_id() {
         let err = parse_request("{not json").unwrap_err();
-        let v: Value = serde_json::from_str(&err.to_line()).unwrap();
+        let v: Value = serde_json::from_str(&err.into_line()).unwrap();
         assert_eq!(v["ok"], json!(false));
         assert_eq!(v["id"], Value::Null);
         assert_eq!(v["error"]["code"], json!("INVALID_JSON"));
@@ -474,7 +474,7 @@ mod tests {
     #[test]
     fn unknown_command_echoes_id() {
         let err = parse_request(r#"{"id":7,"type":"fly"}"#).unwrap_err();
-        let v: Value = serde_json::from_str(&err.to_line()).unwrap();
+        let v: Value = serde_json::from_str(&err.into_line()).unwrap();
         assert_eq!(v["id"], json!(7));
         assert_eq!(v["error"]["code"], json!("INVALID_REQUEST"));
     }
@@ -482,7 +482,7 @@ mod tests {
     #[test]
     fn missing_id_is_invalid_request() {
         let err = parse_request(r#"{"type":"ping"}"#).unwrap_err();
-        let v: Value = serde_json::from_str(&err.to_line()).unwrap();
+        let v: Value = serde_json::from_str(&err.into_line()).unwrap();
         assert_eq!(v["error"]["code"], json!("INVALID_REQUEST"));
     }
 
@@ -492,7 +492,7 @@ mod tests {
             5,
             HelloResult { engine_version: "0.1.0".into(), protocol_version: 1, threads: 4 },
         );
-        let v: Value = serde_json::from_str(&r.to_line()).unwrap();
+        let v: Value = serde_json::from_str(&r.into_line()).unwrap();
         assert_eq!(
             v,
             json!({"id":5,"ok":true,"result":{"engineVersion":"0.1.0","protocolVersion":1,"threads":4}})

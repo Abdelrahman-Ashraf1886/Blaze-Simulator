@@ -40,6 +40,27 @@ export function getCalibratedInput(handle: DeviceHandle): CalibratedInput {
   return deviceState(handle, saved.status === 'saved' ? saved.calibration : undefined)
 }
 
+/** Read the current poll at the flight step boundary, even when the sticks have stayed still. */
+export function createLiveCalibratedInputReader(handle: DeviceHandle): () => CalibratedInput {
+  const saved = readInputCalibration(handle.id)
+  return () => {
+    let samples: readonly (Gamepad | null)[]
+    try {
+      samples = navigator.getGamepads?.() ?? []
+    } catch {
+      return { connected: true, sticks: null }
+    }
+    const pad = samples[handle.index]
+    if (!pad?.connected || pad.id !== handle.id || pad.index !== handle.index) return { connected: false, sticks: null }
+    return {
+      connected: true,
+      sticks: saved.status === 'saved' ? readSticks({
+        ...handle, mapping: pad.mapping === 'standard' ? 'standard' : '', axes: pad.axes, buttons: pad.buttons,
+      }, saved.calibration) : null,
+    }
+  }
+}
+
 /** A subscription uses the saved calibration at start. Re-select after reconnecting. */
 export function subscribeCalibratedInput(
   handle: DeviceHandle,

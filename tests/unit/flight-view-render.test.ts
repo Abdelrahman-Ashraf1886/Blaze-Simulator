@@ -16,7 +16,14 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
   const server = await createServer({
     configFile: false,
     cacheDir: resolve(tmpdir(), 'blaze-flight-render-test'),
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: 'flight-test-router',
+        resolveId: (id) => id === 'virtual:flight-test-router' ? '\0virtual:flight-test-router' : undefined,
+        load: (id) => id === '\0virtual:flight-test-router' ? 'export { MemoryRouter } from "react-router"' : undefined,
+      },
+    ],
     optimizeDeps: { noDiscovery: true, include: [] },
     resolve: { alias: { '@': resolve('src') } },
     // No file watcher: see rotor-spin.test.ts (the main checkout's root holds .claude/worktrees).
@@ -48,6 +55,8 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
       mode: 'stabilized',
       requestedMode: 'position',
       takeoffState: 'rampUp',
+      autoMode: 'hold',
+      commandFinished: true,
       landState: { freefall: false, groundContact: true, maybeLanded: true, landed: false },
       positionSetpointM: [null, null, null],
       velocitySetpointMps: [0, null, 1],
@@ -55,6 +64,36 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
       velocityIntegral: [null, 0, 1],
       hoverThrust: { estimate: 0.5, standardDeviation: 0.1, valid: false },
       saturation: { positive: [false, false, false, false], negative: [false, false, false, false] },
+    }
+    expect(renderMode()).toContain('Finished')
+    expect(renderMode()).toContain('Ramping up')
+    expect(renderMode()).toContain('Landed no')
+
+    const controls = await server.ssrLoadModule('/src/features/flight/FlightControls.tsx') as {
+      FlightInputSelector: ComponentType<typeof selectorProps>
+      FlightPauseControls: ComponentType<typeof pauseProps>
+      FlightCommandControls: ComponentType<typeof commandProps>
+    }
+    const { MemoryRouter } = await server.ssrLoadModule('virtual:flight-test-router') as typeof import('react-router')
+    const pad = { id: 'Test pad', index: 0, connection: 0, calibrated: false }
+    const selectorProps = {
+      options: [pad], selected: pad, locked: false, mode: 'attitudeHold', onChange: () => {},
+    }
+    const selector = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(controls.FlightInputSelector, selectorProps)))
+    for (const text of ['Keyboard', 'Needs calibration', 'href="/input"', 'Attitude hold uses keyboard only']) {
+      expect(selector).toContain(text)
+    }
+    const pauseProps = {
+      paused: 'blur', blocker: 'disconnect', device: true, sticks: null, onToggle: () => {},
+    }
+    const pause = renderToStaticMarkup(createElement(controls.FlightPauseControls, pauseProps))
+    for (const text of ['Resume', 'disabled', 'Input device disconnected', 'Live sticks unavailable']) expect(pause).toContain(text)
+    const commandProps = {
+      command: { type: 'land' }, height: '', paused: false, onHeight: () => {}, onCommand: () => {},
+    }
+    const commands = renderToStaticMarkup(createElement(controls.FlightCommandControls, commandProps))
+    for (const text of ['MIS_TAKEOFF_ALT (2.5 m)', 'm above start', '>Takeoff<', '>Hold<', '>Land<', '>Manual<']) {
+      expect(commands).toContain(text)
     }
     const loop = render()
     for (const label of ['Position setpoint', 'Velocity setpoint', 'Acceleration setpoint', 'Velocity integral', 'Hover thrust estimate', 'Hover thrust standard deviation', 'Invalid', '0.000 / — / 1.000']) {

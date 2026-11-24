@@ -74,7 +74,7 @@ it('server-renders both traces, metric outcomes, editable conventions and the em
       draft: EMPTY_STEP_TEST, errors: readStepTest(EMPTY_STEP_TEST).errors, disabled: true, running: false, dirty: true,
       onSubmit: () => {}, onChange: () => {},
     }))
-    for (const notice of ['free space with perfect state', 'estimator starts inactive', 'MPC_THR_HOVER', 'Unsaved gains', 'Enter an amplitude.']) expect(form).toContain(notice)
+    for (const notice of ['free space with perfect state', 'valid only after at least 2 s', 'MPC_THR_HOVER', 'Unsaved gains', 'Enter an amplitude.']) expect(form).toContain(notice)
     expect(form.match(/value=""/g)).toHaveLength(5)
     expect(form).toContain('aria-invalid="true"')
 

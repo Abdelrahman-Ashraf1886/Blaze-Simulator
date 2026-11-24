@@ -628,8 +628,13 @@ describe('a real engine session', () => {
     expect(last.data.diagnostic.control).toBeNull()
     const diag = FlightSessionStepResultSchema.parse(last.data).diagnostic.flightLoop!
     expect(diag.mode).toBe(mode)
-    expect(diag.hoverThrust.estimate).toBeCloseTo(gains.MPC_THR_HOVER)
-    expect(diag.hoverThrust.variance).toBeGreaterThanOrEqual(gains.HTE_HT_ERR_INIT ** 2)
+    // No ground: the estimator runs from the start. Only the position loop gives it a thrust to fuse;
+    // the rotors start at rest, so it is pushed to HTE_THR_RANGE (0.2) and is not valid, hence unused.
+    expect(Math.abs(diag.hoverThrust.estimate! - gains.MPC_THR_HOVER)).toBeLessThanOrEqual(0.2 + 1e-9)
+    if (mode === 'rates' || mode === 'stabilized') {
+      expect(diag.hoverThrust.estimate).toBeCloseTo(gains.MPC_THR_HOVER)
+      expect(diag.hoverThrust.variance).toBeGreaterThanOrEqual(gains.HTE_HT_ERR_INIT ** 2)
+    }
     expect(diag.hoverThrust.valid).toBe(false)
     if (mode === 'rates' || mode === 'stabilized') {
       expect(diag.positionSetpointM).toEqual([null, null, null])

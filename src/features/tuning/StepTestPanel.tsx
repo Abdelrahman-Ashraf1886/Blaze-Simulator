@@ -82,7 +82,7 @@ export function StepTestForm({ draft, errors, disabled, running, dirty, onSubmit
   return (
     <form onSubmit={onSubmit} className="space-y-2 border-t border-line py-2 text-[12.5px]">
       {/* step_test.rs:245–261, flight_loop.rs:235–253 and hover_thrust.rs:178–209. */}
-      <p className="text-fg-muted">Step tests run in free space with perfect state. The vehicle starts at the origin, below the hover-thrust estimator’s in-air height, so the estimator starts inactive. Vertical steps use MPC_THR_HOVER until a valid estimate is available and MPC_USE_HTE is enabled.</p>
+      <p className="text-fg-muted">Step tests run in free space with perfect state. There is no ground, so the hover-thrust estimator runs from the start, but its estimate is valid only after at least 2 s. Vertical steps use MPC_THR_HOVER until then, and always when MPC_USE_HTE is 0: allow a long enough hold.</p>
       <label htmlFor={`${id}-step`} className="block text-fg-muted">Step</label>
       <select id={`${id}-step`} className="h-7 w-full rounded-sm border border-line-strong bg-chrome px-2"
         value={draft.step} disabled={running} aria-invalid={Boolean(errors.step)} aria-describedby={errors.step ? `${id}-step-error` : undefined}

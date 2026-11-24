@@ -116,15 +116,23 @@ fn builtins_match_their_predictions() {
         assert!(r.passed, "{}: {:#?}", r.name, r.checks);
         assert_eq!(r.end_reason, ScenarioEnd::Duration);
     }
-    // Whole-loop hashes recorded from the pre-switch 4.7 controller. The
-    // balanced and payload fixtures start at the frame origin and never reach
-    // the estimator's in-air gate (hover_thrust.rs:187-191).
-    for (report, reference) in [
-        (&balanced, "af9ee8edce279002"), (&loaded, "61788a0a4243cc4a"),
-        (&offset, "9276b50498625d18"), (&overweight, "4e193a090a25a3b1"),
-        (&beyond, "953d2542adf2ee75"),
+    // Whole-loop hashes recorded from the pre-switch 4.7 controller, which had no hover
+    // estimator: with MPC_USE_HTE = 0 the new vertical loop reproduces them bit for bit.
+    let mut off = c.clone();
+    off.gains.mpc_use_hte = 0.0;
+    for (scenario, reference) in [
+        (balanced_hover(&v, &p, &off).unwrap(), "af9ee8edce279002"),
+        (payload(&v, &p, &off, 0.5).unwrap(), "61788a0a4243cc4a"),
+        (com_offset(&v, &p, &off, 0.02).unwrap(), "9276b50498625d18"),
+        (overweight_payload(&v, &p, &off).unwrap(), "4e193a090a25a3b1"),
+        (com_offset_beyond_authority(&v, &p, &off).unwrap(), "953d2542adf2ee75"),
     ] {
+        let report = execute_with(&v, &p, &off, &scenario);
         assert_eq!(report.final_state_hash, reference, "{}", report.name);
+        let on = [&balanced, &loaded, &offset, &overweight, &beyond].into_iter().find(|r| r.name == report.name).unwrap();
+        println!("{}: altitude error m, off {:?} on {:?}; max attitude error deg, off {:.4} on {:.4}; mean throttle, off {:.5} on {:.5}; hash on {}",
+            report.name, report.final_altitude_error_m, on.final_altitude_error_m, report.max_attitude_error_deg, on.max_attitude_error_deg,
+            report.mean_throttle.iter().sum::<f64>() / 4.0, on.mean_throttle.iter().sum::<f64>() / 4.0, on.final_state_hash);
     }
     // The independent hand numbers.
     let balance = check(&offset, |c| matches!(c, Check::ThrustBalance { .. }));

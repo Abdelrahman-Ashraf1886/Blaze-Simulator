@@ -64,6 +64,7 @@ interface PartRow {
   component_id: string | null
   inertia_json: string | null
   overrides_json?: string | null
+  camera_fov_deg?: number | null
 }
 
 const toPart = (r: PartRow): AssemblyPart => ({
@@ -82,6 +83,8 @@ const toPart = (r: PartRow): AssemblyPart => ({
   ...(r.inertia_json ? { inertia: JSON.parse(r.inertia_json) as AssemblyPart['inertia'] } : {}),
   // Omitted when there are none (schema v11).
   ...(r.overrides_json ? { overrides: JSON.parse(r.overrides_json) as AssemblyPart['overrides'] } : {}),
+  // Omitted when not set (schema v14).
+  ...(r.camera_fov_deg != null ? { cameraFovDeg: r.camera_fov_deg } : {}),
 })
 
 const wiringFields = (w: Pick<Assembly, 'wires' | 'schematic'>) => ({
@@ -527,6 +530,9 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
         for (const p of input.parts) {
           if (p.overrides && Object.keys(p.overrides).length > 0) setOverrides.run(JSON.stringify(p.overrides), p.id, input.projectId)
         }
+        // Schema v14, kept apart for the same reason.
+        const setFov = db.prepare('UPDATE assembly_parts SET camera_fov_deg = ? WHERE id = ? AND project_id = ?')
+        for (const p of input.parts) if (p.cameraFovDeg !== undefined) setFov.run(p.cameraFovDeg, p.id, input.projectId)
         db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(ts, input.projectId)
         return { revision, updatedAt: ts }
       }),

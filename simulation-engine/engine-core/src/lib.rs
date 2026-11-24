@@ -20,6 +20,8 @@ pub mod flight_loop;
 pub mod flight_modes;
 pub mod math;
 pub mod propulsion;
+pub mod takeoff;
+pub mod land_detector;
 pub mod scenario;
 pub mod step_test;
 pub mod trace;

@@ -1,7 +1,7 @@
 import '@/three/setup'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { GizmoHelper, GizmoViewport } from '@react-three/drei'
-import { Suspense, useMemo, useRef } from 'react'
+import { Suspense, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { DoubleSide, Quaternion, Vector3, type Group, type Mesh } from 'three'
 import type { AssemblyDocument, AssemblyPart, Spin } from '../../../electron/ipc/contract'
 import type { FrameGeometry } from '@/three/frame-geometry'
@@ -15,13 +15,27 @@ import { PropellerModel } from '@/three/part-models'
 import { toSI, type Unit } from '@/domain/units'
 import { frameToPose, type FlightFrame } from './frame'
 import { integrateRotorAngle, ROTOR_BLUR_THRESHOLD_RADPS, rotorIsBlurred } from './rotor-spin'
+import { readPref, writePref } from '@/lib/prefs'
+import { CameraRig, FlightCameraControls } from './camera-controls'
+import {
+  CAMERA_FAR_M, CAMERA_NEAR_M, cameraMount, cameraPrefKey, cameraSettingsFromPref, cameraSettingValid, followSettings,
+  hideCameraPart, initialDrag, isExterior, startingCameraSettings, type CameraDrag, type CameraMode,
+  type CameraSettings, type ExteriorMode,
+} from './camera-view'
 
-function FlightParts({ frame, doc, geo }: { frame: FlightFrame; doc: AssemblyDocument; geo: FrameGeometry }) {
+const readCameraSettings = (mode: ExteriorMode, starting: CameraSettings) =>
+  cameraSettingsFromPref(readPref<unknown>(cameraPrefKey(mode), null), starting)
+
+function FlightParts({ frame, doc, geo, hiddenCameraId }: {
+  frame: FlightFrame; doc: AssemblyDocument; geo: FrameGeometry; hiddenCameraId?: string
+}) {
   const components = useComponentIndex()
   const assets = useAssets((s) => s.assets)
   const models = useMemo(() => flightRotorModels(doc, geo, components, assets), [doc, geo, components, assets])
+  const stationary = useMemo(() => hiddenCameraId
+    ? hideCameraPart(models.stationary, geo, hiddenCameraId) : models.stationary, [models.stationary, geo, hiddenCameraId])
   return <>
-    <PartsModel doc={models.stationary} geo={geo} editable={false} />
+    <PartsModel doc={stationary} geo={geo} editable={false} />
     {models.rotors.map((rotor) => <SpinningPropeller key={rotor.prop.id} rotor={rotor} frame={frame} geo={geo} />)}
   </>
 }
@@ -120,57 +134,109 @@ function SpinningPropeller({ rotor, frame, geo }: { rotor: Rotor; frame: FlightF
   </group>
 }
 
-function FollowCamera({ frame, distance }: { frame: FlightFrame; distance: number }) {
-  const target = useMemo(() => new Vector3(), [])
-  useFrame(({ camera }) => {
-    target.set(...frame.positionM)
-    camera.up.set(0, 0, 1)
-    camera.position.set(target.x - distance, target.y - distance, target.z + distance * 0.7)
-    camera.lookAt(target)
-  })
-  return null
-}
-
-export function FlightViewport({ frame, doc, geo }: { frame: FlightFrame; doc: AssemblyDocument; geo: FrameGeometry }) {
+export function FlightViewport({ frame, doc, geo, projectId, running = false }: {
+  frame: FlightFrame; doc: AssemblyDocument; geo: FrameGeometry; projectId?: string; running?: boolean
+}) {
   const pose = frameToPose(frame)
-  const distance = Math.max(1.2, ...geo.arms.map((arm) => arm.length * 6))
+  const follow = useMemo(() => followSettings(geo), [geo])
+  const starting = startingCameraSettings(follow)
+  const cameraOptions = useMemo(() => ({
+    position: [-follow.distanceM, -follow.distanceM, follow.distanceM] as [number, number, number],
+    up: [0, 0, 1] as [number, number, number],
+    near: CAMERA_NEAR_M, far: CAMERA_FAR_M, fov: follow.fovDeg,
+  }), [follow])
+  const [mode, setMode] = useState<CameraMode>('Follow')
+  const [partId, choosePart] = useState('')
+  const [prefs, setPrefs] = useState<Record<ExteriorMode, CameraSettings>>(() => ({
+    Chase: readCameraSettings('Chase', starting),
+    Orbit: readCameraSettings('Orbit', starting),
+    Fixed: readCameraSettings('Fixed', starting),
+  }))
+  const [drag, setDrag] = useState<Partial<Record<'Orbit' | 'Fixed', CameraDrag>>>({})
+  const pointer = useRef<{ x: number; y: number } | null>(null)
+  const cameras = useMemo(() => doc.parts.filter((part) => part.kind === 'camera'), [doc.parts])
+  const part = cameras.find((entry) => entry.id === partId)
+  const mount = useMemo(() => part && cameraMount(doc, geo, part), [doc, geo, part])
+  const activeMode = mode === 'FPV' && !mount ? 'Follow' : mode
+  const settings = isExterior(activeMode) ? prefs[activeMode] : starting
+  const pointerMode = activeMode === 'Orbit' || activeMode === 'Fixed' ? activeMode : null
+
+  function moveCamera(event: PointerEvent<HTMLDivElement>, mode: 'Orbit' | 'Fixed') {
+    if (!pointer.current || !event.currentTarget.hasPointerCapture(event.pointerId)) return
+    const { clientWidth, clientHeight } = event.currentTarget
+    if (!clientWidth || !clientHeight) return
+    // A full-width drag is a revolution. A full-height drag moves one camera radius.
+    const azimuthRad = 2 * Math.PI * (pointer.current.x - event.clientX) / clientWidth
+    const heightM = settings.distanceM * (event.clientY - pointer.current.y) / clientHeight
+    pointer.current = { x: event.clientX, y: event.clientY }
+    setDrag((previous) => {
+      const current = previous[mode] ?? initialDrag
+      return {
+        ...previous,
+        [mode]: {
+          azimuthRad: (current.azimuthRad + azimuthRad) % (2 * Math.PI),
+          heightM: Math.max(-CAMERA_FAR_M, Math.min(CAMERA_FAR_M, current.heightM + heightM)),
+        },
+      }
+    })
+  }
+
   return (
-    <div className="pointer-events-none relative h-full min-h-[240px]" aria-label="Z-up flight view" data-testid="flight-viewport">
-      <Canvas camera={{ position: [-distance, -distance, distance], up: [0, 0, 1], near: 0.005, far: 500, fov: 45 }} dpr={[1, 2]} fallback={<p className="p-4 text-warn">WebGL is unavailable. Flight diagnostics remain available.</p>}>
-        <color attach="background" args={['#101215']} />
-        <ambientLight intensity={0.8} />
-        <directionalLight position={[3, -2, 5]} intensity={2} />
-        <FollowCamera frame={frame} distance={distance} />
-        <mesh position={[0, 0, -0.001]}>
-          <planeGeometry args={[200, 200]} />
-          <meshStandardMaterial color="#22262c" />
-        </mesh>
-        <gridHelper args={[200, 200, '#454c55', '#2f343b']} rotation-x={Math.PI / 2} />
-        {doc.environment?.obstacles.map((obstacle) => (
-          <mesh key={obstacle.id} position={obstacle.center} rotation-z={obstacle.yaw}>
-            <boxGeometry args={obstacle.size} />
-            <meshStandardMaterial color="#6b6255" />
+    <div className="flex h-full flex-col">
+      {projectId && <FlightCameraControls mode={activeMode} setMode={setMode} parts={cameras} part={part} choosePart={(id) => {
+        choosePart(id)
+        if (mode === 'FPV' && !cameras.some((entry) => entry.id === id && cameraSettingValid('fovDeg', entry.cameraFovDeg))) setMode('Follow')
+      }} projectId={projectId} mount={mount} settings={settings} starting={starting} update={(entry, key, value) => {
+        const next = { ...prefs[entry], [key]: value }
+        writePref(cameraPrefKey(entry), next)
+        setPrefs({ ...prefs, [entry]: next })
+      }} />}
+      <div className="pointer-events-none relative min-h-[240px] flex-1" aria-label="Z-up flight view" data-testid="flight-viewport" data-camera={activeMode}>
+        <Canvas camera={cameraOptions} dpr={[1, 2]} fallback={<p className="p-4 text-warn">WebGL is unavailable. Flight diagnostics remain available.</p>}>
+          <color attach="background" args={['#101215']} />
+          <ambientLight intensity={0.8} />
+          <directionalLight position={[3, -2, 5]} intensity={2} />
+          <CameraRig frame={frame} mode={activeMode} running={running} follow={follow} exterior={settings}
+            drag={pointerMode ? drag[pointerMode] ?? initialDrag : initialDrag} mount={mount} />
+          <mesh position={[0, 0, -0.001]}>
+            <planeGeometry args={[200, 200]} />
+            <meshStandardMaterial color="#22262c" />
           </mesh>
-        ))}
-        <group position={pose.position} quaternion={pose.quaternion}>
-          {/* Reused workshop models are display-only here; no editor gizmos or picking. */}
-          <group raycast={() => null}>
-            <Suspense fallback={null}>
-              <FrameModel geo={geo} params={doc.frame} />
-              <FlightParts frame={frame} doc={doc} geo={geo} />
-            </Suspense>
+          <gridHelper args={[200, 200, '#454c55', '#2f343b']} rotation-x={Math.PI / 2} />
+          {doc.environment?.obstacles.map((obstacle) => (
+            <mesh key={obstacle.id} position={obstacle.center} rotation-z={obstacle.yaw}>
+              <boxGeometry args={obstacle.size} />
+              <meshStandardMaterial color="#6b6255" />
+            </mesh>
+          ))}
+          <group position={pose.position} quaternion={pose.quaternion}>
+            {/* Reused workshop models are display-only here; no editor gizmos or picking. */}
+            <group raycast={() => null}>
+              <Suspense fallback={null}>
+                <FrameModel geo={geo} params={doc.frame} />
+                <FlightParts frame={frame} doc={doc} geo={geo} hiddenCameraId={activeMode === 'FPV' ? part?.id : undefined} />
+              </Suspense>
+            </group>
           </group>
-        </group>
-        <mesh position={pose.comWorld} renderOrder={10}>
-          <sphereGeometry args={[0.012, 16, 12]} />
-          <meshBasicMaterial color="#d9a03f" depthTest={false} />
-        </mesh>
-        <GizmoHelper alignment="bottom-right" margin={[48, 48]}>
-          <GizmoViewport disabled axisColors={['#e0605a', '#6fc27a', '#5aa7e0']} labelColor="#101215" />
-        </GizmoHelper>
-      </Canvas>
-      <p className="pointer-events-none absolute left-3 top-3 text-[12px] text-warn">Live engine · Follow camera · Amber sphere: CoM</p>
-      <p className="pointer-events-none absolute bottom-3 left-3 max-w-[70%] text-[12px] text-muted">Propeller motion blur: translucent discs at ≥{ROTOR_BLUR_THRESHOLD_RADPS.toFixed(1)} rad/s (900 rpm), or sooner at the display’s blade-sampling limit.</p>
+          <mesh position={pose.comWorld} renderOrder={10}>
+            <sphereGeometry args={[0.012, 16, 12]} />
+            <meshBasicMaterial color="#d9a03f" depthTest={false} />
+          </mesh>
+          <GizmoHelper alignment="bottom-right" margin={[48, 48]}>
+            <GizmoViewport disabled axisColors={['#e0605a', '#6fc27a', '#5aa7e0']} labelColor="#101215" />
+          </GizmoHelper>
+        </Canvas>
+        {pointerMode && <div className="pointer-events-auto absolute inset-0 cursor-grab touch-none active:cursor-grabbing"
+          onPointerDown={(event) => {
+            if (event.button !== 0 || !event.isPrimary) return
+            event.currentTarget.setPointerCapture(event.pointerId)
+            pointer.current = { x: event.clientX, y: event.clientY }
+          }}
+          onPointerMove={(event) => moveCamera(event, pointerMode)}
+          onLostPointerCapture={() => { pointer.current = null }} />}
+        <p className="pointer-events-none absolute left-3 top-3 text-[12px] text-warn">Live engine · {activeMode} camera · Amber sphere: CoM</p>
+        <p className="pointer-events-none absolute bottom-3 left-3 max-w-[70%] text-[12px] text-muted">Propeller motion blur: translucent discs at ≥{ROTOR_BLUR_THRESHOLD_RADPS.toFixed(1)} rad/s (900 rpm), or sooner at the display’s blade-sampling limit.</p>
+      </div>
     </div>
   )
 }

@@ -1,3 +1,5 @@
+import { isDeviceCalibration, type DeviceCalibration } from '../features/input/calibration'
+
 /**
  * Per-user UI conveniences (sidebar state and similar). Stored in localStorage;
  * every access is guarded because storage can be unavailable or cleared, and the
@@ -17,5 +19,39 @@ export function writePref(key: string, value: unknown): void {
     window.localStorage.setItem(key, JSON.stringify(value))
   } catch {
     /* preference is simply not remembered */
+  }
+}
+
+// Phase 6 plan D14 (phase-6-flight-environment.md:74).
+const inputCalibrationKey = (deviceId: string) => `input.calibration.${deviceId}`
+
+export type InputCalibrationPref =
+  | { status: 'missing' | 'invalid' | 'unavailable' }
+  | { status: 'saved'; calibration: DeviceCalibration }
+
+export function readInputCalibration(deviceId: string): InputCalibrationPref {
+  let raw: string | null
+  try {
+    raw = window.localStorage.getItem(inputCalibrationKey(deviceId))
+  } catch {
+    return { status: 'unavailable' }
+  }
+  if (raw === null) return { status: 'missing' }
+  try {
+    const calibration: unknown = JSON.parse(raw)
+    if (isDeviceCalibration(calibration)) return { status: 'saved', calibration }
+  } catch {
+    return { status: 'invalid' }
+  }
+  return { status: 'invalid' }
+}
+
+export function writeInputCalibration(deviceId: string, calibration: DeviceCalibration): boolean {
+  if (!isDeviceCalibration(calibration)) return false
+  try {
+    window.localStorage.setItem(inputCalibrationKey(deviceId), JSON.stringify(calibration))
+    return true
+  } catch {
+    return false
   }
 }

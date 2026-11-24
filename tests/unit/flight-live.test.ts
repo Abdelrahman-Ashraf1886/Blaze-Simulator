@@ -655,13 +655,14 @@ describe('a real engine session', () => {
     expect(batch.stateHash).toBe(last.data.stateHash)
   })
 
-  it('changes modes within a session and reports the ground stand-in', async () => {
+  it('changes modes within a session and keeps the mode on the ground (6.7 removed the Stabilized stand-in)', async () => {
     const started = await flightStart(sup, { ...startInput(), controller: { mode: 'rates' } })
     if (!started.ok) throw new Error(started.error.message)
     const settled = await sup.stepFlightSession({ steps, setpoint: { bodyRadps: v3(0, 0, 0), collective: 0 } })
     expect(settled.diagnostic.flightLoop?.mode).toBe('rates')
     const hold = await sup.stepFlightSession({ steps, setpoint: { mode: 'position', sticks: { ...centeredSticks, throttle: -1 } } })
-    expect(hold.diagnostic.flightLoop?.mode).toBe('stabilized')
+    // On the ground PX4 resets the setpoints (MulticopterPositionControl.cpp:422-432).
+    expect(hold.diagnostic.flightLoop?.mode).toBe('position')
     expect(hold.diagnostic.flightLoop?.positionSetpointM).toEqual([null, null, null])
     expect(hold.diagnostic.state.steps).toBe(2 * steps)
     expect(await flightEnd(sup)).toEqual({ ok: true, data: { ended: true } })

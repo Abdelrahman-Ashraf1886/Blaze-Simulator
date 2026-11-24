@@ -157,7 +157,7 @@ fn hover_fixture(enabled: bool, config: SimConfig) -> (Simulation, FlightLoop, f
     let g = PositionGains { mpc_use_hte: u8::from(enabled) as f64, ..PositionGains::px4_v1_13_3() };
     // Ground surface from environment/tests.rs:115-118. Start at the lower
     // slowdown altitude, above the estimator's in-air gate (hover_thrust.rs:187-191).
-    let env = Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), obstacles: vec![] };
+    let env = Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), terrain: None, obstacles: vec![] };
     let sim = Simulation::with_environment(&v, config, &env, [0.0, 0.0, g.mpc_land_alt2]).unwrap();
     let controller = FlightLoop::new(&v, flight, yaw_ratio, Gains::px4_v1_13_3(), g, 0, hover).unwrap();
     (sim, controller, predicted)

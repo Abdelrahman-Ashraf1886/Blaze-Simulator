@@ -1,8 +1,8 @@
-//! The world around the vehicle: a ground plane and box obstacles (4.4).
+//! The world around the vehicle: ground and fixed obstacles.
 //!
-//! - **Ground**: the plane z = 0 (world frame, +Z up), solid below. Optional:
-//!   `"ground": null` is free space, which the analytical tests use.
-//! - **Obstacles**: fixed boxes, each with a centre, half extents and attitude.
+//! - **Ground**: either the solid plane z = 0 (world frame, +Z up) or an
+//!   imported heightfield surface. Both may be absent.
+//! - **Obstacles**: fixed boxes, cylinders and convex hulls with a centre and attitude.
 //! - **Friction and restitution** of the ground and of every obstacle are the
 //!   user's inputs. No source states them for a given surface, so nothing
 //!   here has a default: a missing value refuses the environment, saying
@@ -50,9 +50,9 @@
 use crate::sim::ALLOWED_LINEAR_ERROR_M;
 use rapier3d_f64::math::{Pose, Rotation, Vector};
 
-use rapier3d_f64::parry::query;
+use rapier3d_f64::parry::{query, utils::Array2};
 use rapier3d_f64::prelude::{
-    CoefficientCombineRule, ColliderBuilder, ColliderHandle, PhysicsWorld, RigidBodyBuilder, RigidBodyHandle, SharedShape,
+    CoefficientCombineRule, Collider, ColliderBuilder, ColliderHandle, PhysicsWorld, RigidBodyBuilder, RigidBodyHandle, SharedShape,
 };
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -77,16 +77,37 @@ pub struct Obstacle {
     pub id: String,
     /// World frame, m.
     pub center: [f64; 3],
-    pub half_extents: [f64; 3],
+    #[serde(flatten)]
+    pub shape: ObstacleShape,
     /// x y z w, unit.
     pub quaternion: [f64; 4],
     pub surface: Surface,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum ObstacleShape {
+    Box { half_extents: [f64; 3] },
+    /// Axis = the obstacle frame's Z.
+    Cylinder { radius: f64, height: f64 },
+    /// Points in the obstacle frame.
+    Hull { points: Vec<[f64; 3]> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Terrain {
+    rows: usize,
+    columns: usize,
+    cell_size_m: f64,
+    corner_m: [f64; 2],
+    heights_m: Vec<f64>,
+    surface: Surface,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Environment {
-    /// None: no ground (free space).
     pub ground: Option<Surface>,
+    pub terrain: Option<Terrain>,
     pub obstacles: Vec<Obstacle>,
 }
 
@@ -123,14 +144,19 @@ fn array<const N: usize>(obj: &Map<String, Value>, path: &str, key: &str, errors
         errors.push(err(p, format!("must be an array of {N} numbers")));
         return None;
     };
-    let nums: Vec<f64> = items.iter().filter_map(Value::as_f64).filter(|x| x.is_finite()).collect();
-    if items.len() != N || nums.len() != N {
+    finite_array(items).or_else(|| {
         errors.push(err(p, format!("must be an array of {N} finite numbers")));
-        return None;
+        None
+    })
+}
+
+fn finite_array<const N: usize>(items: &[Value]) -> Option<[f64; N]> {
+    let items: &[Value; N] = items.try_into().ok()?;
+    let mut values = [0.0; N];
+    for (value, item) in values.iter_mut().zip(items) {
+        *value = item.as_f64().filter(|x| x.is_finite())?;
     }
-    let mut out = [0.0; N];
-    out.copy_from_slice(&nums);
-    Some(out)
+    Some(values)
 }
 
 fn surface(obj: &Map<String, Value>, path: &str, errors: &mut Vec<EnvironmentError>) -> Option<Surface> {
@@ -157,18 +183,230 @@ fn unknown_keys(obj: &Map<String, Value>, path: &str, allowed: &[&str], errors: 
     }
 }
 
+fn positive_number(obj: &Map<String, Value>, path: &str, key: &str, errors: &mut Vec<EnvironmentError>) -> Option<f64> {
+    let value = number(obj, path, key, errors)?;
+    if value <= 0.0 {
+        errors.push(err(format!("{path}.{key}"), "must be positive"));
+        return None;
+    }
+    Some(value)
+}
+
+impl Terrain {
+    fn from_json(obj: &Map<String, Value>, errors: &mut Vec<EnvironmentError>) -> Option<Self> {
+        let path = "environment.terrain";
+        unknown_keys(obj, path, &["rows", "columns", "cellSizeM", "cornerM", "heightsM", "friction", "restitution"], errors);
+        let mut dimension = |key| {
+            let n = number(obj, path, key, errors)?;
+            if n.fract() != 0.0 || n < 2.0 || n >= usize::MAX as f64 {
+                errors.push(err(format!("{path}.{key}"), "must be a supported integer of at least 2"));
+                return None;
+            }
+            Some(n as usize)
+        };
+        let rows = dimension("rows");
+        let columns = dimension("columns");
+        let cell_size_m = positive_number(obj, path, "cellSizeM", errors);
+        let corner_m = array::<2>(obj, path, "cornerM", errors);
+        let surface = surface(obj, path, errors);
+        let Some(items) = obj.get("heightsM").and_then(Value::as_array) else {
+            errors.push(err(format!("{path}.heightsM"), "must be an array of finite numbers"));
+            return None;
+        };
+        if let (Some(r), Some(c)) = (rows, columns) {
+            if r.checked_mul(c) != Some(items.len()) {
+                errors.push(err(format!("{path}.heightsM"), "count must equal rows × columns"));
+            }
+        }
+        let mut heights_m = Vec::with_capacity(items.len());
+        for (i, item) in items.iter().enumerate() {
+            match item.as_f64().filter(|x| x.is_finite()) {
+                Some(height) => heights_m.push(height),
+                None => errors.push(err(format!("{path}.heightsM[{i}]"), "must be a finite number")),
+            }
+        }
+        let terrain = Self { rows: rows?, columns: columns?, cell_size_m: cell_size_m?, corner_m: corner_m?, heights_m, surface: surface? };
+        let [width, length] = terrain.extent();
+        let [west, south] = terrain.first_sample();
+        for (axis, min, extent) in [(0, west, width), (1, south, length)] {
+            let max = min + extent;
+            if !max.is_finite() || max <= min {
+                errors.push(err(format!("{path}.cornerM[{axis}]"), "sample bounds must be finite and distinct at this extent"));
+            }
+        }
+        Some(terrain)
+    }
+
+    fn extent(&self) -> [f64; 2] {
+        [(self.columns - 1) as f64 * self.cell_size_m, (self.rows - 1) as f64 * self.cell_size_m]
+    }
+
+    fn first_sample(&self) -> [f64; 2] {
+        self.corner_m.map(|corner| corner + self.cell_size_m / 2.0)
+    }
+
+    /// Port of src/domain/terrain.ts:84–114, including the sample-centre bounds.
+    fn height_at(&self, x_m: f64, y_m: f64) -> Option<f64> {
+        let [west, south] = self.first_sample();
+        let [width, length] = self.extent();
+        if !x_m.is_finite() || !y_m.is_finite()
+            || x_m < west || x_m > west + width || y_m < south || y_m > south + length
+        {
+            return None;
+        }
+        let x = ((x_m - west) / self.cell_size_m).min((self.columns - 1) as f64);
+        let y = ((y_m - south) / self.cell_size_m).min((self.rows - 1) as f64);
+        let column = (x as usize).min(self.columns - 2);
+        let row_from_bottom = (y as usize).min(self.rows - 2);
+        let u = x - column as f64;
+        let v = y - row_from_bottom as f64;
+        let top = (self.rows - 2 - row_from_bottom) * self.columns + column;
+        let bottom = top + self.columns;
+        let [sw, se, nw, ne] = [self.heights_m[bottom], self.heights_m[bottom + 1], self.heights_m[top], self.heights_m[top + 1]];
+        Some(if u <= v {
+            (1.0 - v) * sw + u * ne + (v - u) * nw
+        } else {
+            (1.0 - u) * sw + (u - v) * se + v * ne
+        })
+    }
+
+    fn collider(&self) -> (ColliderBuilder, Pose) {
+        // parry-heightfield3.rs:89–106,355–402: local X/Z span the whole grid,
+        // D9 samples are metres, and the default diagonal is p10–p01.
+        // The quarter turn maps local (x, y, z) to world (x, -z, y).
+        let [width, length] = self.extent();
+        let [west, south] = self.first_sample();
+        let heights = Array2::from_fn(self.rows, self.columns, |row, col| self.heights_m[row * self.columns + col]);
+        let pose = Pose::from_parts(Vector::new(west + width / 2.0, south + length / 2.0, 0.0), y_up_to_z_up());
+        (ColliderBuilder::heightfield(heights, Vector::new(width, 1.0, length)), pose)
+    }
+}
+
+fn y_up_to_z_up() -> Rotation {
+    Rotation::from_rotation_x(std::f64::consts::FRAC_PI_2)
+}
+
+fn hull_points(obj: &Map<String, Value>, path: &str, errors: &mut Vec<EnvironmentError>) -> Option<Vec<[f64; 3]>> {
+    let path = format!("{path}.points");
+    let Some(items) = obj.get("points").and_then(Value::as_array) else {
+        errors.push(err(path, "must be an array of 3D points"));
+        return None;
+    };
+    if items.len() < 4 {
+        errors.push(err(&path, "a convex hull needs at least 4 points"));
+    }
+    let mut points = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        match item.as_array().and_then(|coords| finite_array(coords)) {
+            Some(point) => points.push(point),
+            None => errors.push(err(format!("{path}[{i}]"), "must be an array of 3 finite numbers")),
+        }
+    }
+    if points.len() != items.len() || points.len() < 4 {
+        return None;
+    }
+    // The vehicle hull check in vehicle.rs:318–331 also rejects flat hulls
+    // that Parry can build successfully.
+    let spans_volume = convex_hull(&points).is_some_and(|shape| {
+        let volume = shape.mass_properties(1.0).mass();
+        let aabb = shape.compute_local_aabb();
+        let side = (aabb.maxs - aabb.mins).max_element();
+        volume.is_finite() && volume > 1e-9 * side * side * side
+    });
+    if !spans_volume {
+        errors.push(err(path, "points do not span a volume (degenerate convex hull)"));
+        return None;
+    }
+    Some(points)
+}
+
+fn convex_hull(points: &[[f64; 3]]) -> Option<SharedShape> {
+    let points: Vec<_> = points.iter().copied().map(Vector::from_array).collect();
+    SharedShape::convex_hull(&points)
+}
+
+impl ObstacleShape {
+    fn from_json(obj: &Map<String, Value>, path: &str, errors: &mut Vec<EnvironmentError>) -> Option<Self> {
+        // Existing obstacle JSON supplied halfExtents without a type. The tag
+        // and shape names follow the vehicle's CollisionShape (vehicle.rs:56–65).
+        let kind = match obj.get("type") {
+            None => Some("box"),
+            Some(tag) => tag.as_str(),
+        };
+        let fields: &[&str] = match kind {
+            Some("box") => &["halfExtents"],
+            Some("cylinder") => &["radius", "height"],
+            Some("hull") => &["points"],
+            _ => {
+                errors.push(err(format!("{path}.type"), "must be box, cylinder or hull"));
+                &["halfExtents", "radius", "height", "points"]
+            }
+        };
+        for key in obj.keys() {
+            if !["type", "id", "center", "quaternion", "friction", "restitution"].contains(&key.as_str())
+                && !fields.contains(&key.as_str())
+            {
+                errors.push(err(format!("{path}.{key}"), "unknown field"));
+            }
+        }
+        match kind {
+            Some("box") => {
+                let half_extents = array::<3>(obj, path, "halfExtents", errors)?;
+                if half_extents.iter().any(|x| *x <= 0.0) {
+                    errors.push(err(format!("{path}.halfExtents"), "must all be positive"));
+                    return None;
+                }
+                Some(Self::Box { half_extents })
+            }
+            Some("cylinder") => {
+                let radius = positive_number(obj, path, "radius", errors);
+                let height = positive_number(obj, path, "height", errors);
+                Some(Self::Cylinder { radius: radius?, height: height? })
+            }
+            Some("hull") => Some(Self::Hull { points: hull_points(obj, path, errors)? }),
+            _ => None,
+        }
+    }
+
+    fn collider(&self) -> ColliderBuilder {
+        match self {
+            Self::Box { half_extents: [hx, hy, hz] } => ColliderBuilder::cuboid(*hx, *hy, *hz),
+            Self::Cylinder { radius, height } => {
+                ColliderBuilder::cylinder(height / 2.0, *radius).position(Pose::from_rotation(y_up_to_z_up()))
+            }
+            Self::Hull { points } => ColliderBuilder::new(convex_hull(points).expect("obstacle hull was validated")),
+        }
+    }
+}
+
 impl Environment {
     /// Reads and checks an environment; returns every problem, not just the first.
     ///
-    /// `{"ground": {"friction": μ, "restitution": e} | null,
-    ///   "obstacles": [{"id", "center", "halfExtents", "quaternion", "friction", "restitution"}]}`
+    /// Use `ground` (plane coefficients or null) or `terrain` (the grid fields
+    /// from src/domain/terrain.ts:1–8 plus friction and restitution). Each
+    /// obstacle takes an id, centre, quaternion, friction and restitution plus
+    /// its shape fields: halfExtents, radius/height, or points.
     pub fn from_json(value: &Value) -> Result<Environment, Vec<EnvironmentError>> {
         let mut errors = Vec::new();
         let Value::Object(root) = value else {
-            return Err(vec![err("environment", "must be an object with `ground` and `obstacles`")]);
+            return Err(vec![err("environment", "must be an object with ground or terrain, and obstacles")]);
         };
-        unknown_keys(root, "environment", &["ground", "obstacles"], &mut errors);
+        unknown_keys(root, "environment", &["ground", "terrain", "obstacles"], &mut errors);
+        let terrain = match root.get("terrain") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(t)) => {
+                if root.get("ground").is_some_and(Value::is_object) {
+                    errors.push(err("environment.terrain", "cannot be supplied with a ground plane"));
+                }
+                Terrain::from_json(t, &mut errors)
+            }
+            Some(_) => {
+                errors.push(err("environment.terrain", "must be an object or null"));
+                None
+            }
+        };
         let ground = match root.get("ground") {
+            None if root.get("terrain").is_some_and(|value| !value.is_null()) => None,
             None => {
                 errors.push(err("environment.ground", "not set: give the ground's friction and restitution, or null for no ground"));
                 None
@@ -193,7 +431,7 @@ impl Environment {
                         errors.push(err(path, "must be an object"));
                         continue;
                     };
-                    unknown_keys(o, &path, &["id", "center", "halfExtents", "quaternion", "friction", "restitution"], &mut errors);
+                    let shape = ObstacleShape::from_json(o, &path, &mut errors);
                     let id = match o.get("id").and_then(Value::as_str) {
                         Some(s) if !s.is_empty() => s.to_string(),
                         _ => {
@@ -205,13 +443,7 @@ impl Environment {
                         errors.push(err(format!("{path}.id"), "is used by another obstacle"));
                     }
                     let center = array::<3>(o, &path, "center", &mut errors);
-                    let half = array::<3>(o, &path, "halfExtents", &mut errors);
                     let q = array::<4>(o, &path, "quaternion", &mut errors);
-                    if let Some(h) = half {
-                        if h.iter().any(|x| *x <= 0.0) {
-                            errors.push(err(format!("{path}.halfExtents"), "must all be positive"));
-                        }
-                    }
                     if let Some(q) = q {
                         let n = q.iter().map(|x| x * x).sum::<f64>().sqrt();
                         if (n - 1.0).abs() > 1e-9 {
@@ -219,8 +451,8 @@ impl Environment {
                         }
                     }
                     let s = surface(o, &path, &mut errors);
-                    if let (Some(center), Some(half_extents), Some(quaternion), Some(surface)) = (center, half, q, s) {
-                        obstacles.push(Obstacle { id, center, half_extents, quaternion, surface });
+                    if let (Some(center), Some(shape), Some(quaternion), Some(surface)) = (center, shape, q, s) {
+                        obstacles.push(Obstacle { id, center, shape, quaternion, surface });
                     }
                 }
             }
@@ -228,9 +460,18 @@ impl Environment {
             Some(_) => errors.push(err("environment.obstacles", "must be an array")),
         }
         if errors.is_empty() {
-            Ok(Environment { ground, obstacles })
+            Ok(Environment { ground, terrain, obstacles })
         } else {
             Err(errors)
+        }
+    }
+
+    /// Ground surface height in metres at world (x, y), excluding obstacles (D8).
+    pub fn height_below(&self, x_m: f64, y_m: f64) -> Option<f64> {
+        if let Some(terrain) = &self.terrain {
+            terrain.height_at(x_m, y_m)
+        } else {
+            self.ground.map(|_| 0.0)
         }
     }
 }
@@ -275,6 +516,39 @@ pub struct Placed {
     dropped: u64,
 }
 
+/// The heightfield has no solid interior. Check actual collider points against
+/// the surface above them, including a cylinder's lowest support point and
+/// cap centres. Vertices cover the lowest faces of boxes and hulls. This is a
+/// sample check: terrain under unsampled face or edge interiors relies on the
+/// contact query, and points outside the sample-centre bounds do not count.
+fn terrain_penetration(terrain: &Terrain, collider: &Collider) -> f64 {
+    let mut depth: f64 = 0.0;
+    let mut sample = |point: Vector| {
+        if let Some(height) = terrain.height_at(point.x, point.y) {
+            depth = depth.max(height - point.z);
+        }
+    };
+    let shape = collider.shape();
+    let pose = collider.position();
+    if shape.as_cuboid().is_some() {
+        for vertex in shape.compute_local_aabb().vertices() {
+            sample(*pose * vertex);
+        }
+    } else if let Some(hull) = shape.as_convex_polyhedron() {
+        for &vertex in hull.points() {
+            sample(*pose * vertex);
+        }
+    } else if let Some(support) = shape.as_support_map() {
+        sample(support.support_point(pose, -Vector::Z));
+        if let Some(cylinder) = shape.as_cylinder() {
+            for y in [-cylinder.half_height, cylinder.half_height] {
+                sample(*pose * Vector::new(0.0, y, 0.0));
+            }
+        }
+    }
+    depth
+}
+
 impl Placed {
     /// Adds the ground and obstacles as fixed bodies, and sets the vehicle's
     /// colliders to friction and restitution 0 (see the module docs).
@@ -300,13 +574,17 @@ impl Placed {
             let c = with(ColliderBuilder::new(SharedShape::halfspace(Vector::Z)), g);
             let h = world.colliders.insert_with_parent(c, body, &mut world.bodies);
             objects.push((h, Object::Ground));
+        } else if let Some(terrain) = &env.terrain {
+            let (collider, pose) = terrain.collider();
+            let body = world.bodies.insert(RigidBodyBuilder::fixed().pose(pose).build());
+            let h = world.colliders.insert_with_parent(with(collider, &terrain.surface), body, &mut world.bodies);
+            objects.push((h, Object::Ground));
         }
         for o in &env.obstacles {
             let [x, y, z, w] = o.quaternion;
             let pose = Pose::from_parts(Vector::new(o.center[0], o.center[1], o.center[2]), Rotation::from_xyzw(x, y, z, w).normalize());
             let body = world.bodies.insert(RigidBodyBuilder::fixed().pose(pose).build());
-            let [hx, hy, hz] = o.half_extents;
-            let h = world.colliders.insert_with_parent(with(ColliderBuilder::cuboid(hx, hy, hz), &o.surface), body, &mut world.bodies);
+            let h = world.colliders.insert_with_parent(with(o.shape.collider(), &o.surface), body, &mut world.bodies);
             objects.push((h, Object::Obstacle(o.id.clone())));
         }
         Placed { objects, part_ids, open: BTreeMap::new(), events: Vec::new(), dropped: 0 }
@@ -314,17 +592,28 @@ impl Placed {
 
     /// Vehicle parts that start inside the ground or an obstacle, deeper than
     /// `tolerance_m`: (part id, object label, depth m).
-    pub fn initial_penetrations(&self, world: &PhysicsWorld, vehicle: RigidBodyHandle, tolerance_m: f64) -> Vec<(String, String, f64)> {
+    pub fn initial_penetrations(
+        &self,
+        world: &PhysicsWorld,
+        vehicle: RigidBodyHandle,
+        terrain: Option<&Terrain>,
+        tolerance_m: f64,
+    ) -> Vec<(String, String, f64)> {
         let mut out = Vec::new();
         for &vh in world.bodies[vehicle].colliders() {
             let v = &world.colliders[vh];
             for (eh, object) in &self.objects {
                 let e = &world.colliders[*eh];
                 // The environment shape goes first: parry 0.31.1 mis-places a half-space given second.
-                if let Ok(Some(c)) = query::contact(e.position(), e.shape(), v.position(), v.shape(), 0.0) {
-                    if -c.dist > tolerance_m {
-                        out.push((self.part_ids[v.user_data as usize].clone(), object.label(), -c.dist));
-                    }
+                let mut depth = query::contact(e.position(), e.shape(), v.position(), v.shape(), 0.0)
+                    .ok()
+                    .flatten()
+                    .map_or(0.0, |c| -c.dist);
+                if let (Object::Ground, Some(terrain)) = (object, terrain) {
+                    depth = depth.max(terrain_penetration(terrain, v));
+                }
+                if depth > tolerance_m {
+                    out.push((self.part_ids[v.user_data as usize].clone(), object.label(), depth));
                 }
             }
         }

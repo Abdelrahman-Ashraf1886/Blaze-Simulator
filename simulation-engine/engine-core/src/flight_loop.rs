@@ -446,14 +446,11 @@ impl FlightLoop {
         let signals = self.motor_output.signals(allocation.commands);
         self.flight.step(sim, signals);
         let end = sim.state();
-        if let Some(update) = self.hover.after_step(sim, estimate.velocity[2], vertical_thrust,
-            land.landed, &mut self.position)? {
-            self.detector_hover_update = Some(update);
-        }
+        let advanced = end.steps != state.steps;
         // LandDetector.cpp:69-78 uses a local-position callback with a 50 ms
         // backup. Our local-position samples arrive every 10 ms (EKF2_PREDICT_US),
         // so the backup never expires while the plant is running.
-        let land_state = if end.steps != state.steps && end.steps.is_multiple_of(steps_per_sample) {
+        let land_state = if advanced && end.steps.is_multiple_of(steps_per_sample) {
             let [vx, vy, vz] = end.linear_velocity_mps;
             let [x, y, z, w] = unit_attitude(end.quaternion);
             let specific_force = Vector::new(
@@ -483,6 +480,13 @@ impl FlightLoop {
         } else {
             land
         };
+        // Fuse using the just-published landed flag. A resulting hover
+        // estimate becomes available to the detector on its next callback.
+        if advanced {
+            self.detector_hover_update = self.hover.after_step(
+                sim, estimate.velocity[2], vertical_thrust, land_state.landed, &mut self.position,
+            )?.or(self.detector_hover_update);
+        }
         let saturation = SaturationDiagnostic {
             positive: self.saturation.positive,
             negative: self.saturation.negative,

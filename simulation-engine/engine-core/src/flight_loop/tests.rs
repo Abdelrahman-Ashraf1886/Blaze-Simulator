@@ -188,9 +188,16 @@ fn hover_estimate_converges_and_detector_landed_freezes_it() {
             assert_eq!(retained, airborne.hover_thrust);
         }
         let idle = FlightCommand::Rates { body_radps: [0.0; 3], collective: 0.0 };
+        let mut saw_landed_callback = false;
         for _ in 0..settle_steps {
             controller.step(&mut sim, idle).unwrap();
+            let snapshot = controller.last_step().unwrap();
+            if snapshot.land_state.landed && !saw_landed_callback {
+                assert!(!snapshot.hover_thrust.valid);
+                saw_landed_callback = true;
+            }
         }
+        assert!(saw_landed_callback);
         assert!(sim.touching_ground());
         assert!(controller.last_step().unwrap().land_state.landed);
         let landed = controller.hover_thrust_estimate();
@@ -374,6 +381,9 @@ fn last_step_reports_resolved_setpoints_and_the_active_mode() {
     controller.step(&mut sim, FlightCommand::Altitude(Sticks::default())).unwrap();
     let snapshot = controller.last_step().unwrap();
     assert_eq!(snapshot.mode, FlightMode::Altitude);
+    assert_eq!(snapshot.takeoff_state, TakeoffState::Flight);
+    assert_eq!(snapshot.tilt_limit_rad, controller.position.gains().mpc_tiltmax_air.to_radians());
+    assert!(!snapshot.land_state.landed);
     assert!(snapshot.position_setpoint[..2].iter().all(|v| v.is_nan()));
     assert!(snapshot.position_setpoint[2].is_finite());
     assert_eq!(

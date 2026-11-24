@@ -12,8 +12,9 @@ use crate::takeoff::TakeoffState;
 // phase-6-flight-environment.md:233-234 and database/reference/physics.v1.json:1332-1340
 // record navigator/mission_params.c:58.
 const MIS_TAKEOFF_ALT: f64 = 2.5;
-// mc_pos_control_params.c:215, FlightTaskAuto.cpp:204.
+// mc_pos_control_params.c:215,245 and FlightTaskAuto.cpp:204.
 const MPC_Z_V_AUTO_UP: f64 = 3.0;
+const MPC_Z_V_AUTO_DN: f64 = 1.0;
 const TAKEOFF_REQUEST_SPEED: f64 = 0.3;
 const EPS: f64 = f32::EPSILON as f64;
 
@@ -101,7 +102,8 @@ impl AutoFlight {
         }
 
         if !matches!(takeoff, TakeoffState::RampUp | TakeoffState::Flight) {
-            // FlightTaskAuto.cpp:89-99 reactivates the trajectory at rest on the ground.
+            // FlightTaskAuto.cpp:89-95 reactivates tracking from the current
+            // position. Seed the simulator's parked trajectory at rest.
             self.vertical = SmoothZ::at(state.position[2], 0.0);
             self.arriving = false;
         }
@@ -142,7 +144,8 @@ impl AutoFlight {
     fn target_speed(&self, z: f64, height: f64, g: &PositionGains, ramp_s: f64) -> (f64, f64) {
         let distance = self.target[2] - z;
         let (max_speed, max_accel) = if distance < 0.0 {
-            (g.mpc_z_vel_max_dn, g.mpc_acc_down_max)
+            // FlightTaskAuto.cpp:854-856. Land has its own descent profile.
+            (MPC_Z_V_AUTO_DN.min(g.mpc_z_vel_max_dn), g.mpc_acc_down_max)
         } else if height < g.mpc_land_alt1 {
             // FlightTaskAuto.cpp:833-855 and MulticopterPositionControl.cpp:235.
             (g.mpc_tko_speed.min(g.mpc_z_vel_max_up), g.mpc_acc_up_max.min(g.mpc_tko_speed / ramp_s))

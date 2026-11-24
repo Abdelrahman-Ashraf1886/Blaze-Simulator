@@ -13,6 +13,7 @@ import {
 } from '../../ipc/component-fields'
 import type {
   AssetInfo,
+  TerrainAssetInfo,
   Bounds3,
   Assembly,
   AssemblyPart,
@@ -149,6 +150,23 @@ const toAsset = (r: AssetRow): AssetInfo => ({
     r.triangles > TRIANGLE_WARNING
       ? [`${r.triangles.toLocaleString('en-US')} triangles; above ${TRIANGLE_WARNING.toLocaleString('en-US')} the viewport may slow down.`]
       : [],
+})
+
+interface TerrainAssetRow {
+  id: string
+  filename: string
+  format: 'asc'
+  bytes: number
+  imported_at: string
+  terrain_nodata_value: number | null
+}
+
+const toTerrainAsset = (r: TerrainAssetRow): TerrainAssetInfo => ({
+  id: r.id,
+  filename: r.filename,
+  format: r.format,
+  bytes: r.bytes,
+  importedAt: r.imported_at,
 })
 
 interface ProjectRow {
@@ -455,10 +473,19 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
             `The assembly was changed elsewhere (revision ${stored}, edit based on ${input.baseRevision}).`,
           )
         }
-        const hasAsset = db.prepare('SELECT 1 FROM assets WHERE id = ?')
+        const hasModel = db.prepare("SELECT 1 FROM assets WHERE id = ? AND format IN ('glb', 'gltf')")
+        const terrainId = input.environment?.terrain?.assetId
+        if (terrainId != null && !db.prepare("SELECT 1 FROM assets WHERE id = ? AND format = 'asc'").get(terrainId)) {
+          throw new ValidationError('The selected terrain grid is missing from the asset store.')
+        }
+        for (const obstacle of input.environment?.obstacles ?? []) {
+          if (obstacle.type === 'hull' && obstacle.assetId !== null && !hasModel.get(obstacle.assetId)) {
+            throw new ValidationError(`Obstacle "${obstacle.name}" uses a model that is not in the asset store.`)
+          }
+        }
         const hasComponent = db.prepare('SELECT 1 FROM components WHERE id = ?')
         for (const p of input.parts) {
-          if (p.shape.type === 'model' && !hasAsset.get(p.shape.assetId)) {
+          if (p.shape.type === 'model' && !hasModel.get(p.shape.assetId)) {
             throw new ValidationError(`Part "${p.name}" uses a model that is not in the asset store.`)
           }
           if (p.componentId && !hasComponent.get(p.componentId)) {
@@ -556,7 +583,7 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
     },
     assets: {
       list(): AssetInfo[] {
-        return (db.prepare('SELECT * FROM assets ORDER BY imported_at, id').all() as AssetRow[]).map(toAsset)
+        return (db.prepare("SELECT * FROM assets WHERE format IN ('glb', 'gltf') ORDER BY imported_at, id").all() as AssetRow[]).map(toAsset)
       },
       /** Records an imported file; re-importing identical bytes keeps the first record. */
       add(a: Omit<AssetInfo, 'importedAt' | 'warnings'>): AssetInfo {
@@ -564,24 +591,35 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
           `INSERT INTO assets (id, filename, format, bytes, triangles, bounds_json, hull_json, imported_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
         ).run(a.id, a.filename, a.format, a.bytes, a.triangles, JSON.stringify(a.bounds), a.hull ? JSON.stringify(a.hull) : null, now().toISOString())
-        return toAsset(db.prepare('SELECT * FROM assets WHERE id = ?').get(a.id) as AssetRow)
+        const row = db.prepare("SELECT * FROM assets WHERE id = ? AND format IN ('glb', 'gltf')").get(a.id) as AssetRow | undefined
+        if (!row) throw new ValidationError('These bytes are already stored as a terrain grid.')
+        return toAsset(row)
       },
       /** Stores the hull of an asset imported before hulls were computed (startup back-fill). */
       setHull(id: string, hull: ModelHull): void {
         db.prepare('UPDATE assets SET hull_json = ? WHERE id = ?').run(JSON.stringify(hull), id)
       },
       /**
-       * Removes assets no part uses and returns their ids, so main can delete the
-       * files. Run at startup only: undo history (which may re-add a part) is
+       * Removes assets no project uses and returns their ids, so main can delete the
+       * files. Run at startup only: undo history (which may restore a reference) is
        * in memory and does not survive a restart.
        */
       collectGarbage: db.transaction((): string[] => {
         const unused = (
           db
             .prepare(
-              `SELECT id FROM assets WHERE id NOT IN (
-                 SELECT json_extract(shape_json, '$.assetId') FROM assembly_parts
-                 WHERE json_extract(shape_json, '$.type') = 'model')`,
+              `SELECT id FROM assets AS asset WHERE
+                 (format = 'asc' AND NOT EXISTS (
+                   SELECT 1 FROM assemblies WHERE json_extract(environment_json, '$.terrain.assetId') = asset.id
+                 )) OR (format IN ('glb', 'gltf') AND NOT EXISTS (
+                   SELECT 1 FROM assembly_parts
+                   WHERE json_extract(shape_json, '$.type') = 'model'
+                     AND json_extract(shape_json, '$.assetId') = asset.id
+                 ) AND NOT EXISTS (
+                   SELECT 1 FROM assemblies, json_each(environment_json, '$.obstacles') AS obstacle
+                   WHERE json_extract(obstacle.value, '$.type') = 'hull'
+                     AND json_extract(obstacle.value, '$.assetId') = asset.id
+                 ))`,
             )
             .all() as { id: string }[]
         ).map((r) => r.id)
@@ -589,6 +627,23 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
         for (const id of unused) del.run(id)
         return unused
       }),
+    },
+    terrain: {
+      list(): TerrainAssetInfo[] {
+        return (db.prepare("SELECT * FROM assets WHERE format = 'asc' ORDER BY imported_at, id").all() as TerrainAssetRow[]).map(toTerrainAsset)
+      },
+      get(id: string): { asset: TerrainAssetInfo; noDataValue: number | undefined } {
+        const row = db.prepare("SELECT * FROM assets WHERE id = ? AND format = 'asc'").get(id) as TerrainAssetRow | undefined
+        if (!row) throw new NotFoundError('The terrain grid is missing from the asset store.')
+        return { asset: toTerrainAsset(row), noDataValue: row.terrain_nodata_value ?? undefined }
+      },
+      add(a: Omit<TerrainAssetInfo, 'importedAt' | 'format'>, noDataValue: number | undefined): TerrainAssetInfo {
+        db.prepare(
+          `INSERT INTO assets (id, filename, format, bytes, imported_at, terrain_nodata_value)
+           VALUES (?, ?, 'asc', ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+        ).run(a.id, a.filename, a.bytes, now().toISOString(), noDataValue ?? null)
+        return this.get(a.id).asset
+      },
     },
   }
 }

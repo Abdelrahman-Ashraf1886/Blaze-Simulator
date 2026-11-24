@@ -4,8 +4,8 @@
  * No Electron imports; main wires the dialog and the `blaze-asset://` protocol.
  */
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { ASSET_SCHEME, MAX_ASSET_BYTES, type AssetInfo, type IpcResult } from '../../ipc/contract'
 import type { Repositories } from '../db/repositories'
 import { AssetError, inspectGltf, tooLarge } from './gltf'
@@ -27,14 +27,21 @@ function stageAsset(path: string, dir: string) {
   const facts = inspectGltf(bytes, filename)
   const id = createHash('sha256').update(bytes).digest('hex')
 
-  mkdirSync(dir, { recursive: true })
   const target = join(dir, `${id}.${facts.format}`)
-  if (!existsSync(target)) {
-    const tmp = `${target}.${process.pid}.tmp`
+  if (!existsSync(target)) writeAssetFile(target, bytes)
+  return { id, filename, bytes, facts }
+}
+
+export function writeAssetFile(target: string, bytes: Buffer): void {
+  mkdirSync(dirname(target), { recursive: true })
+  const tmp = `${target}.${process.pid}.tmp`
+  try {
     writeFileSync(tmp, bytes)
     renameSync(tmp, target)
+  } catch (error) {
+    rmSync(tmp, { force: true })
+    throw error
   }
-  return { id, filename, bytes, facts }
 }
 
 function failure(e: unknown): IpcResult<never> {
@@ -124,7 +131,7 @@ export async function backfillHullsAsync(dir: string, repos: Repositories): Prom
 /** Deletes stored files whose asset no longer exists (after `repos.assets.collectGarbage`). */
 export function removeAssetFiles(dir: string, ids: readonly string[]): void {
   for (const id of ids) {
-    for (const ext of ['glb', 'gltf']) {
+    for (const ext of ['glb', 'gltf', 'asc']) {
       try {
         unlinkSync(join(dir, `${id}.${ext}`))
       } catch {

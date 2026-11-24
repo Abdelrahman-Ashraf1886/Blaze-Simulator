@@ -203,7 +203,7 @@ export function FlightViewport({ frame, doc, geo, projectId, running = false }: 
             <meshStandardMaterial color="#22262c" />
           </mesh>
           <gridHelper args={[200, 200, '#454c55', '#2f343b']} rotation-x={Math.PI / 2} />
-          {doc.environment?.obstacles.map((obstacle) => (
+          {doc.environment?.obstacles.map((obstacle) => obstacle.type === undefined && (
             <mesh key={obstacle.id} position={obstacle.center} rotation-z={obstacle.yaw}>
               <boxGeometry args={obstacle.size} />
               <meshStandardMaterial color="#6b6255" />

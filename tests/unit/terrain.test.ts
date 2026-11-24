@@ -6,6 +6,10 @@ const header = 'NCOLS 2\nNROWS 2\nXLLCORNER 10\nYLLCORNER 20\nCELLSIZE 2\nNODATA
 const data = '2 8\n0 4'
 
 describe('Esri ASCII terrain', () => {
+  it('refuses a finite header whose cell bounds collapse at engine precision', () => {
+    const text = 'ncols 2 nrows 2 xllcorner 1e20 yllcorner 0 cellsize 1 nodata_value -42 1 2 3 4'
+    expect(parseAsciiGrid(text, 'm')).toEqual({ ok: false, reason: 'invalid-extent' })
+  })
   it('maps both registrations and both keyword cases to the same grid', () => {
     const corner = parseAsciiGrid(`${header}\n${data}`, 'm')
     const centre = parseAsciiGrid(`${header.toLowerCase().replace('xllcorner 10', 'xllcenter 11')

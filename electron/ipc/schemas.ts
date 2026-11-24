@@ -70,12 +70,14 @@ export const frameParamsSchema = z
     path: ['plateSize'],
   })
 
+export const assetIdSchema = z.string().regex(/^[0-9a-f]{64}$/, 'Asset id must be a SHA-256 hex digest')
+
 const shapeSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('box'), size: z.tuple([length(1e-4, 3), length(1e-4, 3), length(1e-4, 3)]) }),
   z.object({ type: z.literal('cylinder'), radius: length(1e-4, 1.5), height: length(1e-4, 3) }),
   z.object({
     type: z.literal('model'),
-    assetId: z.string().regex(/^[0-9a-f]{64}$/, 'Asset id must be a SHA-256 hex digest'),
+    assetId: assetIdSchema,
     units: z.enum(MODEL_UNITS),
     upAxis: z.enum(['y', 'z']),
   }),
@@ -156,30 +158,75 @@ const friction = finite.min(0, 'Friction cannot be negative').max(10, 'Friction 
 const restitution = finite.min(0, 'Restitution must be between 0 and 1').max(1, 'Restitution must be between 0 and 1').nullable()
 const obstacleCoord = z.number().min(-1000, 'Obstacle positions must be within 1 km').max(1000, 'Obstacle positions must be within 1 km')
 const side = z.number().positive('Obstacle sizes must be positive').max(1000, 'Obstacle sizes must be within 1 km')
+const surfaceValues = { friction, restitution }
+const obstacleBase = {
+  id: z.string().min(1).max(64),
+  name: z.string().trim().min(1, 'An obstacle needs a name').max(80),
+  ...surfaceValues,
+}
+const obstacleCenter = z.tuple([obstacleCoord, obstacleCoord, obstacleCoord])
+const obstacleSize = z.tuple([side, side, side])
+const obstacleYaw = finite.min(-2 * Math.PI).max(2 * Math.PI)
+const obstaclePose = { ...obstacleBase, center: obstacleCenter.nullable(), yaw: obstacleYaw.nullable() }
+const obstacleSchema = z.union([
+  z.object({ ...obstacleBase, center: obstacleCenter, size: obstacleSize, yaw: obstacleYaw }).strict(),
+  z.discriminatedUnion('type', [
+    z.object({ ...obstaclePose, type: z.literal('box'), size: obstacleSize.nullable() }).strict(),
+    z.object({ ...obstaclePose, type: z.literal('cylinder'), radius: side.nullable(), height: side.nullable() }).strict(),
+    z.object({
+      ...obstaclePose,
+      type: z.literal('hull'),
+      assetId: assetIdSchema.nullable(),
+      units: z.enum(MODEL_UNITS).nullable(),
+      upAxis: z.enum(['y', 'z']).nullable(),
+    }).strict(),
+  ]),
+])
 
 export const environmentDocSchema = z
   .object({
-    ground: z.object({ friction, restitution }).strict(),
+    ground: z.object(surfaceValues).strict(),
+    terrain: z.object({ ...surfaceValues, assetId: assetIdSchema.nullable() }).strict().nullable().optional(),
     obstacles: z
-      .array(
-        z
-          .object({
-            id: z.string().min(1).max(64),
-            name: z.string().trim().min(1, 'An obstacle needs a name').max(80),
-            center: z.tuple([obstacleCoord, obstacleCoord, obstacleCoord]),
-            size: z.tuple([side, side, side]),
-            yaw: finite.min(-2 * Math.PI).max(2 * Math.PI),
-            friction,
-            restitution,
-          })
-          .strict(),
-      )
+      .array(obstacleSchema)
       .max(MAX_OBSTACLES, `At most ${MAX_OBSTACLES} obstacles`)
       .superRefine((obstacles, ctx) => {
         if (new Set(obstacles.map((o) => o.id)).size !== obstacles.length) ctx.addIssue({ code: 'custom', message: 'Obstacle ids must be unique' })
       }),
   })
   .strict()
+
+export const terrainImportSchema = z.object({
+  verticalUnit: z.literal('m', 'Confirm the terrain elevations are in metres.'),
+  noDataValue: finite.optional(),
+}).strict()
+
+const noWindComponent = z.object({ kind: z.literal('none') }).strict()
+// engine-core/src/wind.rs:134–163 and :16–19; 1 ft = 0.3048 m exactly.
+const windRoughness = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('categoryC') }).strict(),
+  z.object({ kind: z.literal('otherPhases') }).strict(),
+  z.object({ kind: z.literal('custom'), lengthM: finite.positive().lt(3 * 0.3048).nullable() }).strict(),
+])
+const windMean = z.discriminatedUnion('kind', [
+  noWindComponent,
+  z.object({ kind: z.literal('constant'), speedMps: finite.nonnegative().nullable() }).strict(),
+  z.object({ kind: z.literal('shear'), speedAt20FtMps: finite.nonnegative().nullable(), roughness: windRoughness.nullable() }).strict(),
+])
+const windGust = z.discriminatedUnion('kind', [
+  noWindComponent,
+  z.object({
+    kind: z.literal('discrete'),
+    amplitudeMps: finite.nonnegative().nullable(),
+    lengthM: finite.positive().nullable(),
+    startS: finite.nonnegative().nullable(),
+  }).strict(),
+])
+export const windDocSchema = z.discriminatedUnion('kind', [
+  noWindComponent,
+  z.object({ kind: z.literal('wind'), fromDeg: finite.nullable(), mean: windMean.nullable(), gust: windGust.nullable() }).strict(),
+])
+
 const optionalNumber = (min: number, max: number, what: string) =>
   z.number().refine(Number.isFinite, `${what} must be a number`).min(min, `${what} must be at least ${min}`).max(max, `${what} must be at most ${max}`).nullable()
 
@@ -190,6 +237,8 @@ export const flightConditionsDocSchema = z
     temperatureC: optionalNumber(-273, 200, 'The air temperature'),
     cutoffType: z.enum(['voltageV', 'chargeMah']),
     cutoffValue: optionalNumber(0.001, 1e6, 'The battery cut-off'),
+    wind: windDocSchema.nullable().optional(),
+    groundEffect: z.boolean().nullable().optional(),
   })
   .strict()
 /** One axis of the body drag coefficient; null = not entered. */

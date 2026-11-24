@@ -149,6 +149,22 @@ export interface AssetInfo {
   hull?: ModelHull | null
 }
 
+/** An imported Esri ASCII grid, stored by SHA-256 of its original file bytes. */
+export interface TerrainAssetInfo {
+  id: string
+  filename: string
+  format: 'asc'
+  bytes: number
+  importedAt: string
+}
+
+export interface TerrainImportInput {
+  /** The caller confirms that file elevations are in metres. */
+  verticalUnit: 'm'
+  /** User-entered fallback for a file that omits NODATA_VALUE. */
+  noDataValue?: number
+}
+
 export interface ModelHull {
   points: [number, number, number][] | null
   reason: string | null
@@ -294,7 +310,33 @@ export interface FlightConditionsDoc {
   /** The battery cut-off: the pack voltage (V) or the charge drawn (mAh) at which the run ends. */
   cutoffType: 'voltageV' | 'chargeMah'
   cutoffValue: number | null
+  wind?: WindDoc | null
+  groundEffect?: boolean | null
 }
+
+export type WindRoughnessDoc =
+  | { kind: 'categoryC' }
+  | { kind: 'otherPhases' }
+  | { kind: 'custom'; lengthM: number | null }
+
+export type WindMeanDoc =
+  | { kind: 'none' }
+  | { kind: 'constant'; speedMps: number | null }
+  | { kind: 'shear'; speedAt20FtMps: number | null; roughness: WindRoughnessDoc | null }
+
+export type WindGustDoc =
+  | { kind: 'none' }
+  | { kind: 'discrete'; amplitudeMps: number | null; lengthM: number | null; startS: number | null }
+
+export type WindDoc =
+  | { kind: 'none' }
+  | {
+      kind: 'wind'
+      /** Direction the wind comes from, clockwise from world +X, in degrees. */
+      fromDeg: number | null
+      mean: WindMeanDoc | null
+      gust: WindGustDoc | null
+    }
 
 /**
  * A surface's contact values, the user's entries. null = not set; there are no defaults
@@ -307,20 +349,43 @@ export interface SurfaceValues {
   restitution: number | null
 }
 
-/** A fixed box obstacle, world frame (+Z up, metres). */
-export interface ObstacleDoc extends SurfaceValues {
+interface ObstacleBase extends SurfaceValues {
   id: string
   name: string
+}
+
+/** A fixed box in the original document format, world frame (+Z up, metres). */
+export interface LegacyBoxObstacleDoc extends ObstacleBase {
+  type?: undefined
   center: [number, number, number]
   size: [number, number, number]
   /** Rotation about the world +Z axis, radians. */
   yaw: number
 }
 
-/** Ground plane z = 0 and box obstacles. */
+type ObstaclePose = {
+  center: [number, number, number] | null
+  /** Rotation about the world +Z axis, radians. */
+  yaw: number | null
+}
+
+export type ObstacleDoc =
+  | LegacyBoxObstacleDoc
+  | (ObstacleBase & ObstaclePose & (
+      | { type: 'box'; size: [number, number, number] | null }
+      | { type: 'cylinder'; radius: number | null; height: number | null }
+      | { type: 'hull'; assetId: string | null; units: ModelUnits | null; upAxis: UpAxis | null }
+    ))
+
+export interface TerrainDoc extends SurfaceValues {
+  assetId: string | null
+}
+
+/** A terrain grid replaces the plane when selected. */
 export interface EnvironmentDoc {
   ground: SurfaceValues
   obstacles: ObstacleDoc[]
+  terrain?: TerrainDoc | null
 }
 
 export const MAX_OBSTACLES = 50
@@ -483,6 +548,9 @@ export const Channels = {
   assetsList: 'assets:list',
   /** Shows the open-file dialog in main, then validates and stores the chosen file. */
   assetsImport: 'assets:import',
+  terrainImport: 'terrain:import',
+  terrainRead: 'terrain:read',
+  terrainList: 'terrain:list',
   componentsList: 'components:list',
   componentsGet: 'components:get',
   componentsCreate: 'components:create',
@@ -535,6 +603,12 @@ export interface DesktopApi {
     list(): Promise<IpcResult<AssetInfo[]>>
     /** Resolves to null when the user cancels the file dialog. */
     import(): Promise<IpcResult<AssetInfo | null>>
+  }
+  terrain: {
+    /** Resolves to null when the user cancels the file dialog. */
+    import(input: TerrainImportInput): Promise<IpcResult<TerrainAssetInfo | null>>
+    read(id: string): Promise<IpcResult<import('../../src/domain/terrain').TerrainGrid>>
+    list(): Promise<IpcResult<TerrainAssetInfo[]>>
   }
   components: {
     list(category?: ComponentCategory): Promise<IpcResult<Component[]>>

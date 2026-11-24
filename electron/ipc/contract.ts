@@ -398,11 +398,14 @@ export interface DropTestInput {
   environment: unknown
   /** Body origin at release, world frame, m. */
   startPositionM: [number, number, number]
+  /** Vertical clearance over first ground contact. Overrides the supplied Z. */
+  startClearanceM?: number
   durationS: number
 }
 
 export interface DropTestResult {
   durationS: number
+  startZM: number
   state: {
     positionM: [number, number, number]
     quaternion: [number, number, number, number]
@@ -435,6 +438,8 @@ export interface FlightStartInput {
   cutoff: { type: 'voltageV' | 'chargeMah'; value: number }
   /** Body origin at the start, world frame, m. */
   startPositionM: [number, number, number]
+  /** Vertical clearance over first ground contact. Overrides the supplied Z. */
+  startClearanceM?: number
   /** PX4 gain overrides by exact parameter name; absent = the v1.13.3 defaults. */
   gains?: Record<string, number>
   controller?: FlightSessionStartParams['controller']

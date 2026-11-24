@@ -6,7 +6,7 @@
  */
 import { z } from 'zod'
 import type { DropTestResult, IpcResult } from '../../ipc/contract'
-import { EnvironmentSchema, VehicleDefinitionSchema, type SimRunParams, type SimRunResult, type VehicleDefinition, type VehicleLoadResult } from './protocol'
+import { EnvironmentSchema, StartClearanceSchema, VehicleDefinitionSchema, type SimRunParams, type SimRunResult, type VehicleDefinition, type VehicleLoadResult } from './protocol'
 
 /** Longest drop test: well inside the engine's 120 000-step limit at the default 1 ms step. */
 export const MAX_DROP_TEST_S = 10
@@ -16,6 +16,7 @@ export const dropTestSchema = z.strictObject({
   vehicle: VehicleDefinitionSchema,
   environment: EnvironmentSchema,
   startPositionM: z.tuple([finite, finite, finite]),
+  startClearanceM: StartClearanceSchema.optional(),
   durationS: finite.refine((v) => v > 0 && v <= MAX_DROP_TEST_S, `must be more than 0 and at most ${MAX_DROP_TEST_S} s`),
 })
 
@@ -29,17 +30,20 @@ const issues = (e: z.ZodError) => e.issues.map((i) => `${i.path.join('.') || 'in
 export async function dropTest(engine: EngineForDropTest, payload: unknown): Promise<IpcResult<DropTestResult>> {
   const parsed = dropTestSchema.safeParse(payload)
   if (!parsed.success) return { ok: false, error: { code: 'VALIDATION', message: issues(parsed.error) } }
-  const { vehicle, environment, startPositionM, durationS } = parsed.data
+  const { vehicle, ...params } = parsed.data
   try {
     const loaded = await engine.loadVehicle(vehicle)
     if (!loaded.valid) {
       return { ok: false, error: { code: 'VALIDATION', message: `The engine refused the vehicle: ${loaded.errors.map((e) => `${e.path}: ${e.message}`).join('; ')}` } }
     }
-    const r = await engine.runSim({ durationS, environment, startPositionM })
+    const r = await engine.runSim(params)
+    const startZM = params.startClearanceM === undefined ? params.startPositionM[2] : r.startZM
+    if (startZM === undefined) throw new Error('The engine did not return the resolved release height')
     return {
       ok: true,
       data: {
         durationS: r.durationS,
+        startZM,
         state: {
           positionM: r.state.positionM,
           quaternion: r.state.quaternion,

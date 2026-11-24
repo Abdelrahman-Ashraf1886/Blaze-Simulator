@@ -25,6 +25,7 @@ use engine_core::scenario::{
     balanced_hover, com_offset, com_offset_beyond_authority, modified_vehicle, overweight_payload, payload, run_with_flight_config, Ground, Scenario,
     ScenarioConfig,
 };
+use engine_core::sim::{SimConfig, Simulation};
 use engine_core::vehicle::Vehicle;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -96,6 +97,8 @@ struct ConfigRequest {
     ground_effect: Option<Value>,
     #[serde(default)]
     start_position_m: Option<[f64; 3]>,
+    #[serde(default, deserialize_with = "present")]
+    start_clearance_m: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -167,6 +170,9 @@ pub fn handle(
         Ok(resolved) => resolved,
         Err(e) => return bad(format!("config.{e}")),
     };
+    if p.config.start_clearance_m.is_some() && p.config.environment.is_none() {
+        return bad("config.startClearanceM requires config.environment with a ground plane or terrain".into());
+    }
     let ground = match (p.config.environment, p.config.start_position_m) {
         (None, None) => None,
         (None, Some(_)) => return bad("config.startPositionM is for a ground: give config.environment too".into()),
@@ -179,15 +185,16 @@ pub fn handle(
             }
         },
     };
-    let config = ScenarioConfig { gains, thrust_model_factor, air_density_kg_m3: rho, cutoff: Some(cutoff), ground };
+    let mut config = ScenarioConfig { gains, thrust_model_factor, air_density_kg_m3: rho, cutoff: Some(cutoff), ground };
     let scenario = match build(&p.scenario, vehicle, propulsion, &config) {
         Ok(s) => s,
         Err(e) => return invalid_scenario(e),
     };
     // The engine's own checks, so a refused scenario has its own code; `run` repeats them.
-    if let Err(e) = scenario.validate(propulsion.motors.len()).and_then(|()| modified_vehicle(vehicle, &scenario).map(|_| ())) {
-        return invalid_scenario(e);
-    }
+    let plant = match scenario.validate(propulsion.motors.len()).and_then(|()| modified_vehicle(vehicle, &scenario)) {
+        Ok(plant) => plant,
+        Err(e) => return invalid_scenario(e),
+    };
     let limit = if config.ground.is_some() { MAX_SCENARIO_WITH_GROUND_S } else { MAX_SCENARIO_S };
     if scenario.duration_s > limit {
         return invalid_scenario(format!(
@@ -195,6 +202,13 @@ pub fn handle(
             scenario.duration_s,
             if config.ground.is_some() { " with a ground" } else { "" }
         ));
+    }
+    if let (Some(ground), Some(clearance)) = (&mut config.ground, p.config.start_clearance_m) {
+        // Scenario modifications can move collision parts or add a payload.
+        match Simulation::with_start_clearance(&plant, SimConfig::default(), &ground.environment, ground.start_m, Some(clearance)) {
+            Ok(sim) => ground.start_m = sim.state().position_m,
+            Err(e) => return bad(format!("config.{e}")),
+        }
     }
     match run_with_flight_config(vehicle, propulsion.clone(), aero, &config, &scenario, |flight| {
         flight_environment::configure(flight, p.config.wind.as_ref(), p.config.ground_effect.as_ref(), "config.")

@@ -47,10 +47,10 @@
 //!   bounce (64.7 mm), and they make a contact step 1.6× to 2.9× slower (a
 //!   120 000-step resting run: 2.7 s and 4.8 s against 1.7 s). Not applied.
 
-use crate::sim::ALLOWED_LINEAR_ERROR_M;
+use crate::sim::{ALLOWED_LINEAR_ERROR_M, START_PENETRATION_TOLERANCE_M};
 use rapier3d_f64::math::{Pose, Rotation, Vector};
 
-use rapier3d_f64::parry::{query, utils::Array2};
+use rapier3d_f64::parry::{bounding_volume::BoundingVolume, query::{self, PointQueryWithLocation}, utils::Array2};
 use rapier3d_f64::prelude::{
     CoefficientCombineRule, Collider, ColliderBuilder, ColliderHandle, PhysicsWorld, RigidBodyBuilder, RigidBodyHandle, SharedShape,
 };
@@ -525,7 +525,7 @@ pub struct Placed {
 /// cap centres. Vertices cover the lowest faces of boxes and hulls. This is a
 /// sample check: terrain under unsampled face or edge interiors relies on the
 /// contact query, and points outside the sample-centre bounds do not count.
-fn terrain_penetration(terrain: &Terrain, collider: &Collider) -> f64 {
+fn terrain_penetration(terrain: &Terrain, collider: &Collider, pose: &Pose) -> f64 {
     let mut depth: f64 = 0.0;
     let mut sample = |point: Vector| {
         if let Some(height) = terrain.height_at(point.x, point.y) {
@@ -533,7 +533,6 @@ fn terrain_penetration(terrain: &Terrain, collider: &Collider) -> f64 {
         }
     };
     let shape = collider.shape();
-    let pose = collider.position();
     if shape.as_cuboid().is_some() {
         for vertex in shape.compute_local_aabb().vertices() {
             sample(*pose * vertex);
@@ -551,6 +550,65 @@ fn terrain_penetration(terrain: &Terrain, collider: &Collider) -> f64 {
         }
     }
     depth
+}
+
+fn surface_contact(surface: &Collider, part: &Collider, pose: &Pose, prediction: f64) -> Option<query::Contact> {
+    // Parry 0.31.1's dispatcher mis-places a half-space given second.
+    query::contact(surface.position(), surface.shape(), pose, part.shape(), prediction).ok().flatten()
+}
+
+fn surface_penetration(surface: &Collider, part: &Collider, pose: &Pose, terrain: Option<&Terrain>) -> f64 {
+    let depth = surface_contact(surface, part, pose, 0.0).map_or(0.0, |c| -c.dist);
+    terrain.map_or(depth, |terrain| depth.max(terrain_penetration(terrain, part, pose)))
+}
+
+fn terrain_part_start_z(ground: &Collider, part: &Collider) -> Result<Option<f64>, String> {
+    let shape = part.shape();
+    let support = shape.as_support_map().ok_or("startClearanceM terrain sweep needs a convex part")?;
+    let field = ground.shape().as_heightfield().ok_or("startClearanceM needs a heightfield for terrain placement")?;
+    let ground_bounds = ground.compute_aabb();
+    let part_bounds = part.compute_aabb();
+    // Bound the sweep by the terrain and part extremes. Pad the footprint's cell
+    // query so an exact grid-boundary contact still gets a triangle test.
+    let high = (ground_bounds.maxs.z - part_bounds.mins.z).next_up();
+    let low = (ground_bounds.mins.z - part_bounds.maxs.z).next_down();
+    let travel = (high - low).next_up();
+    let pose = ground.position().inv_mul(part.position());
+    let up = ground.position().rotation.inverse() * Vector::Z;
+    let at_height = |z| Pose::from_parts(pose.translation + up * z, pose.rotation);
+    let top = at_height(high);
+    let bottom = at_height(low);
+    if !travel.is_finite() || !top.translation.is_finite() || !bottom.translation.is_finite() {
+        return Err("startClearanceM terrain sweep exceeds the finite coordinate range".into());
+    }
+    let swept = shape.compute_aabb(&top).merged(&shape.compute_aabb(&bottom)).loosened(ALLOWED_LINEAR_ERROR_M);
+    let options = query::ShapeCastOptions::with_max_time_of_impact(travel);
+    let mut highest = None::<f64>;
+    // Parry 0.31.1 shape_cast_heightfield_shape.rs:139–168 sweeps each
+    // triangle and retains the first hit. Use the same support-map cast
+    // (default_query_dispatcher.rs:481–484) for triangle edges and vertices.
+    field.map_elements_in_local_aabb(&swept, &mut |_, tri| {
+        // GJK's TOI is conservative. For a triangle interior use the exact
+        // plane support height, which also bounds any edge or vertex hit.
+        let upper = tri.normal().and_then(|normal| {
+            let rise = normal.dot(up);
+            let point = support.support_point(&pose, -normal);
+            let z = normal.dot(tri.a - point) / rise;
+            (rise > 0.0 && z.is_finite()).then_some((z, point + up * z))
+        });
+        let z = match upper {
+            Some((z, point)) if tri.project_local_point_and_get_location(point, false).1.is_on_face() => z,
+            _ => {
+                let Some(hit) = query::details::cast_shapes_support_map_support_map(&top, -up, tri, support, options) else {
+                    return;
+                };
+                let z = high - hit.time_of_impact;
+                upper.map_or(z, |(plane_z, _)| z.min(plane_z))
+            }
+        };
+        highest = Some(highest.map_or(z, |previous| previous.max(z)));
+    });
+    Ok(highest)
 }
 
 impl Placed {
@@ -601,6 +659,58 @@ impl Placed {
         }
     }
 
+    /// Ground support at the vehicle's current pose, before the contact log has a sample.
+    pub(crate) fn initial_ground_contact(&self, world: &PhysicsWorld, vehicle: RigidBodyHandle) -> bool {
+        let Some((handle, Object::Ground, _)) = self.objects.first() else { return false; };
+        let ground = &world.colliders[*handle];
+        world.bodies[vehicle].colliders().iter().any(|&h| {
+            let part = &world.colliders[h];
+            surface_contact(ground, part, part.position(), ALLOWED_LINEAR_ERROR_M)
+                .is_some_and(|contact| contact.dist <= ALLOWED_LINEAR_ERROR_M)
+        })
+    }
+
+    /// First ground contact as the vehicle at the requested XY and Z = 0 is lowered.
+    pub(crate) fn ground_start_z(&self, world: &PhysicsWorld, vehicle: RigidBodyHandle) -> Result<f64, String> {
+        let Some((handle, Object::Ground, terrain)) = self.objects.first() else {
+            return Err("startClearanceM requires a ground plane or terrain".into());
+        };
+        let ground = &world.colliders[*handle];
+        let parts = world.bodies[vehicle].colliders();
+        let mut start_z = None::<f64>;
+        for &h in parts {
+            let part = &world.colliders[h];
+            let z = if terrain.is_some() {
+                let Some(z) = terrain_part_start_z(ground, part)? else { continue; };
+                z
+            } else {
+                // Parry 0.31.1 contact_halfspace_support_map.rs:12–25 projects
+                // the exact deepest support point onto the plane normal.
+                -surface_contact(ground, part, part.position(), f64::MAX)
+                    .ok_or("startClearanceM could not find contact with the plane")?.dist
+            };
+            if !z.is_finite() {
+                return Err("startClearanceM ground contact height must be finite".into());
+            }
+            start_z = Some(start_z.map_or(z, |highest| highest.max(z)));
+        }
+        let z = start_z.ok_or("startClearanceM found no vehicle part above the terrain samples")?;
+        let mut touching = false;
+        for &h in parts {
+            let part = &world.colliders[h];
+            let mut pose = *part.position();
+            pose.translation.z += z;
+            if surface_penetration(ground, part, &pose, terrain.as_ref()) > START_PENETRATION_TOLERANCE_M {
+                return Err("startClearanceM ground sweep ended in penetration".into());
+            }
+            touching |= surface_contact(ground, part, &pose, ALLOWED_LINEAR_ERROR_M).is_some_and(|c| c.dist <= ALLOWED_LINEAR_ERROR_M);
+        }
+        if !touching {
+            return Err("startClearanceM could not place the vehicle within the ground contact tolerance".into());
+        }
+        Ok(z)
+    }
+
     /// Vehicle parts that start inside the ground or an obstacle, deeper than
     /// `tolerance_m`: (part id, object label, depth m).
     pub fn initial_penetrations(
@@ -615,14 +725,7 @@ impl Placed {
             let v = &world.colliders[vh];
             for (eh, object, _) in &self.objects {
                 let e = &world.colliders[*eh];
-                // The environment shape goes first: parry 0.31.1 mis-places a half-space given second.
-                let mut depth = query::contact(e.position(), e.shape(), v.position(), v.shape(), 0.0)
-                    .ok()
-                    .flatten()
-                    .map_or(0.0, |c| -c.dist);
-                if let (Object::Ground, Some(terrain)) = (object, terrain) {
-                    depth = depth.max(terrain_penetration(terrain, v));
-                }
+                let depth = surface_penetration(e, v, v.position(), if *object == Object::Ground { terrain } else { None });
                 if depth > tolerance_m {
                     out.push((self.part_ids[v.user_data as usize].clone(), object.label(), depth));
                 }

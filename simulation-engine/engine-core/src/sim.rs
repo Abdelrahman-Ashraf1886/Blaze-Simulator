@@ -116,6 +116,23 @@ impl Simulation {
     /// `start_m` (world frame), in `env` (ground plane or terrain, and
     /// obstacles). Fails if a part starts inside the environment, naming it.
     pub fn with_environment(vehicle: &Vehicle, config: SimConfig, env: &Environment, start_m: [f64; 3]) -> Result<Simulation, String> {
+        Self::with_start_clearance(vehicle, config, env, start_m, None)
+    }
+
+    /// With a clearance, use the given XY and derive the start Z from the ground.
+    pub fn with_start_clearance(
+        vehicle: &Vehicle,
+        config: SimConfig,
+        env: &Environment,
+        mut start_m: [f64; 3],
+        clearance_m: Option<f64>,
+    ) -> Result<Simulation, String> {
+        if let Some(clearance) = clearance_m {
+            if !clearance.is_finite() || clearance < 0.0 {
+                return Err("startClearanceM must be finite and non-negative".into());
+            }
+            start_m[2] = 0.0;
+        }
         if !start_m.iter().all(|x| x.is_finite()) {
             return Err("the start position must be finite".into());
         }
@@ -132,6 +149,17 @@ impl Simulation {
         let placed = Placed::insert(env, &mut sim.world, sim.body, ids);
         // Colliders follow their body only after a step; place them now for the start check.
         sim.world.bodies.propagate_modified_body_positions_to_colliders(&mut sim.world.colliders);
+        if let Some(clearance) = clearance_m {
+            start_m[2] = placed.ground_start_z(&sim.world, sim.body)? + clearance;
+            if !start_m[2].is_finite() {
+                return Err("startClearanceM yields a non-finite start height".into());
+            }
+            sim.world.bodies[sim.body].set_translation(Vector::from_array(start_m), true);
+            sim.world.bodies.propagate_modified_body_positions_to_colliders(&mut sim.world.colliders);
+            if clearance == 0.0 && !placed.initial_ground_contact(&sim.world, sim.body) {
+                return Err("startClearanceM could not place the vehicle within the ground contact tolerance".into());
+            }
+        }
         let inside = placed.initial_penetrations(&sim.world, sim.body, env.terrain.as_ref(), START_PENETRATION_TOLERANCE_M);
         if !inside.is_empty() {
             let list: Vec<String> =
@@ -145,6 +173,10 @@ impl Simulation {
     /// Ground plane or terrain height at world (x, y), in metres. Excludes obstacles.
     pub fn height_below(&self, x_m: f64, y_m: f64) -> Option<f64> {
         self.env.as_ref().and_then(|env| env.height_below(x_m, y_m))
+    }
+
+    pub(crate) fn initial_ground_contact(&self) -> bool {
+        self.env.as_ref().is_some_and(|env| env.initial_ground_contact(&self.world, self.body))
     }
 
     /// Contacts with the environment so far (open ones have no end), and how

@@ -1,6 +1,6 @@
 import { Plus, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { MAX_OBSTACLES, type AssemblyDocument, type AssetInfo, type DropTestResult, type EnvironmentDoc, type LegacyBoxObstacleDoc, type ObstacleDoc, type SurfaceValues } from '../../../electron/ipc/contract'
+import { MAX_OBSTACLES, type AssemblyDocument, type AssetInfo, type DropTestInput, type DropTestResult, type EnvironmentDoc, type LegacyBoxObstacleDoc, type ObstacleDoc, type SurfaceValues } from '../../../electron/ipc/contract'
 import { NumberField, numberParser } from '@/components/number-field'
 import { Button } from '@/components/ui/button'
 import { lowestPoint } from '@/domain/collisions'
@@ -191,7 +191,7 @@ function LegacyBoxFields({ id, o, update }: {
   </>
 }
 
-/** Release from rest, the lowest point `clearance` above the ground, and simulate in the engine. */
+/** Release from rest at the given vertical clearance above first ground contact. */
 function DropTest({ doc, geo, env }: { doc: AssemblyDocument; geo: FrameGeometry; env: StartEnvironment }) {
   const components = useComponentIndex()
   const assets = useAssets((s) => s.assets)
@@ -200,7 +200,7 @@ function DropTest({ doc, geo, env }: { doc: AssemblyDocument; geo: FrameGeometry
   const [clearanceM, setClearance] = useState(0.2)
   const [durationS, setDuration] = useState(2)
   const [running, setRunning] = useState(false)
-  const [result, setResult] = useState<{ ok: true; r: DropTestResult; startZ: number; low: number } | { ok: false; message: string } | null>(null)
+  const [result, setResult] = useState<{ ok: true; r: DropTestResult } | { ok: false; message: string } | null>(null)
   const { mp, motors } = massState(doc, geo, components, assets)
   const vehicle = vehicleDefinition(mp, motors)
   const blocked = !env.ok
@@ -215,12 +215,13 @@ function DropTest({ doc, geo, env }: { doc: AssemblyDocument; geo: FrameGeometry
 
   const run = async () => {
     if (blocked || !env.ok || !vehicle) return
-    const low = lowestPoint(vehicle.parts.map((p) => ({ shape: p.shape, ...p.pose })))
-    const startZ = env.surfaceHeightM + (clearanceM - low)
+    const start: Pick<DropTestInput, 'startPositionM' | 'startClearanceM'> = env.environment.terrain
+      ? { startPositionM: [0, 0, 0], startClearanceM: clearanceM }
+      : { startPositionM: [0, 0, 0 + (clearanceM - lowestPoint(vehicle.parts.map((p) => ({ shape: p.shape, ...p.pose }))))] }
     setRunning(true)
     try {
-      const res = await getApi().engine.dropTest({ vehicle, environment: env.environment, startPositionM: [0, 0, startZ], durationS })
-      setResult(res.ok ? { ok: true, r: res.data, startZ, low } : { ok: false, message: res.error.message })
+      const res = await getApi().engine.dropTest({ vehicle, environment: env.environment, ...start, durationS })
+      setResult(res.ok ? { ok: true, r: res.data } : { ok: false, message: res.error.message })
     } catch (e) {
       setResult({ ok: false, message: (e as Error).message })
     } finally {
@@ -233,7 +234,7 @@ function DropTest({ doc, geo, env }: { doc: AssemblyDocument; geo: FrameGeometry
     <div className="mt-3" data-testid="drop-test">
       <h3 className="mb-1 text-[12px] font-medium text-fg-muted">Drop test (engine)</h3>
       {doc.flight?.wind?.kind === 'wind' && <p className="text-[12px] text-fg-subtle">The drop test runs without wind or propulsion.</p>}
-      <NumberField key={`clear:${clearanceM}`} id="drop-clearance" label="Release height (lowest point)" unit="mm" initial={mm(clearanceM)} parse={numberParser(0, 10_000, 'mm')} onCommit={(v) => setClearance(v / 1000)} />
+      <NumberField key={`clear:${clearanceM}`} id="drop-clearance" label={env.ok && env.environment.terrain ? 'Ground clearance' : 'Release height (lowest point)'} unit="mm" initial={mm(clearanceM)} parse={numberParser(0, 10_000, 'mm')} onCommit={(v) => setClearance(v / 1000)} />
       <NumberField key={`dur:${durationS}`} id="drop-duration" label="Duration" unit="s" initial={String(durationS)} parse={numberParser(0.1, 10, 's')} onCommit={setDuration} />
       <div className="mt-2 flex items-center gap-2">
         <Button size="sm" data-testid="run-drop-test" disabled={blocked !== null || running} onClick={() => void run()} title={blocked ?? undefined}>
@@ -250,7 +251,7 @@ function DropTest({ doc, geo, env }: { doc: AssemblyDocument; geo: FrameGeometry
         <div className="mt-2 text-[12px] text-fg-muted" data-testid="drop-test-result">
           <p>
             After {result.r.durationS} s: frame origin at <span className="num" data-testid="drop-z">{mm(result.r.state.positionM[2])}</span> mm
-            (released at {mm(result.startZ)} mm), speed <span className="num" data-testid="drop-speed">{speed(result.r.state.linearVelocityMps).toExponential(1)}</span> m/s,
+            (released at {mm(result.r.startZM)} mm), speed <span className="num" data-testid="drop-speed">{speed(result.r.state.linearVelocityMps).toExponential(1)}</span> m/s,
             turn rate <span className="num">{speed(result.r.state.angularVelocityRadps).toExponential(1)}</span> rad/s.
           </p>
           <ul className="mt-1" data-testid="drop-contacts">

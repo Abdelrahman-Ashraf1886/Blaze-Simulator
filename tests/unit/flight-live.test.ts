@@ -771,6 +771,50 @@ describe('6.5 on the real NDJSON engine', () => {
     }
   }))
 
+  it('resolves terrain release height in batch and scenario runs and refuses invalid clearances', async () => withProtocol(async ({ result, request }) => {
+    await result(load)
+    const startClearanceM = REST_Z
+    const batch = {
+      type: 'sim.run', durationS: dtS, airDensityKgM3, environment: terrainEnvironment,
+      startPositionM: v3(0, 0, -REST_Z), startClearanceM,
+    }
+    const release = SimRunResultSchema.parse(await result(batch))
+    expect(release.startZM).toBeCloseTo(REST_Z + startClearanceM, 9)
+    expect(release.contacts).toEqual([])
+    expect(SimRunResultSchema.parse(await result(batch)).stateHash).toBe(release.stateHash)
+
+    const scenario = {
+      type: 'scenario.run', scenario: { type: 'custom', scenario: {
+        name: 'lowered body', durationS: dtS, checks: [],
+        modifications: [{ type: 'shiftPart', partId: 'body', deltaM: v3(0, 0, -REST_Z) }],
+        script: [{ fromS: 0, attitude: { type: 'euler', roll: 0, pitch: 0, yaw: 0 }, yawRateRadps: 0, zM: null, zVelocityMps: 0 }],
+      } },
+      config: { airDensityKgM3, cutoff, environment: terrainEnvironment, startPositionM: batch.startPositionM, startClearanceM: 0 },
+    }
+    expect(ScenarioRunResultSchema.parse(await result(scenario)).report.endReason).toBe('duration')
+    const shallow = { ...scenario.config, startClearanceM: undefined, startPositionM: startPositionM }
+    expect(await request({ ...scenario, config: shallow })).toMatchObject({
+      ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('inside the ground') },
+    })
+    const refused = [
+      [{ ...batch, startClearanceM: -REST_Z }, 'finite and non-negative'],
+      [{ ...batch, environment: free }, 'requires a ground'],
+      [{ ...batch, startPositionM: v3(cellSizeM, 0, 0) }, 'no vehicle part'],
+      [{ ...start(baseStart), environment: free, startClearanceM: 0 }, 'requires a ground'],
+      [{ ...scenario, config: { ...scenario.config, environment: undefined } }, 'requires config.environment'],
+    ] as const
+    for (const [command, message] of refused) {
+      expect(await request(command)).toMatchObject({
+        ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining(message) },
+      })
+    }
+    for (const clearance of [NaN, Infinity, -REST_Z, null]) {
+      expect(SimRunParamsSchema.shape.startClearanceM.safeParse(clearance).success).toBe(false)
+      expect(FlightSessionStartParamsSchema.safeParse({ ...baseStart, startClearanceM: clearance }).success).toBe(false)
+      expect(ScenarioRunParamsSchema.shape.config.safeParse({ ...scenario.config, startClearanceM: clearance }).success).toBe(false)
+    }
+  }))
+
   it('refuses bad values and auto commands outside FlightLoop and accepts optional step-test configuration', async () => withProtocol(async ({ result, request }) => {
     await result(load)
     const legacy = start({ ...baseStart, controller: undefined })

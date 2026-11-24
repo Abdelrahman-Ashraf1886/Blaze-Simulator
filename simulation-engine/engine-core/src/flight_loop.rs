@@ -10,11 +10,11 @@ use crate::hover_thrust::{HoverThrustEstimate, HoverThrustEstimator, HoverThrust
 use crate::land_detector::{HoverThrustUpdate, LandDetector, LandDetectorInput, LandDetectorParams, LandState};
 use crate::math::STANDARD_GRAVITY;
 use crate::position_control::{limit_tilt, thrust_to_attitude, PositionControl, PositionGains, PositionInput, PositionOutput, PositionSetpoint};
-use crate::sim::{Simulation, ALLOWED_LINEAR_ERROR_M};
+use crate::sim::Simulation;
 use crate::takeoff::{Takeoff, TakeoffParams, TakeoffState, MICROS_PER_SECOND};
 use crate::thrust_model::MotorOutput;
 use crate::vehicle::{Quat, Vehicle};
-use rapier3d_f64::{math::{Rotation, Vector}, prelude::{ColliderSet, RigidBodySet}};
+use rapier3d_f64::math::{Rotation, Vector};
 
 // modules/ekf2/ekf2_params.c:53. Timestamp arithmetic stays in microseconds.
 const EKF2_PREDICT_US: u64 = 10_000;
@@ -67,7 +67,6 @@ pub struct FlightLoop {
     detector: LandDetector,
     detector_hover_update: Option<HoverThrustUpdate>,
     tilt_limit_rad: f64,
-    start_support: Vec<Vector>,
 }
 
 /// Samples the acceleration produced by an interval of plant steps. Both loop
@@ -179,7 +178,6 @@ impl FlightLoop {
             })?,
             detector_hover_update: None,
             tilt_limit_rad: 0.0, // SlewRate.hpp:89-90.
-            start_support: start_support_points(vehicle),
         })
     }
 
@@ -290,12 +288,7 @@ impl FlightLoop {
         }
         let start = self.origin_z.is_none();
         let origin_z = self.origin_z.unwrap_or(estimate.position[2]);
-        let touching_ground = sim.touching_ground() || (start && self.start_support.iter().any(|&point| {
-            // The contact log starts empty (environment.rs:594). Probe the
-            // initial collider points against the same surface and tolerance.
-            let world = Rotation::from_xyzw(x, y, z, w) * point + Vector::from_array(state.position_m);
-            sim.height_below(world.x, world.y).is_some_and(|height| world.z - height <= ALLOWED_LINEAR_ERROR_M)
-        }));
+        let touching_ground = sim.touching_ground() || (start && sim.initial_ground_contact());
         let land = self.last_step.map_or(LandState {
             freefall: false,
             ground_contact: touching_ground,
@@ -519,30 +512,6 @@ fn wants_manual_takeoff(command: FlightCommand, estimate: &PositionInput) -> boo
             || sp.velocity[2] > 0.0 || sp.acceleration[2] > 0.0,
         _ => false,
     }
-}
-
-// Same collider points as the initial terrain validation (environment.rs:528-552).
-fn start_support_points(vehicle: &Vehicle) -> Vec<Vector> {
-    let mut bodies = RigidBodySet::new();
-    let mut colliders = ColliderSet::new();
-    let handle = vehicle.build_body(&mut bodies, &mut colliders);
-    let mut points = Vec::new();
-    for collider in bodies[handle].colliders().iter().map(|&h| &colliders[h]) {
-        let shape = collider.shape();
-        let pose = collider.position();
-        if shape.as_cuboid().is_some() {
-            points.extend(shape.compute_local_aabb().vertices().map(|v| *pose * v));
-        } else if let Some(hull) = shape.as_convex_polyhedron() {
-            points.extend(hull.points().iter().map(|&v| *pose * v));
-        } else if let Some(support) = shape.as_support_map() {
-            points.push(support.support_point(pose, -Vector::Z));
-            if let Some(cylinder) = shape.as_cylinder() {
-                points.extend([-cylinder.half_height, cylinder.half_height]
-                    .map(|y| *pose * Vector::new(0.0, y, 0.0)));
-            }
-        }
-    }
-    points
 }
 
 struct RuntimeLimits {

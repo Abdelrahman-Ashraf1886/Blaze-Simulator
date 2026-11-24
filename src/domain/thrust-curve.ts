@@ -1,4 +1,5 @@
-import { steadyState, type MotorElectrical, type ThrottleMap } from './propulsion'
+import { controllerParam, type TuningOverrides } from './controller-params'
+import { steadyState, type MotorElectrical, type MotorPropulsion, type PropulsionDefinition, type ThrottleMap } from './propulsion'
 
 export interface ThrustSample {
   throttle: number
@@ -37,14 +38,20 @@ export function fitThrustSamples(samples: readonly ThrustSample[]): ThrustCurveF
   if (denominator === 0) return null
   const unconstrainedFactor = numerator / denominator
   const factor = Math.min(1, Math.max(0, unconstrainedFactor))
-  const errors = samples.map(({ throttle: x, relativeThrust: y }) => factor * x * x + (1 - factor) * x - y)
   return {
     factor,
     unconstrainedFactor,
     clamped: factor !== unconstrainedFactor,
+    ...fitErrors(samples, factor),
+    sampleCount: samples.length,
+  }
+}
+
+function fitErrors(samples: readonly ThrustSample[], factor: number) {
+  const errors = samples.map(({ throttle: x, relativeThrust: y }) => factor * x * x + (1 - factor) * x - y)
+  return {
     rmsError: Math.sqrt(errors.reduce((sum, e) => sum + e * e, 0) / errors.length),
     maxAbsError: errors.reduce((max, e) => Math.max(max, Math.abs(e)), 0),
-    sampleCount: samples.length,
   }
 }
 
@@ -103,4 +110,67 @@ export function fitThrustCurve(input: ThrustCurveInput): PropulsionThrustCurveFi
   })
   const fit = fitThrustSamples(samples)
   return fit && { ...fit, supplyVoltage, sourceResistance, throttleMin, throttleMax, fullThrottleOmega, extrapolatedSamples }
+}
+
+export interface BuildThrustCurveFit extends ThrustCurveFit {
+  samples: readonly ThrustSample[]
+  supplyVoltage: number
+  packResistance: number
+  airDensityKgM3: number
+}
+
+/** One collective curve for the build, with all motors at equal throttle and
+ * the nominal open-circuit voltage (propulsion.ts:700–713) subject to pack sag.
+ * The 4.9 shared-voltage solve is in scenario/builtins.rs:21–51. */
+export function fitBuildThrustCurve(
+  motors: readonly MotorPropulsion[],
+  battery: PropulsionDefinition['battery'],
+  airDensityKgM3: number,
+): BuildThrustCurveFit | null {
+  const models = motors.flatMap(({ electrical, fit }) => {
+    if (!electrical || !fit?.kQ || !fit.referenceDensity) return []
+    const ratio = airDensityKgM3 / fit.referenceDensity.kgM3
+    return [{ electrical, map: fit.map, kT: fit.kT.k * ratio, kQ: fit.kQ.k * ratio }]
+  })
+  if (models.length === 0 || models.length !== motors.length) return null
+  const { openCircuitVoltageV: supplyVoltage, internalResistanceOhm: packResistance } = battery
+  const solve = (throttle: number) => {
+    let lo = 0
+    let hi = supplyVoltage
+    const statesAt = (voltage: number) => models.map(({ electrical, kQ, map }) => steadyState(electrical, kQ, voltage, throttle, 0, map))
+    for (let i = 0; i < 80; i++) {
+      const voltage = (lo + hi) / 2
+      const current = statesAt(voltage).reduce((sum, state) => sum + state.supplyCurrent, 0)
+      if (voltage + packResistance * current > supplyVoltage) hi = voltage
+      else lo = voltage
+    }
+    return statesAt((lo + hi) / 2).reduce((sum, state, i) => sum + models[i]!.kT * state.omega ** 2, 0)
+  }
+  const fullThrust = solve(1)
+  if (!Number.isFinite(fullThrust) || fullThrust <= 0) return null
+  // 5.2's sampling grid (tests/unit/thrust-curve.test.ts:65–70), with the
+  // throttle endpoints read from the cited PX4 controller reference.
+  const min = controllerParam('MPC_THR_MIN')!.default
+  const max = controllerParam('MPC_THR_MAX')!.default
+  const sampleCount = 101
+  const samples = Array.from({ length: sampleCount }, (_, i) => {
+    const throttle = min + (max - min) * i / (sampleCount - 1)
+    return { throttle, relativeThrust: solve(throttle) / fullThrust }
+  })
+  if (samples.some(({ relativeThrust }) => !Number.isFinite(relativeThrust) || relativeThrust < 0)) return null
+  const fit = fitThrustSamples(samples)
+  return fit && { ...fit, samples, supplyVoltage, packResistance, airDensityKgM3 }
+}
+
+export function thrustFactor(fit: BuildThrustCurveFit | null, saved?: TuningOverrides | null) {
+  return saved?.THR_MDL_FAC ?? fit?.factor ?? controllerParam('THR_MDL_FAC')!.default
+}
+
+export function thrustFactorReadout(fit: BuildThrustCurveFit | null, saved: TuningOverrides): string {
+  const factor = thrustFactor(fit, saved)
+  const source = saved.THR_MDL_FAC !== undefined ? 'user override' : fit ? 'derived' : 'fit unavailable'
+  const label = `THR_MDL_FAC ${factor.toPrecision(6)} (${source})`
+  if (!fit) return `${label} · Fit error and pack state unavailable`
+  const { rmsError, maxAbsError } = fitErrors(fit.samples, factor)
+  return `${label} · Fit error ${(100 * rmsError).toPrecision(3)}% RMS, ${(100 * maxAbsError).toPrecision(3)}% max relative thrust · Nominal pack ${fit.supplyVoltage} V with sag (${fit.packResistance} Ω), ISA sea level`
 }

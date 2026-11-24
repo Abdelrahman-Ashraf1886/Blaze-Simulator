@@ -401,6 +401,7 @@ pub struct Ground {
 #[derive(Debug, Clone)]
 pub struct ScenarioConfig {
     pub gains: Gains,
+    pub thrust_model_factor: f64,
     /// Density of the air the flight is in, kg/m³ (also the body drag's ρ). The
     /// density each motor's data was fitted at is the motor's own
     /// (`MotorPropulsion::reference_density_kg_m3`): none is assumed here.
@@ -444,7 +445,8 @@ pub fn run(
         flight.set_cutoff(cutoff)?;
     }
     // The controller: nominal geometry, never the plant's CoM or payload.
-    let mut cl = ClosedLoop::new(vehicle, flight, yaw_ratio, config.gains)?;
+    let mut cl = ClosedLoop::new(vehicle, flight, yaw_ratio, config.gains)?
+        .with_thrust_model(config.thrust_model_factor)?;
     let sim_config = SimConfig::default();
     let mut sim = match &config.ground {
         Some(g) => Simulation::with_environment(&plant, sim_config, &g.environment, g.start_m)?,

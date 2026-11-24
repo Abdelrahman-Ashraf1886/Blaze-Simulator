@@ -4,8 +4,11 @@
  * engine flies a built-in through the same handler (the engine's own tests fly every built-in).
  */
 import { join } from 'node:path'
-import { afterAll, describe, expect, it, vi } from 'vitest'
-import type { IpcResult } from '../../electron/ipc/contract'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import seed from '../../database/seed/components.v1.json'
+import type { Component } from '../../electron/ipc/component-fields'
+import type { AssemblyDocument, IpcResult } from '../../electron/ipc/contract'
+import { STARTING_FRAME } from '../../electron/main/db/repositories'
 import {
   BUILTIN_SCENARIO_NAMES,
   ScenarioReportSchema,
@@ -15,7 +18,17 @@ import {
   type ScenarioRunResult,
 } from '../../electron/main/engine/protocol'
 import { scenarioRun, scenarioRunSchema, type EngineForScenario } from '../../electron/main/engine/scenario-run'
+import { stepTest } from '../../electron/main/engine/step-test'
 import { EngineSupervisor } from '../../electron/main/engine/supervisor'
+import { RECOMMENDED_STEP_METRICS_OPTIONS, stepMetrics } from '../../src/domain/step-response'
+import { thrustFactor, thrustFactorReadout } from '../../src/domain/thrust-curve'
+import { enginePayload, flightGate } from '../../src/features/flight/readiness'
+import { BUILTINS, scenarioRunInput } from '../../src/features/scenarios/scenarios'
+import { measuredSamples, stepTestInput } from '../../src/features/tuning/step-test-input'
+import { addPart, updatePart, type AttachTarget } from '../../src/features/workshop/assembly-ops'
+import { effectiveShape } from '../../src/features/workshop/links'
+import { placeClear, reseat } from '../../src/features/workshop/placement'
+import { buildFrame } from '../../src/three/frame-geometry'
 
 // The 4.7 test quad (engine-core's test motor, not a catalogue part): 1 kg on 0.15 m arms, as the sidecar tests fly it.
 const A = 0.15
@@ -37,6 +50,51 @@ const quad = {
 const config = { airDensityKgM3: 1.225, cutoff: { type: 'chargeMah', value: 1000 } }
 const hover = { type: 'builtin', name: 'balanced_hover' }
 const request = (over: Record<string, unknown> = {}) => ({ ...quad, scenario: hover, config, ...over })
+
+// Headless copy of the 4.9 catalogue quad and its user entries in
+// tests/e2e/scenarios.spec.ts:33–65,104,115,142,164.
+function catalogueQuad() {
+  const named = (name: string) => (seed.components as unknown as Component[]).find((c) => c.name === name)!
+  const motor = named('MN3110 KV470')
+  const prop = named('P13*4.4 CF propeller')
+  const battery = named('Tattu G-Tech 5200mAh 4S 35C')
+  const components = {
+    [motor.id]: { ...motor, specs: { ...motor.specs,
+      rotorInertia: { value: 150, unit: 'g·cm²', source: 'measured', condition: 'bifilar pendulum, bell and shaft' },
+      referenceDensity: { value: 1.225, unit: 'kg/m³', source: 'user', condition: 'bench air, as stated by the user' },
+    } },
+    [prop.id]: prop,
+    [battery.id]: { ...battery, specs: { ...battery.specs,
+      internalResistance: { value: 12, unit: 'mΩ', source: 'measured', condition: '4-wire AC, 1 kHz, 25 °C' },
+    } },
+  } satisfies Record<string, Component>
+  const frame = { ...STARTING_FRAME['quad-x'], motorDiagonal: 0.55 }
+  const geo = buildFrame('quad-x', frame)
+  const frameTop = geo.plates.find(({ id }) => id === 'plate-top')!.position[2]
+  let doc: AssemblyDocument = {
+    frame, frameMass: { valueKg: 0.3, source: 'user' }, motors: {}, parts: [],
+    bodyDrag: { cd: [1.1, 1.1, 1.1], source: 'user' }, // FrameEditor.tsx:90–95
+    environment: { ground: { friction: 0.6, restitution: 0.1 }, obstacles: [] },
+  }
+  const attach = (kind: 'motor' | 'propeller' | 'battery', target: AttachTarget, id: string, componentId: string) => {
+    const added = addPart(doc, kind, target, frameTop, id, {}, (part) => effectiveShape(part, components))
+    const placed = placeClear(added.doc, geo, id, components, {})
+    if (!placed.ok) throw new Error(placed.reason)
+    doc = reseat(placed.doc, updatePart(placed.doc, id, { componentId }), geo, id, components, {})
+    const linked = placeClear(doc, geo, id, components, {})
+    if (linked.ok) doc = linked.doc
+  }
+  for (const mount of geo.motors) {
+    attach('motor', { kind: 'mount', id: mount.id }, mount.id, motor.id)
+    attach('propeller', { kind: 'part', id: mount.id }, `prop-${mount.number}`, prop.id)
+  }
+  attach('battery', { kind: 'none' }, 'battery', battery.id)
+  const gate = flightGate(enginePayload(doc, geo, components, {}), {
+    ambientAltitudeM: 0, temperatureC: null, cutoffType: 'voltageV', cutoffValue: 12,
+  })
+  if (!gate.ok) throw new Error(gate.blockers.map(({ id }) => id).join(', '))
+  return gate
+}
 
 const holdLevel: Scenario = {
   name: 'hold', durationS: 1, modifications: [{ type: 'payload', partId: 'p', massKg: 0.1, positionM: [0, 0, 0], boxSizeM: null }, { type: 'shiftPart', partId: 'body', deltaM: [0, 0, 0] }],
@@ -168,7 +226,7 @@ const sup = new EngineSupervisor({ binaryPath })
 afterAll(() => sup.stop())
 
 describe('a real engine', () => {
-  it('flies balanced hover and passes, flies it again to the same hash, and refuses with the engine’s codes', async () => {
+  beforeAll(async () => {
     sup.start()
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`engine start timed out: ${JSON.stringify(sup.status)}`)), 8000)
@@ -179,6 +237,9 @@ describe('a real engine', () => {
       sup.on('status', check)
       check()
     })
+  })
+
+  it('flies balanced hover and passes, flies it again to the same hash, and refuses with the engine’s codes', async () => {
     const first = await scenarioRun(sup, request())
     expect(first.ok).toBe(true)
     if (!first.ok) return
@@ -192,6 +253,8 @@ describe('a real engine', () => {
     expect(second).toEqual(first)
 
     const refused = async (over: Record<string, unknown>) => err(await scenarioRun(sup, request(over)))?.message ?? ''
+    expect(await refused({ config: { ...config, thrustModelFactor: 0.5, gains: { THR_MDL_FAC: 0 } } }))
+      .toMatch(/^INVALID_PARAMS: .*thrustModelFactor and THR_MDL_FAC must agree/)
     expect(await refused({ scenario: { type: 'builtin', name: 'payload' } })).toMatch(/^INVALID_SCENARIO: .*massKg/)
     expect(await refused({ scenario: { type: 'builtin', name: 'payload', massKg: 0.5 }, config: { ...config, gains: { MC_NOPE: 1 } } })).toMatch(/^INVALID_PARAMS: .*unknown PX4 parameter/)
     const noReference = { ...quad.propulsion, motors: quad.propulsion.motors.map((m) => Object.fromEntries(Object.entries(m).filter(([k]) => k !== 'referenceDensityKgM3'))) }
@@ -199,6 +262,50 @@ describe('a real engine', () => {
     expect(await refused({ propulsion: noReference })).toContain('referenceDensityKgM3')
     // After the refusals the engine still flies.
     expect((await scenarioRun(sup, request({ scenario: { type: 'builtin', name: 'payload', massKg: 0.5 } }))).ok).toBe(true)
+  }, 60000)
+
+  it('runs every 4.9 catalogue baseline with the curve off and with the derived factor', async () => {
+    const gate = catalogueQuad()
+    expect(gate.thrustFit?.factor).toBeGreaterThan(0)
+    expect(thrustFactorReadout(gate.thrustFit, {})).toMatch(/derived.*RMS.*Nominal pack 14.8 V with sag/)
+    expect(thrustFactorReadout(gate.thrustFit, { THR_MDL_FAC: 0 })).toMatch(/user override.*RMS/)
+    const entries = { payloadMassKg: 0.2, comOffsetM: 0.005 }
+    for (const info of BUILTINS) {
+      const on = scenarioRunInput(gate, info, entries)!
+      const off = scenarioRunInput(gate, info, entries, { THR_MDL_FAC: 0 })!
+      const runs = []
+      for (const input of [off, on]) {
+        const response = await scenarioRun(sup, input)
+        if (!response.ok) throw new Error(response.error.message)
+        runs.push(response.data.report)
+      }
+      expect(runs[0]?.passed, info.name).toBe(true)
+      expect(runs[1]?.finalStateHash, info.name).not.toBe(runs[0]?.finalStateHash)
+      if (process.env.BLAZE_SCENARIO_BASELINES) {
+        console.info('BASELINE ' + JSON.stringify({ fit: gate.thrustFit?.factor, rms: gate.thrustFit?.rmsError, max: gate.thrustFit?.maxAbsError, runs }))
+      }
+    }
+    // 2 m acceptance steps (phase-5-flight-control.md:362–364). Timing and
+    // roll amplitude come from step_test/tests.rs:44–47,234.
+    for (const { step, amplitude, holdS, durationS } of [
+      { step: { type: 'position', axis: 'x', amplitudeM: 2 }, amplitude: 2, holdS: 5, durationS: 15 },
+      { step: { type: 'altitude', amplitudeM: 2 }, amplitude: 2, holdS: 5, durationS: 15 },
+      { step: { type: 'rate', axis: 'roll', amplitudeRadps: Math.PI / 18 }, amplitude: Math.PI / 18, holdS: 1, durationS: 10 },
+    ] as const) {
+      for (const factor of [0, thrustFactor(gate.thrustFit)]) {
+        const input = stepTestInput(gate, { step, holdS, durationS, decimationSteps: 10 }, { THR_MDL_FAC: factor })
+        const response = await stepTest(sup, input)
+        if (!response.ok) throw new Error(response.error.message)
+        const { endReason, error, trace, stepTimeS, gains } = response.data
+        if (endReason !== 'duration') throw new Error(`${step.type}: ${endReason}: ${error}`)
+        const samples = measuredSamples(trace)
+        const metrics = stepMetrics(samples, { t0: stepTimeS, y0: 0, y1: amplitude }, RECOMMENDED_STEP_METRICS_OPTIONS)
+        expect(metrics.status).toBe('ok')
+        if (process.env.BLAZE_SCENARIO_BASELINES && metrics.status === 'ok') {
+          console.info('BASELINE ' + JSON.stringify({ step: step.type, factor: gains.THR_MDL_FAC, finalError: amplitude - samples.at(-1)!.y, metrics }))
+        }
+      }
+    }
   }, 60000)
 })
 

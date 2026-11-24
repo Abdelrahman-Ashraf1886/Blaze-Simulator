@@ -28,6 +28,7 @@ struct Config {
     cutoff: CutoffRequest,
     gains: Option<Map<String, Value>>,
     airmode: Option<f64>,
+    #[serde(default, deserialize_with = "crate::protocol::present")]
     thrust_model_factor: Option<f64>,
 }
 

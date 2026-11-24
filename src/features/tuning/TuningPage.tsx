@@ -13,6 +13,7 @@ import { useComponentIndex } from '../workshop/component-index'
 import { focusWhenPresent, useFollow } from '../flight/FlightSetup'
 import { conditionsOf, enginePayload, flightGate } from '../flight/readiness'
 import { StepTestPanel } from './StepTestPanel'
+import { thrustFactorReadout } from '@/domain/thrust-curve'
 import { TuningPanel } from './TuningPanel'
 
 export default function TuningPage() {
@@ -69,7 +70,8 @@ function ProjectTuning({ project, doc }: { project: Project; doc: AssemblyDocume
   const assets = useAssets((s) => s.assets)
   const engineReady = useSystem((s) => s.engine?.state === 'connected')
   const geo = useMemo(() => buildFrame(project.frameType, doc.frame, doc.motors), [doc, project.frameType])
-  const gate = useMemo(() => flightGate(enginePayload(doc, geo, components, assets), conditionsOf(doc)), [doc, geo, components, assets])
+  const payload = useMemo(() => enginePayload(doc, geo, components, assets), [doc, geo, components, assets])
+  const gate = useMemo(() => flightGate(payload, conditionsOf(doc)), [payload, doc])
 
   return <>
     <PageHeader title={`${project.name} · Tuning`} />
@@ -77,6 +79,9 @@ function ProjectTuning({ project, doc }: { project: Project; doc: AssemblyDocume
       <TuningPanel projectId={project.id} gainsAffectFlights renderStepTest={(tuning) => (
         <div className="space-y-3">
           <Section title="Step test readiness">
+            {tuning.saved && <div className="pb-2 text-[12.5px] text-fg-muted">
+              <p>{thrustFactorReadout(payload.ok ? payload.payload.thrustFit : null, tuning.saved)}</p>
+            </div>}
             {gate.ok ? <Readouts>
               <Readout label="Air density" value={gate.input.airDensityKgM3} unit="kg/m³" />
               <Readout label="Battery cut-off" value={gate.input.cutoff.value} unit={gate.input.cutoff.type === 'voltageV' ? 'V' : 'mAh'} />

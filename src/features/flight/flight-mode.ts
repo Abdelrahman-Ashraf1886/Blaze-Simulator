@@ -1,5 +1,6 @@
 import type { FlightStartInput } from '../../../electron/ipc/contract'
 import type { TuningOverrides } from '../../domain/controller-params'
+import { thrustFactor, type BuildThrustCurveFit } from '../../domain/thrust-curve'
 import type { FlightMode } from './frame'
 
 export const FLIGHT_MODE_LABELS = {
@@ -19,16 +20,18 @@ const attitudeHoldNames = new Set([
   'MC_ACRO_R_MAX', 'MC_ACRO_P_MAX', 'MC_ACRO_Y_MAX',
   'MPC_Z_P', 'MPC_Z_VEL_P_ACC', 'MPC_Z_VEL_I_ACC', 'MPC_Z_VEL_D_ACC',
   'MPC_THR_HOVER', 'MPC_USE_HTE', 'MPC_THR_MIN', 'MPC_THR_MAX', 'MPC_Z_VEL_MAX_UP', 'MPC_Z_VEL_MAX_DN',
+  'THR_MDL_FAC',
 ])
 
-export function flightStartWithTuning(mode: FlightMode, saved: TuningOverrides): {
+export function flightStartWithTuning(mode: FlightMode, saved: TuningOverrides, fit: BuildThrustCurveFit | null = null): {
   session: Pick<FlightStartInput, 'controller' | 'gains'>
   unsupported: string[]
 } {
-  if (mode !== 'attitudeHold') return { session: { controller: { mode }, gains: saved }, unsupported: [] }
+  const gains = { ...saved, THR_MDL_FAC: thrustFactor(fit, saved) }
+  if (mode !== 'attitudeHold') return { session: { controller: { mode }, gains }, unsupported: [] }
   const entries = Object.entries(saved)
   return {
-    session: { gains: Object.fromEntries(entries.filter(([name]) => attitudeHoldNames.has(name))) },
+    session: { gains: Object.fromEntries(Object.entries(gains).filter(([name]) => attitudeHoldNames.has(name))) },
     unsupported: entries.map(([name]) => name).filter((name) => !attitudeHoldNames.has(name)),
   }
 }

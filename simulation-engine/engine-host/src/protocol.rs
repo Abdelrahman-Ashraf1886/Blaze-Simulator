@@ -171,7 +171,6 @@ impl ControllerRequest {
             ("bodyRadps", self.body_radps.is_some()),
             ("collective", self.collective.is_some()),
             ("airmode", self.airmode.is_some()),
-            ("thrustModelFactor", self.thrust_model_factor.is_some()),
         ].into_iter().find_map(|(field, supplied)| supplied.then_some(field))
     }
 

@@ -253,14 +253,15 @@ pub fn run<G>(
     let (hold, duration) = spec.timing()?;
     let mut sim = Simulation::new(vehicle, SimConfig::default())?;
     let (mut flight_loop, gains) = controller(hover.flight)?;
+    let hover_collective = flight_loop.relative_thrust(hover.collective);
     let mut trace = Trace::new(duration, spec.decimation_steps, flight_loop.flight().motor_count())?;
     if matches!(spec.step, Step::Altitude { .. } | Step::Position { .. }) {
-        flight_loop.trim_direct_position(hover.collective, DEFAULT_DT_S)?;
+        flight_loop.trim_direct_position(hover_collective, DEFAULT_DT_S)?;
     }
     let mut state = sim.state();
     let origin = state.com_m;
-    let baseline = command(spec.step, false, origin, hover.collective);
-    let target = command(spec.step, true, origin, hover.collective);
+    let baseline = command(spec.step, false, origin, hover_collective);
+    let target = command(spec.step, true, origin, hover_collective);
     let (mut end_reason, mut error) = (StepTestEnd::Duration, None);
     for k in 0..duration {
         let (command, setpoint) = if k < hold { baseline } else { target };
@@ -315,7 +316,7 @@ pub fn run<G>(
         trace,
         step_time_s: hold as f64 * DEFAULT_DT_S,
         elapsed_s: state.time_s,
-        hover_collective_01: hover.collective,
+        hover_collective_01: hover_collective,
         start_imbalance_nm: hover.imbalance_nm,
         end_reason,
         error,

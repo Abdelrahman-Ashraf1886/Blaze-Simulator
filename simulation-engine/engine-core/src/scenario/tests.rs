@@ -69,6 +69,7 @@ const DRAG: BodyDrag = BodyDrag { cd_body: [1.0; 3], area_m2: [0.01; 3] };
 fn config() -> ScenarioConfig {
     ScenarioConfig {
         gains: Gains::px4_v1_13_3(),
+        thrust_model_factor: 0.0,
         air_density_kg_m3: REF_RHO,
         cutoff: None,
         ground: None,

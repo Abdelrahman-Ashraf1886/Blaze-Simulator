@@ -8,6 +8,7 @@ use crate::flight_modes::{FlightCommand, FlightModes, ModeSetpoint};
 use crate::hover_thrust::{HoverThrustEstimate, HoverThrustEstimator, HoverThrustParams, HoverThrustSample};
 use crate::position_control::{PositionControl, PositionGains, PositionInput, PositionSetpoint};
 use crate::sim::Simulation;
+use crate::thrust_model::MotorOutput;
 use crate::vehicle::{Quat, Vehicle};
 
 // modules/ekf2/ekf2_params.c:53. Timestamp arithmetic stays in microseconds.
@@ -39,6 +40,7 @@ pub struct FlightLoop {
     flight: Flight,
     modes: FlightModes,
     hover: HoverSampling,
+    motor_output: MotorOutput,
     position: PositionControl,
     gains: Gains,
     rate: RateControl,
@@ -128,6 +130,7 @@ impl FlightLoop {
         Ok(Self {
             flight,
             hover: HoverSampling::new(hover)?,
+            motor_output: MotorOutput::new(vehicle.definition.motors.len()),
             modes: FlightModes::new(position, airmode)?,
             position: PositionControl::new(position)?,
             gains,
@@ -141,6 +144,15 @@ impl FlightLoop {
 
     pub fn flight(&self) -> &Flight {
         &self.flight
+    }
+
+    pub fn with_thrust_model(mut self, factor: f64) -> Result<Self, String> {
+        self.motor_output.set_factor(factor)?;
+        Ok(self)
+    }
+
+    pub(crate) fn relative_thrust(&self, throttle: f64) -> f64 {
+        self.motor_output.relative_thrust(throttle)
     }
 
     pub fn hover_thrust_estimate(&self) -> HoverThrustEstimate {
@@ -281,7 +293,8 @@ impl FlightLoop {
             .allocator
             .allocate([torque[0], torque[1], torque[2], thrust]);
         self.saturation = allocation.saturation;
-        self.flight.step(sim, allocation.commands);
+        let signals = self.motor_output.signals(allocation.commands);
+        self.flight.step(sim, signals);
         self.hover.after_step(sim, estimate.velocity[2], vertical_thrust, &mut self.position)?;
         let saturation = SaturationDiagnostic {
             positive: self.saturation.positive,
@@ -296,7 +309,7 @@ impl FlightLoop {
             velocity_integral: self.position.velocity_integral(),
             hover_thrust: self.hover.estimator.estimate(),
         });
-        observe(rates, desired_attitude, allocation.commands, saturation);
+        observe(rates, desired_attitude, signals, saturation);
         Ok(())
     }
 }

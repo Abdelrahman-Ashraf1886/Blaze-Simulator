@@ -137,10 +137,10 @@ describe('the response adapter', () => {
   it('uses all saved overrides for PX4 and names unsupported overrides for 4.7', () => {
     const saved = { MC_ROLL_P: 7, MPC_USE_HTE: 1, MPC_THR_CURVE: 0, MC_AIRMODE: 1 }
     expect(flightStartWithTuning('position', saved)).toEqual({
-      session: { gains: saved, controller: { mode: 'position' } }, unsupported: [],
+      session: { gains: { ...saved, THR_MDL_FAC: 0 }, controller: { mode: 'position' } }, unsupported: [],
     })
     expect(flightStartWithTuning('attitudeHold', saved)).toEqual({
-      session: { gains: { MC_ROLL_P: 7, MPC_USE_HTE: 1 } }, unsupported: ['MPC_THR_CURVE', 'MC_AIRMODE'],
+      session: { gains: { MC_ROLL_P: 7, MPC_USE_HTE: 1, THR_MDL_FAC: 0 } }, unsupported: ['MPC_THR_CURVE', 'MC_AIRMODE'],
     })
   })
 
@@ -378,6 +378,7 @@ const readyConditions: FlightConditions = { ambientAltitudeM: 120, temperatureC:
 const payload = (): EnginePayload => ({
   vehicle: quad.vehicle as unknown as EnginePayload['vehicle'],
   propulsion: quad.propulsion as unknown as EnginePayload['propulsion'],
+  thrustFit: null,
   aero: { cdBody: [1, 1, 1], areaM2: [0.01, 0.01, 0.01] },
   environment: { ground: { friction: 0.5, restitution: 0 }, obstacles: [] },
   startPositionM: [0, 0, REST_Z],
@@ -614,9 +615,9 @@ describe('a real engine session', () => {
   ] as const)('parses actual $mode diagnostics and hashes the same in chunks and one run', async ({ mode, ...setpoint }) => {
     const gains = {
       MC_ROLL_P: 7, MPC_XY_P: 1, MPC_POS_MODE: 0, MPC_THR_HOVER: 0.55, MPC_USE_HTE: 0,
-      MC_AIRMODE: 2, THR_MDL_FAC: 0, HTE_HT_ERR_INIT: 0.2,
+      MC_AIRMODE: 2, THR_MDL_FAC: 0.5, HTE_HT_ERR_INIT: 0.2,
     }
-    const mixer = { airmode: 2, thrustModelFactor: 0 }
+    const mixer = { airmode: 2, thrustModelFactor: gains.THR_MDL_FAC }
     const started = await flightStart(sup, { ...startInput(), ...air, gains, controller: { mode, ...mixer } })
     if (!started.ok) throw new Error(started.error.message)
     expect(started.data.diagnostic.flightLoop).toBeUndefined()
@@ -678,13 +679,14 @@ describe('a real engine session', () => {
       [{ MPC_USE_HTE: -1 }, /MPC_USE_HTE/],
       [{ MC_AIRMODE: 3 }, /MC_AIRMODE/],
       [{ THR_MDL_FAC: 2 }, /THR_MDL_FAC.*\[0, 1\]/],
-      [{ THR_MDL_FAC: 0.5 }, /THR_MDL_FAC.*5\.9/],
     ] as const) {
       await expect(sup.runSim({ ...request, controller: { ...controller, gains } })).rejects.toThrow(message)
     }
     await expect(sup.runSim({ ...request, controller: { ...controller, airmode: 0, gains: { MC_AIRMODE: 1 } } })).rejects.toThrow(/airmode and MC_AIRMODE/)
     await expect(sup.runSim({ ...request, controller: { ...controller, airmode: 1.5 } })).rejects.toThrow(/airmode/)
-    await expect(sup.runSim({ ...request, controller: { ...controller, thrustModelFactor: 0.5 } })).rejects.toThrow(/thrustModelFactor.*5\.9/s)
+    await expect(sup.runSim({ ...request, controller: {
+      ...controller, thrustModelFactor: 0.5, gains: { THR_MDL_FAC: 0 },
+    } })).rejects.toThrow(/thrustModelFactor and THR_MDL_FAC must agree/)
     await expect(sup.runSim({ ...request, dtS: 0.004 })).rejects.toThrow(/dtS.*divide 10 ms/s)
     await expect(sup.runSim({ ...request, controller: { ...controller, sticks: { ...centeredSticks, yawRight: 2 } } })).rejects.toThrow(/yawRight/)
     expect(FlightSessionStepParamsSchema.safeParse({ steps, setpoint: { mode: 'rates', collective: 0.5 } }).success).toBe(false)

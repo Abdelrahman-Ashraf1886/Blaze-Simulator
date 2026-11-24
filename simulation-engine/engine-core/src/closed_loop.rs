@@ -6,8 +6,7 @@
 //! 1. The controller reads the true state without sensor noise or delay:
 //!    attitude, body rates, and the CoM's height and vertical velocity.
 //! 2. `Controller::step` gives one normalised command per motor in [0, 1].
-//! 3. The commands are the motors' throttles (linear: PX4's thrust-curve
-//!    factor is zero).
+//! 3. Convert allocated thrust to the motors' throttle signals.
 //! 4. `Flight::step` applies them, then the shared hover estimator samples the plant.
 //!
 //! As on a real flight controller, the allocation uses the nominal motor
@@ -22,6 +21,7 @@ use crate::flight::Flight;
 use crate::flight_loop::HoverSampling;
 use crate::hover_thrust::HoverThrustParams;
 use crate::sim::Simulation;
+use crate::thrust_model::MotorOutput;
 use crate::vehicle::Vehicle;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -63,7 +63,7 @@ pub struct ClosedLoop {
     flight: Flight,
     controller: Controller,
     hover: HoverSampling,
-    commands: Vec<f64>,
+    motor_output: MotorOutput,
     saturated_steps: u64,
     collective: f64,
     torque_demand: [f64; 3],
@@ -91,7 +91,7 @@ impl ClosedLoop {
                 mpc_use_hte: gains.mpc_use_hte != 0.0,
                 ..HoverThrustParams::default()
             })?,
-            commands: vec![0.0; n],
+            motor_output: MotorOutput::new(n),
             saturated_steps: 0,
             collective: 0.0,
             torque_demand: [0.0; 3],
@@ -101,6 +101,11 @@ impl ClosedLoop {
 
     pub fn flight(&self) -> &Flight {
         &self.flight
+    }
+
+    pub fn with_thrust_model(mut self, factor: f64) -> Result<Self, String> {
+        self.motor_output.set_factor(factor)?;
+        Ok(self)
     }
 
     /// One fixed step. After the flight's battery cut-off was reached nothing steps.
@@ -122,9 +127,8 @@ impl ClosedLoop {
         self.collective = out.collective_thrust;
         self.torque_demand = out.torque_demand;
         self.saturation = out.saturation;
-        self.commands.copy_from_slice(out.motor_commands);
         let vertical_thrust = out.vertical_thrust;
-        self.flight.step(sim, &self.commands);
+        self.flight.step(sim, self.motor_output.signals(out.motor_commands));
         self.hover.after_step(sim, est.z_velocity, vertical_thrust, &mut self.controller.position)
             .expect("valid hover estimate from the shared estimator");
     }

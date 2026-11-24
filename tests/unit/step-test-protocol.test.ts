@@ -62,7 +62,7 @@ const params: StepTestRunParams = {
 }
 const aero = { cdBody: [1, 1, 1], areaM2: [0.01, 0.01, 0.01] } // flight-live.test.ts:35
 const { vehicle, propulsion } = load
-const gate: FlightGate = { ok: true, input: {
+const gate: FlightGate = { ok: true, thrustFit: null, input: {
   vehicle, propulsion, aero, ...params.config, environment: { ground: null, obstacles: [] }, startPositionM: [0, 0, 0],
 } }
 const command = { type: 'stepTest.run', ...params } as const
@@ -142,22 +142,24 @@ describe('stepTest.run protocol', () => {
     }
   })
 
-  it('parses real engine traces, resolved gains and repeatable hashes', async () => {
+  it('parses real engine traces, a nonzero factor, resolved gains and repeatable hashes', async () => {
     const steps: StepTestRunParams['test']['step'][] = [
       { type: 'attitude', axis: 'yaw', amplitudeRad: angleRad },
       { type: 'altitude', amplitudeM: 1 }, // controller/tests.rs:494-508
       { type: 'position', axis: 'y', amplitudeM: 1 },
     ]
-    const [hello, loaded, first, replay, ...others] = engine(
-      { type: 'hello' }, load, command, command,
+    const curvedParams = { ...params, config: { ...params.config, thrustModelFactor: 0.5 } }
+    const curved = { ...command, ...curvedParams }
+    const [hello, loaded, first, replay, linear, ...others] = engine(
+      { type: 'hello' }, load, curved, curved, command,
       ...steps.map((step) => ({ ...command, test: { ...params.test, step } })),
     )
     expect(result(hello)).toMatchObject({ protocolVersion: PROTOCOL_VERSION })
     expect(VehicleLoadResultSchema.parse(result(loaded)).valid).toBe(true)
     const run = await runStepTest(async (request) => {
-      expect(request).toEqual(command)
+      expect(request).toEqual(curved)
       return result(first)
-    }, params)
+    }, curvedParams)
     expect(run).toEqual(StepTestRunResultSchema.parse(result(replay)))
     expect(measuredSamples(run.trace).map(({ t }) => t)).toEqual(run.trace.samples.map(({ timeS }) => timeS))
     const lastSignal = run.trace.samples.at(-1)?.signal
@@ -167,9 +169,14 @@ describe('stepTest.run protocol', () => {
     expect(run.error).toBeNull()
     expect(run.stepTimeS).toBe(params.test.holdS)
     expect(run.gains).toMatchObject({
-      MC_ROLL_P: 7, MC_AIRMODE: 1, THR_MDL_FAC: 0,
+      MC_ROLL_P: 7, MC_AIRMODE: 1, THR_MDL_FAC: 0.5,
       MC_YAWRATE_K: 1, MPC_THR_HOVER: 0.5, HTE_THR_RANGE: 0.2,
     })
+    const linearRun = StepTestRunResultSchema.parse(result(linear))
+    expect(run.hoverCollective01).toBeLessThan(linearRun.hoverCollective01)
+    expect(run.trace.samples[0]!.motorCommands01).toEqual(
+      linearRun.trace.samples[0]!.motorCommands01.map((value) => expect.closeTo(value!, 12)),
+    )
     expect(run.trace.samples.map((sample) => sample.timeS)).toEqual([0, 2 * dtS, 4 * dtS, 6 * dtS])
     expect(run.trace.samples[1]).toMatchObject({
       signal: { kind: 'rate', setpointRadps: angleRad },

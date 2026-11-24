@@ -12,7 +12,42 @@
 //! command unchanged. PX4 computes in f32; this port uses f64.
 //! <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/lib/mixer_module/functions.hpp#L141-L165>.
 //!
-//! These helpers are not applied to flight outputs until Phase 5.9.
+/// Shared post-allocation motor output. The allocation and its saturation
+/// flags stay in thrust space.
+#[derive(Debug)]
+pub(crate) struct MotorOutput {
+    factor: f64,
+    signals: Vec<f64>,
+}
+
+impl MotorOutput {
+    pub(crate) fn new(motor_count: usize) -> Self {
+        Self { factor: 0.0, signals: vec![0.0; motor_count] }
+    }
+
+    pub(crate) fn set_factor(&mut self, factor: f64) -> Result<(), String> {
+        if !(0.0..=1.0).contains(&factor) {
+            return Err("THR_MDL_FAC must be in [0, 1]".into());
+        }
+        self.factor = factor;
+        Ok(())
+    }
+
+    pub(crate) fn signals<'a>(&'a mut self, allocated: &'a [f64]) -> &'a [f64] {
+        if self.factor == 0.0 {
+            return allocated;
+        }
+        for (signal, &thrust) in self.signals.iter_mut().zip(allocated) {
+            *signal = inverse(thrust, self.factor);
+        }
+        &self.signals
+    }
+
+    /// Convert a solved physical throttle to the controller's thrust space.
+    pub(crate) fn relative_thrust(&self, throttle: f64) -> f64 {
+        forward(throttle, self.factor)
+    }
+}
 
 /// Relative thrust = f*x² + (1-f)*x. Panics outside the documented domain.
 pub fn forward(command: f64, factor: f64) -> f64 {
@@ -27,7 +62,7 @@ pub fn forward(command: f64, factor: f64) -> f64 {
 /// quadratic root avoids cancellation near f=0. Panics outside [0, 1].
 pub fn inverse(thrust: f64, factor: f64) -> f64 {
     validate(thrust, factor);
-    if factor == 0.0 || thrust == 0.0 {
+    if factor == 0.0 || thrust == 0.0 || thrust == 1.0 {
         return thrust;
     }
     let b = 1.0 - factor;

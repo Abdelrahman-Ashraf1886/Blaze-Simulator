@@ -3,6 +3,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router'
 import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { ComponentsPage } from '@/features/components/ComponentsPage'
 import { ProjectsPage } from '@/features/projects/ProjectsPage'
+import { InputPage } from '@/features/input/InputPage'
 import { AppShell } from './AppShell'
 
 // The workshop pulls in three.js; load it only when the workshop is opened.
@@ -65,6 +66,7 @@ export function App() {
           <Route path="scenarios/:projectId" element={scenarios} />
           <Route path="tuning" element={tuning} />
           <Route path="tuning/:projectId" element={tuning} />
+          <Route path="input" element={<InputPage />} />
           <Route path="components" element={<ComponentsPage />} />
           <Route path="electrical" element={electrical} />
           <Route path="electrical/:projectId" element={electrical} />

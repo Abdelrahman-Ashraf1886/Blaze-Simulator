@@ -2,7 +2,9 @@ import { expect, test, type Page } from '@playwright/test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { DEVICE_BUTTONS } from '../../src/features/flight/device-buttons'
 import { STANDARD_AXES } from '../../src/features/input/calibration'
+import { playStationButtons } from '../../src/features/input/playstation'
 import { createProject, launchApp } from './helpers'
 
 const library = (page: Page) => page.getByTestId('part-library')
@@ -69,15 +71,16 @@ async function openFlight(page: Page, name: string) {
   await expect(page.getByTestId('flight-test')).toBeVisible()
 }
 
-const padId = 'Flight test pad'
+const padId = 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)'
 
 // Same renderer fake as input.spec.ts:8–24, with a distinct ID for this fixture.
-async function setPad(page: Page, present: boolean) {
-  await page.evaluate(({ id, present }) => {
+async function setPad(page: Page, present: boolean, pressed?: keyof typeof DEVICE_BUTTONS) {
+  await page.evaluate(({ id, present, pressed, buttonCount }) => {
     const previous = navigator.getGamepads()[0]
     const pad = present ? {
       id, index: 0, mapping: 'standard', connected: true,
-      axes: [0, 0, 0, 0], buttons: [{ value: 1, pressed: true }],
+      axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: buttonCount }, (_, index) => ({ value: Number(index === pressed), pressed: index === pressed })),
     } : null
     Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad] })
     if (Boolean(previous) !== present) {
@@ -85,7 +88,7 @@ async function setPad(page: Page, present: boolean) {
       Object.defineProperty(event, 'gamepad', { value: pad ?? previous })
       window.dispatchEvent(event)
     }
-  }, { id: padId, present })
+  }, { id: padId, present, pressed, buttonCount: playStationButtons('DualSense').length })
 }
 
 test('flies a calibrated device, pauses on disconnect, resumes, and lands', async () => {
@@ -99,7 +102,7 @@ test('flies a calibrated device, pauses on disconnect, resumes, and lands', asyn
     await page.bringToFront()
     await setPad(page, true)
     const input = page.getByTestId('flight-input-source')
-    await input.selectOption({ label: `${padId} · Index 0 · Needs calibration` })
+    await input.selectOption({ label: 'DualSense · Index 0 · Needs calibration' })
     await expect(page.getByRole('link', { name: 'Calibrate in Input devices' })).toBeVisible()
     // Test data uses the saved pref shape in prefs.ts:25–42 and the sweep endpoints in input.spec.ts:46–62.
     await page.evaluate(({ id, axes }) => {
@@ -108,7 +111,7 @@ test('flies a calibrated device, pauses on disconnect, resumes, and lands', asyn
       localStorage.setItem(`input.calibration.${id}`, JSON.stringify(calibration))
     }, { id: padId, axes: STANDARD_AXES })
     await page.getByTestId('flight-mode').selectOption('position')
-    await expect(input.locator('option:checked')).toHaveText(`${padId} · Index 0`)
+    await expect(input.locator('option:checked')).toHaveText('DualSense · Index 0')
     await commit(page, 'flight-altitude', '0')
     await commit(page, 'flight-cutoff-value', '12')
     await page.getByTestId('flight-start').click()
@@ -116,8 +119,14 @@ test('flies a calibrated device, pauses on disconnect, resumes, and lands', asyn
     const status = page.getByTestId('flight-status')
     const automatic = page.getByTestId('flight-auto-status')
     await expect(status).toHaveText('Running')
-    await page.getByRole('button', { name: 'Takeoff', exact: true }).click()
+    await setPad(page, true, 0) // Cross (gamepad_standard_mappings.h:55)
     await expect(automatic).toContainText('Hold · Finished', { timeout: 30_000 })
+
+    await setPad(page, true, 9) // Options (gamepad_standard_mappings.h:64)
+    await expect(status).toContainText('Paused manually')
+    await setPad(page, true)
+    await page.getByRole('button', { name: 'Resume', exact: true }).click()
+    await expect(status).toHaveText('Running')
 
     await setPad(page, false)
     await expect(status).toHaveText('Paused · Input device disconnected')
@@ -134,7 +143,7 @@ test('flies a calibrated device, pauses on disconnect, resumes, and lands', asyn
     await resume.click()
     await expect(status).toHaveText('Running')
     await expect(time).not.toHaveText(pausedTime)
-    await page.getByRole('button', { name: 'Land', exact: true }).click()
+    await setPad(page, true, 1) // Circle (gamepad_standard_mappings.h:56)
     await expect(automatic).toContainText('Land · Finished', { timeout: 30_000 })
     await expect(page.getByRole('list', { name: 'Land detection' })).toContainText('Landed yes')
     await page.getByTestId('flight-stop').click()

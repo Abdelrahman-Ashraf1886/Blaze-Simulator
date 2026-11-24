@@ -55,3 +55,13 @@ export function writeInputCalibration(deviceId: string, calibration: DeviceCalib
     return false
   }
 }
+
+// Flight device buttons are a per-user view preference. The requested default is on.
+export function readFlightDeviceButtons(): boolean {
+  const saved = readPref<unknown>('flight.deviceButtons', true)
+  return typeof saved === 'boolean' ? saved : true
+}
+
+export function writeFlightDeviceButtons(enabled: boolean): void {
+  writePref('flight.deviceButtons', enabled)
+}

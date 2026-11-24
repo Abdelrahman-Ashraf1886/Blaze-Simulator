@@ -62,6 +62,15 @@ pub enum FlightCommand {
         body_radps: [f64; 3],
         collective: f64,
     },
+    /// Body-to-world unit quaternion (x, y, z, w), world yaw feedforward
+    /// (rad/s), and normalized positive collective.
+    AttitudeSetpoint {
+        attitude: Quat,
+        yaw_rate: f64,
+        collective: f64,
+    },
+    /// World Z-up position control input. NaN disables a layer on an axis.
+    PositionSetpoint(PositionSetpoint),
     Stabilized(Sticks),
     Altitude(Sticks),
     Position(Sticks),
@@ -84,6 +93,8 @@ pub enum ModeSetpoint {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Rates,
+    DirectAttitude,
+    DirectPosition,
     Stabilized,
     Altitude,
     Velocity,
@@ -209,6 +220,37 @@ impl FlightModes {
                     collective,
                 });
             }
+            // mc_att_control_main.cpp:258-266 consumes q_d and yaw_sp_move_rate
+            // directly, bypassing manual attitude generation.
+            FlightCommand::AttitudeSetpoint { attitude, yaw_rate, collective } => {
+                // Same unit quaternion boundary as closed_loop.rs:71-78 and
+                // engine-host/src/engine.rs (setpoint).
+                let norm_sq = attitude.iter().map(|x| x * x).sum::<f64>();
+                if !((norm_sq - 1.0).abs() < 1e-9
+                    && yaw_rate.is_finite()
+                    && (0.0..=1.0).contains(&collective))
+                {
+                    return Err("attitude setpoint requires a unit quaternion, finite yaw rate and collective in [0, 1]".into());
+                }
+                self.activate_direct(Mode::DirectAttitude, state);
+                return Ok(ModeSetpoint::Attitude { attitude, yaw_rate, collective });
+            }
+            // MulticopterPositionControl.cpp:341,454 forwards the trajectory
+            // setpoint to PositionControl; _inputValid (210-236) checks the axes.
+            FlightCommand::PositionSetpoint(sp) => {
+                let layers = [sp.position, sp.velocity, sp.acceleration];
+                if layers.iter().flatten().chain([&sp.yaw, &sp.yaw_rate]).any(|v| v.is_infinite()) {
+                    return Err("infinite position setpoint (use NaN to disable)".into());
+                }
+                if layers.iter().any(|v| v[0].is_finite() != v[1].is_finite()) {
+                    return Err("XY setpoints must come in pairs".into());
+                }
+                if let Some(axis) = (0..3).find(|&i| layers.iter().all(|v| v[i].is_nan())) {
+                    return Err(format!("invalid setpoint on axis {axis}"));
+                }
+                self.activate_direct(Mode::DirectPosition, state);
+                return Ok(ModeSetpoint::Position(sp));
+            }
             FlightCommand::Stabilized(s) => (Mode::Stabilized, s),
             FlightCommand::Altitude(s) | FlightCommand::Position(s) if ground_contact => {
                 (Mode::Stabilized, s)
@@ -238,6 +280,17 @@ impl FlightModes {
         let sp = self.position_task(mode, sticks, state, feedback, dt);
         self.previous = sp;
         Ok(ModeSetpoint::Position(sp))
+    }
+
+    pub(crate) fn using_direct_position(&self) -> bool {
+        self.active == Some(Mode::DirectPosition)
+    }
+
+    fn activate_direct(&mut self, mode: Mode, state: &PositionInput) {
+        if self.active != Some(mode) {
+            self.previous = PositionSetpoint::default();
+            self.activate(mode, state);
+        }
     }
 
     fn activate(&mut self, mode: Mode, s: &PositionInput) {

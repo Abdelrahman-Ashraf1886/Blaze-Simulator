@@ -21,6 +21,8 @@ pub mod flight_modes;
 pub mod math;
 pub mod propulsion;
 pub mod scenario;
+pub mod step_test;
+pub mod trace;
 pub mod sim;
 pub mod vehicle;
 pub mod hover_thrust;

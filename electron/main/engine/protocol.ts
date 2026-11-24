@@ -214,6 +214,7 @@ export type EngineCommand =
   | ({ type: 'flight.session.step' } & FlightSessionStepParams)
   | { type: 'flight.session.end' }
   | ({ type: 'scenario.run' } & ScenarioRunParams)
+  | ({ type: 'stepTest.run' } & StepTestRunParams)
 
 // ---------------------------------------------------------------------------
 // Results
@@ -523,3 +524,62 @@ export const ScenarioRunResultSchema = z.strictObject({
   stateHash: z.string().regex(/^[0-9a-f]{16}$/),
 })
 export type ScenarioRunResult = z.infer<typeof ScenarioRunResultSchema>
+
+// The free-space scenario bound and the engine's fixed step (sim.rs:28).
+const stepTestDtS = 1e-3
+const maxStepTestSamples = MAX_SCENARIO_S / stepTestDtS
+const rotationAxis = z.enum(['roll', 'pitch', 'yaw'])
+const step = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('rate'), axis: rotationAxis, amplitudeRadps: num }),
+  z.strictObject({ type: z.literal('attitude'), axis: rotationAxis, amplitudeRad: num.min(-Math.PI).max(Math.PI) }),
+  z.strictObject({ type: z.literal('altitude'), amplitudeM: num }),
+  z.strictObject({ type: z.literal('position'), axis: z.enum(['x', 'y']), amplitudeM: num }),
+])
+const stepTestSpec = z.strictObject({
+  step,
+  holdS: num.nonnegative(),
+  durationS: num.positive().max(MAX_SCENARIO_S),
+  decimationSteps: z.int().positive(),
+}).refine(({ holdS, durationS }) => {
+  // Same whole-step quantization as scenario.rs:378-385 and step_test.rs.
+  const stepsFor = (timeS: number) => {
+    const steps = timeS / stepTestDtS
+    const nearest = Math.round(steps)
+    return Math.abs(steps - nearest) < 1e-9 ? nearest : Math.ceil(steps)
+  }
+  return holdS < durationS && stepsFor(holdS) < stepsFor(durationS)
+}, { path: ['holdS'], message: 'must leave at least one simulation step after the hold' })
+
+export const StepTestRunParamsSchema = z.strictObject({
+  test: stepTestSpec,
+  config: ScenarioConfigSchema.pick({ airDensityKgM3: true, cutoff: true }).extend({ gains, ...mixerShape }),
+})
+export type StepTestRunParams = z.infer<typeof StepTestRunParamsSchema>
+
+const nullableNum = num.nullable()
+const traceSignal = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('rate'), setpointRadps: nullableNum, measuredRadps: nullableNum }),
+  z.strictObject({ kind: z.literal('attitude'), setpointRad: nullableNum, measuredRad: nullableNum }),
+  z.strictObject({ kind: z.literal('position'), setpointM: nullableNum, measuredM: nullableNum }),
+])
+const traceSample = z.strictObject({
+  timeS: num.nonnegative(),
+  signal: traceSignal,
+  commandedBodyRatesRadps: z.tuple([nullableNum, nullableNum, nullableNum]),
+  commandedAttitudeXyzw: z.tuple([nullableNum, nullableNum, nullableNum, nullableNum]).nullable(),
+  motorCommands01: z.array(num.min(0).max(1).nullable()).min(1),
+  saturation,
+})
+export const StepTestRunResultSchema = z.strictObject({
+  trace: z.strictObject({ decimationSteps: z.int().positive(), samples: z.array(traceSample).max(maxStepTestSamples) }),
+  stepTimeS: num.nonnegative(),
+  elapsedS: num.nonnegative(),
+  hoverCollective01: num.min(0).max(1),
+  /** Body torque at the equal-collective start; the controller trims it during the hold. */
+  startImbalanceNm: vec3,
+  endReason: z.enum(['duration', 'voltageCutoff', 'chargeCutoff', 'nonFinite', 'error']),
+  error: z.string().nullable(),
+  stateHash: z.string().regex(/^[0-9a-f]{16}$/),
+  gains: gains.unwrap(),
+})
+export type StepTestRunResult = z.infer<typeof StepTestRunResultSchema>

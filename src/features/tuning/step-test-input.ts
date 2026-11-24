@@ -1,6 +1,7 @@
 import type { StepTestInput, StepTestOutput } from '../../../electron/ipc/contract'
 import { StepTestRunParamsSchema } from '../../../electron/main/engine/protocol'
 import type { TuningOverrides } from '../../domain/controller-params'
+import { thrustFactor } from '../../domain/thrust-curve'
 import type { StepSample } from '../../domain/step-response'
 import type { FlightGate } from '../flight/readiness'
 import { readNumber } from './tuning-values'
@@ -59,7 +60,7 @@ export function readStepTest(draft: StepTestDraft): { test: Test | null; errors:
 export function stepTestInput(gate: FlightGate, test: Test | null, saved: TuningOverrides | null): StepTestInput | null {
   if (!gate.ok || !test || saved === null) return null
   const { vehicle, propulsion, aero, airDensityKgM3, cutoff } = gate.input
-  return { vehicle, propulsion, aero, test, config: { airDensityKgM3, cutoff, gains: saved } }
+  return { vehicle, propulsion, aero, test, config: { airDensityKgM3, cutoff, gains: { ...saved, THR_MDL_FAC: thrustFactor(gate.thrustFit, saved) } } }
 }
 
 export function measuredSamples(trace: StepTestOutput['trace']): StepSample[] {

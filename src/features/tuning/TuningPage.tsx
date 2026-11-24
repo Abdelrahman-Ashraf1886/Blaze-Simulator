@@ -81,9 +81,6 @@ function ProjectTuning({ project, doc }: { project: Project; doc: AssemblyDocume
           <Section title="Step test readiness">
             {tuning.saved && <div className="pb-2 text-[12.5px] text-fg-muted">
               <p>{thrustFactorReadout(payload.ok ? payload.payload.thrustFit : null, tuning.saved)}</p>
-              {payload.ok && payload.payload.thrustFit && tuning.saved.THR_MDL_FAC === undefined && (
-                <p>Step tests use the engine default factor until a factor is saved.</p>
-              )}
             </div>}
             {gate.ok ? <Readouts>
               <Readout label="Air density" value={gate.input.airDensityKgM3} unit="kg/m³" />

@@ -117,7 +117,7 @@ describe('step test form and request', () => {
     const { test } = readStepTest(draft)
     expect(stepTestInput(gate, test, params.config.gains!)).toEqual({
       vehicle, propulsion, aero, test: params.test,
-      config: { airDensityKgM3, cutoff: params.config.cutoff, gains: params.config.gains },
+      config: { airDensityKgM3, cutoff: params.config.cutoff, gains: { THR_MDL_FAC: 0, ...params.config.gains } }, // no fit here, so PX4's default unless saved
     })
     expect(stepTestInput({ ok: false, blockers: [] }, test, {})).toBeNull()
     expect(stepTestInput(gate, test, null)).toBeNull()

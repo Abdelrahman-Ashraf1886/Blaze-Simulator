@@ -1,15 +1,20 @@
 //! Request dispatch and the sidecar's state (the loaded vehicle).
 
-use crate::protocol::{Command, ControllerRequest, ErrorCode, HelloResult, PongResult, Request, Response, PROTOCOL_VERSION};
+use crate::protocol::{Command, ControllerRequest, ErrorCode, FlightLoopDiagnostic, HelloResult, PongResult, Request, Response, PROTOCOL_VERSION};
 use engine_core::aero::BodyDrag;
 use engine_core::environment::{ContactEvent, Environment};
 use engine_core::closed_loop::{gains_with_overrides, ClosedLoop, ControllerSummary};
-use engine_core::controller::Setpoint;
+use engine_core::controller::{Gains, Setpoint};
 use engine_core::flight::{BatteryReading, Flight, MotorReading};
+use engine_core::flight_loop::FlightLoop;
+use engine_core::flight_modes::FlightCommand;
+use engine_core::hover_thrust::HoverThrustParams;
+use engine_core::position_control::{self, PositionGains};
 use engine_core::propulsion::Propulsion;
 use engine_core::sim::{hash_hex, BodyInput, SimConfig, SimState, Simulation, DEFAULT_DT_S};
 use engine_core::vehicle::{vec, MassTotals, Vehicle, VehicleError};
 use serde::Serialize;
+use serde_json::{json, Map, Value};
 use std::time::{Duration, Instant};
 
 /// Upper bound on the steps of one `sim.run`. The sidecar is single-threaded,
@@ -78,6 +83,8 @@ struct SimRunResult {
     /// With the controller (4.7): saturation, integrators and collective.
     #[serde(skip_serializing_if = "Option::is_none")]
     controller: Option<ControllerSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    flight_loop: Option<FlightLoopDiagnostic>,
 }
 
 /// What flies the vehicle in a run.
@@ -88,6 +95,7 @@ enum Plant {
     Throttle(Box<Flight>, Vec<f64>),
     /// The PX4 controller (4.7).
     Controlled(Box<ClosedLoop>, Setpoint),
+    Manual(Box<FlightLoop>, FlightCommand),
 }
 
 impl Plant {
@@ -96,6 +104,7 @@ impl Plant {
             Plant::Loads(_) => None,
             Plant::Throttle(f, _) => Some(f),
             Plant::Controlled(c, _) => Some(c.flight()),
+            Plant::Manual(c, _) => Some(c.flight()),
         }
     }
 }
@@ -159,6 +168,7 @@ impl Engine {
             Command::FlightSessionStep { params } => (crate::flight_session::step(id, params, &mut self.session), false),
             Command::FlightSessionEnd => (crate::flight_session::end(id, &mut self.session), false),
             Command::ScenarioRun { params } => (crate::scenario_run::handle(id, params, self.vehicle.as_ref(), self.propulsion.as_ref(), self.aero), false),
+            Command::StepTestRun { params } => (crate::step_test_run::handle(id, params, self.vehicle.as_ref(), self.propulsion.as_ref(), self.aero), false),
             Command::VehicleLoad { vehicle, propulsion, aero } => (self.load(id, vehicle, propulsion, aero), false),
             Command::SimRun {
                 duration_s,
@@ -259,6 +269,14 @@ impl Engine {
         if !(duration_s.is_finite() && duration_s > 0.0) {
             return bad(format!("durationS must be a positive number (got {duration_s})"));
         }
+        if controller.as_ref().is_some_and(|c| c.mode.is_some()) {
+            // Match the exact cadence test in flight_loop.rs (EKF2_PREDICT_US).
+            const INTERVAL_S: f64 = 10_000.0 / 1_000_000.0;
+            let steps_per_sample = (INTERVAL_S / dt).round() as u64;
+            if steps_per_sample == 0 || INTERVAL_S / steps_per_sample as f64 != dt {
+                return bad("dtS must divide 10 ms when controller.mode is given".into());
+            }
+        }
         let n = (duration_s / dt).round();
         if n < 1.0 || (n * dt - duration_s).abs() > 1e-9 * duration_s {
             return bad(format!("durationS ({duration_s}) must be a whole number of steps of {dt} s"));
@@ -304,9 +322,20 @@ impl Engine {
                         if throttle.is_some() {
                             return bad("give either throttle or controller, not both".into());
                         }
-                        match controlled(vehicle, p, fl, &c) {
-                            Ok((cl, sp)) => Plant::Controlled(Box::new(cl), sp),
-                            Err(e) => return bad(e),
+                        if let Some(mode) = c.mode {
+                            let command = match c.flight_command(mode) {
+                                Ok(command) => command,
+                                Err(e) => return bad(format!("controller: {e}")),
+                            };
+                            match manual_flight(vehicle, p, fl, c.gains.as_ref(), c.airmode, c.thrust_model_factor) {
+                                Ok(loop_) => Plant::Manual(Box::new(loop_), command),
+                                Err(e) => return bad(e),
+                            }
+                        } else {
+                            match controlled(vehicle, p, fl, &c) {
+                                Ok((cl, sp)) => Plant::Controlled(Box::new(cl), sp),
+                                Err(e) => return bad(e),
+                            }
                         }
                     }
                     None => {
@@ -338,6 +367,11 @@ impl Engine {
                 Plant::Loads(input) => sim.step(input),
                 Plant::Throttle(fl, throttle) => fl.step(&mut sim, throttle),
                 Plant::Controlled(cl, sp) => cl.step(&mut sim, sp),
+                Plant::Manual(loop_, command) => {
+                    if let Err(e) = step_manual(loop_, &mut sim, *command) {
+                        return bad(e);
+                    }
+                }
             }
             if k % 256 == 255 && started.elapsed() > RUN_TIME_BUDGET {
                 return Response::err(
@@ -368,6 +402,10 @@ impl Engine {
                 battery: plant.flight().map(Flight::battery),
                 controller: match &plant {
                     Plant::Controlled(cl, _) => Some(cl.summary()),
+                    _ => None,
+                },
+                flight_loop: match &plant {
+                    Plant::Manual(loop_, _) => loop_.last_step().map(FlightLoopDiagnostic::from),
                     _ => None,
                 },
             },
@@ -416,13 +454,151 @@ pub(crate) fn controlled(vehicle: &Vehicle, p: &Propulsion, flight: Flight, c: &
 
 /// The controller setpoint of a request, checked (finite, unit attitude).
 pub(crate) fn setpoint(c: &ControllerRequest) -> Result<Setpoint, String> {
+    if let Some(field) = c.manual_field() {
+        return Err(format!("{field} requires mode"));
+    }
+    let climb_rate = c.climb_rate_mps.unwrap_or_default();
+    let yaw_rate = c.yaw_rate_radps.unwrap_or_default();
     let attitude = c.attitude.unwrap_or([0.0, 0.0, 0.0, 1.0]);
     // The controller asserts |q|^2 - 1 < 1e-9, so a request at exactly 1e-9 is refused here too.
     if !attitude.iter().all(|x| x.is_finite()) || (attitude.iter().map(|x| x * x).sum::<f64>() - 1.0).abs() >= 1e-9 {
         return Err("attitude must be a unit quaternion x y z w".into());
     }
-    if !c.altitude_m.is_none_or(f64::is_finite) || !c.climb_rate_mps.is_finite() || !c.yaw_rate_radps.is_finite() {
+    if !c.altitude_m.is_none_or(f64::is_finite) || !climb_rate.is_finite() || !yaw_rate.is_finite() {
         return Err("altitudeM, climbRateMps and yawRateRadps must be finite".into());
     }
-    Ok(Setpoint { attitude, yaw_rate: c.yaw_rate_radps, z: c.altitude_m, z_velocity: c.climb_rate_mps })
+    Ok(Setpoint { attitude, yaw_rate, z: c.altitude_m, z_velocity: climb_rate })
+}
+
+/// Route overrides to the position and 4.7 validators by their existing parameter
+/// names, then build the estimator with the position loop's resolved hover settings.
+pub(crate) fn manual_flight(
+    vehicle: &Vehicle,
+    propulsion: &Propulsion,
+    flight: Flight,
+    overrides: Option<&Map<String, Value>>,
+    airmode: Option<f64>,
+    thrust_model_factor: Option<f64>,
+) -> Result<FlightLoop, String> {
+    manual_flight_with_gains(vehicle, propulsion, flight, overrides, airmode, thrust_model_factor)
+        .map(|(flight_loop, _)| flight_loop)
+}
+
+pub(crate) struct ManualFlightGains {
+    gains: Gains,
+    position: PositionGains,
+    hover: HoverThrustParams,
+    airmode: u8,
+}
+
+impl ManualFlightGains {
+    pub(crate) fn parameters(&self) -> Map<String, Value> {
+        let mut parameters = Map::new();
+        // For shared MPC fields, the position controller's values are the
+        // effective ones, just as its validator owns those overrides below.
+        for group in [json!(self.gains), json!(self.position)] {
+            if let Value::Object(fields) = group {
+                parameters.extend(fields.into_iter().map(|(key, value)| (key.to_ascii_uppercase(), value)));
+            }
+        }
+        parameters.extend([
+            ("HTE_HT_NOISE".into(), json!(self.hover.hte_ht_noise)),
+            ("HTE_ACC_GATE".into(), json!(self.hover.hte_acc_gate)),
+            ("HTE_HT_ERR_INIT".into(), json!(self.hover.hte_ht_err_init)),
+            ("HTE_VXY_THR".into(), json!(self.hover.hte_vxy_thr)),
+            ("HTE_VZ_THR".into(), json!(self.hover.hte_vz_thr)),
+            ("HTE_THR_RANGE".into(), json!(self.hover.hte_thr_range)),
+            ("MC_AIRMODE".into(), json!(self.airmode)),
+            // 5.9 owns enabling this factor; validate_thrust_model admits only
+            // the default from database/reference/physics.v1.json:1102-1109.
+            ("THR_MDL_FAC".into(), json!(0.0)),
+        ]);
+        parameters
+    }
+}
+
+pub(crate) fn manual_flight_with_gains(
+    vehicle: &Vehicle,
+    propulsion: &Propulsion,
+    flight: Flight,
+    overrides: Option<&Map<String, Value>>,
+    airmode: Option<f64>,
+    thrust_model_factor: Option<f64>,
+) -> Result<(FlightLoop, ManualFlightGains), String> {
+    let position_fields = serde_json::to_value(PositionGains::px4_v1_13_3()).map_err(|e| e.to_string())?;
+    let mut position_overrides = Map::new();
+    let mut rate_overrides = Map::new();
+    let mut hover = HoverThrustParams::default();
+    let mut mixer_airmode = None;
+    for (name, value) in overrides.into_iter().flatten() {
+        let numeric = || value.as_f64().ok_or_else(|| format!("{name} must be a finite number"));
+        match name.as_str() {
+            "MC_AIRMODE" => mixer_airmode = Some(parse_airmode("MC_AIRMODE", numeric()?)?),
+            "THR_MDL_FAC" => validate_thrust_model("THR_MDL_FAC", numeric()?)?,
+            "HTE_HT_NOISE" => hover.hte_ht_noise = numeric()?,
+            "HTE_ACC_GATE" => hover.hte_acc_gate = numeric()?,
+            "HTE_HT_ERR_INIT" => hover.hte_ht_err_init = numeric()?,
+            "HTE_VXY_THR" => hover.hte_vxy_thr = numeric()?,
+            "HTE_VZ_THR" => hover.hte_vz_thr = numeric()?,
+            "HTE_THR_RANGE" => hover.hte_thr_range = numeric()?,
+            _ if position_fields.get(name.to_ascii_lowercase()).is_some() => {
+                position_overrides.insert(name.clone(), value.clone());
+            }
+            _ => {
+                rate_overrides.insert(name.clone(), value.clone());
+            }
+        }
+    }
+    let airmode = airmode.map(|value| parse_airmode("airmode", value)).transpose()?;
+    if let (Some(field), Some(parameter)) = (airmode, mixer_airmode) {
+        if field != parameter {
+            return Err("airmode and MC_AIRMODE must agree".into());
+        }
+    }
+    if let Some(value) = thrust_model_factor {
+        validate_thrust_model("thrustModelFactor", value)?;
+    }
+    let gain_error = |e| format!("controller.gains: {e}");
+    let position = position_control::gains_with_overrides(Some(&position_overrides)).map_err(gain_error)?;
+    let gains = gains_with_overrides(Some(&rate_overrides)).map_err(gain_error)?;
+    hover.mpc_thr_hover = position.mpc_thr_hover;
+    hover.mpc_use_hte = position.mpc_use_hte != 0.0;
+    hover.validate().map_err(gain_error)?;
+    // MC_AIRMODE default and enum: database/reference/physics.v1.json:1084-1092.
+    let airmode = airmode.or(mixer_airmode).unwrap_or(0);
+    let flight_loop = FlightLoop::new(vehicle, flight, propulsion.yaw_ratio(), gains, position, airmode, hover)
+        .map_err(|e| format!("controller: {e}"))?;
+    Ok((flight_loop, ManualFlightGains { gains, position, hover, airmode }))
+}
+
+/// The caller drops the run/session on any failure, including non-finite demands
+/// rejected by the allocator's assertion (controller.rs, Allocator::allocate).
+pub(crate) fn step_manual(loop_: &mut FlightLoop, sim: &mut Simulation, command: FlightCommand) -> Result<(), String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loop_.step(sim, command)))
+        .unwrap_or_else(|failure| {
+            let message = failure.downcast_ref::<&str>().copied()
+                .or_else(|| failure.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("unknown failure");
+            Err(format!("flight loop failed: {message}"))
+        })
+}
+
+fn parse_airmode(name: &str, value: f64) -> Result<u8, String> {
+    match value {
+        0.0 => Ok(0),
+        1.0 => Ok(1),
+        2.0 => Ok(2),
+        _ => Err(format!("{name} must be 0, 1 or 2")),
+    }
+}
+
+fn validate_thrust_model(name: &str, value: f64) -> Result<(), String> {
+    // THR_MDL_FAC bounds: database/reference/physics.v1.json:1102-1109.
+    if !(0.0..=1.0).contains(&value) {
+        return Err(format!("{name} must be in [0, 1]"));
+    }
+    if value != 0.0 {
+        return Err(format!("{name} must be zero until thrust-model support in milestone 5.9"));
+    }
+    Ok(())
 }

@@ -1,18 +1,39 @@
 //! Manual flight on the propulsion and rigid-body plant. Sampling and motor
 //! order follow closed_loop.rs:100-123 and controller.rs:783-787.
 
-use crate::closed_loop::unit_attitude;
+use crate::closed_loop::{unit_attitude, SaturationDiagnostic};
 use crate::controller::{attitude_rates, Allocator, Gains, RateControl, Saturation};
 use crate::flight::Flight;
 use crate::flight_modes::{FlightCommand, FlightModes, ModeSetpoint};
 use crate::hover_thrust::{HoverThrustEstimate, HoverThrustEstimator, HoverThrustParams, HoverThrustSample};
-use crate::position_control::{PositionControl, PositionGains, PositionInput};
+use crate::position_control::{PositionControl, PositionGains, PositionInput, PositionSetpoint};
 use crate::sim::Simulation;
-use crate::vehicle::Vehicle;
+use crate::vehicle::{Quat, Vehicle};
 
 // modules/ekf2/ekf2_params.c:53. Timestamp arithmetic stays in microseconds.
 const EKF2_PREDICT_US: u64 = 10_000;
 const ESTIMATE_INTERVAL_S: f64 = EKF2_PREDICT_US as f64 / 1_000_000.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlightMode {
+    Rates,
+    Stabilized,
+    Altitude,
+    Position,
+}
+
+/// The last completed step, in world Z-up coordinates. Non-finite setpoint
+/// components denote inactive axes or layers (PositionSetpoint).
+#[derive(Debug, Clone, Copy)]
+pub struct FlightLoopSnapshot {
+    pub mode: FlightMode,
+    pub position_setpoint: [f64; 3],
+    pub velocity_setpoint: [f64; 3],
+    pub acceleration_setpoint: [f64; 3],
+    pub saturation: SaturationDiagnostic,
+    pub velocity_integral: [f64; 3],
+    pub hover_thrust: HoverThrustEstimate,
+}
 
 pub struct FlightLoop {
     flight: Flight,
@@ -27,6 +48,7 @@ pub struct FlightLoop {
     allocator: Allocator,
     saturation: Saturation,
     velocity_feedback: Option<[f64; 3]>,
+    last_step: Option<FlightLoopSnapshot>,
 }
 
 impl FlightLoop {
@@ -58,6 +80,7 @@ impl FlightLoop {
             allocator,
             saturation: Saturation::default(),
             velocity_feedback: None,
+            last_step: None,
         })
     }
 
@@ -69,7 +92,50 @@ impl FlightLoop {
         self.estimator.estimate()
     }
 
+    pub fn last_step(&self) -> Option<FlightLoopSnapshot> {
+        self.last_step
+    }
+
+    /// Seed the vertical integral for a direct position run at steady hover,
+    /// retaining the configured hover gain and estimator parameters.
+    pub(crate) fn trim_direct_position(&mut self, collective: f64, dt: f64) -> Result<(), String> {
+        let mut position = self.position.clone();
+        let nominal = position.hover_thrust();
+        position.set_hover_thrust(collective)?;
+        if position.hover_thrust() != collective {
+            return Err("hover collective is outside the position controller's hover-thrust range".into());
+        }
+        // PositionControl::update_hover_thrust (position_control.rs:487-500)
+        // computes the integral that preserves thrust as hover changes.
+        position.update_hover_thrust(nominal)?;
+        if position.velocity_integral()[2].abs() > crate::math::STANDARD_GRAVITY {
+            return Err("MPC_THR_HOVER requires more than the vertical integral limit to trim this hover".into());
+        }
+        // Check the position controller's thrust limits at the zero-error
+        // operating point without advancing its derivative or integral state.
+        let estimate = PositionInput { position: [0.0; 3], velocity: [0.0; 3], yaw: 0.0 };
+        let level = PositionSetpoint { position: estimate.position, ..Default::default() };
+        let trim = position.clone().step(&estimate, &level, dt)?;
+        // Same floating-point comparison tolerance as flight_modes/tests.rs:6-8.
+        if (trim.collective_thrust - collective).abs() > 1e-12 {
+            return Err("MPC_THR_MIN/MPC_THR_MAX prevent the position controller from holding this hover".into());
+        }
+        self.position = position;
+        Ok(())
+    }
+
     pub fn step(&mut self, sim: &mut Simulation, command: FlightCommand) -> Result<(), String> {
+        self.step_with_commands(sim, command, |_, _, _, _| {})
+    }
+
+    /// Expose the controller and allocator outputs for direct setpoint runs.
+    /// The motor slice borrows the allocator's existing command buffer.
+    pub(crate) fn step_with_commands(
+        &mut self,
+        sim: &mut Simulation,
+        command: FlightCommand,
+        observe: impl FnOnce([f64; 3], Option<Quat>, &[f64], SaturationDiagnostic),
+    ) -> Result<(), String> {
         if self.flight.ended().is_some() {
             return Ok(());
         }
@@ -93,26 +159,51 @@ impl FlightLoop {
         let mut vertical_thrust = f64::NAN;
         let mut modes = self.modes.clone();
         let sp = modes.step(command, &estimate, self.velocity_feedback, grounded, dt)?;
-        let (rates, thrust) = match sp {
+        let mut setpoints = PositionSetpoint::default();
+        let (mode, rates, thrust, desired_attitude) = match sp {
             ModeSetpoint::Rates {
                 body_radps,
                 collective,
-            } => (body_radps, collective),
+            } => (FlightMode::Rates, body_radps, collective, None),
             ModeSetpoint::Attitude {
                 attitude: desired,
                 yaw_rate,
                 collective,
             } => (
+                FlightMode::Stabilized,
                 attitude_rates(&self.gains, attitude, desired, yaw_rate),
                 collective,
+                Some(desired),
             ),
             ModeSetpoint::Position(sp) => {
-                let out = self.position.step(&estimate, &sp, dt)?;
+                let out = if self.modes.using_direct_position() != modes.using_direct_position()
+                    && self.velocity_feedback.is_some()
+                {
+                    let mut position = self.position.clone();
+                    let retained = position.hover_thrust();
+                    position.reset();
+                    position.set_hover_thrust(retained)?;
+                    let out = position.step(&estimate, &sp, dt)?;
+                    self.position = position;
+                    out
+                } else {
+                    self.position.step(&estimate, &sp, dt)?
+                };
                 vertical_thrust = out.thrust[2]; // PositionOutput, position_control.rs:371-378 (world Z-up).
                 self.velocity_feedback = Some(out.velocity_setpoint);
+                setpoints.position = sp.position;
+                setpoints.velocity = out.velocity_setpoint;
+                setpoints.acceleration = out.acceleration_setpoint;
+                let mode = if matches!(command, FlightCommand::Altitude(_)) {
+                    FlightMode::Altitude
+                } else {
+                    FlightMode::Position
+                };
                 (
+                    mode,
                     attitude_rates(&self.gains, attitude, out.attitude, out.yaw_rate),
                     out.collective_thrust,
+                    Some(out.attitude),
                 )
             }
         };
@@ -162,6 +253,20 @@ impl FlightLoop {
                 }
             }
         }
+        let saturation = SaturationDiagnostic {
+            positive: self.saturation.positive,
+            negative: self.saturation.negative,
+        };
+        self.last_step = Some(FlightLoopSnapshot {
+            mode,
+            position_setpoint: setpoints.position,
+            velocity_setpoint: setpoints.velocity,
+            acceleration_setpoint: setpoints.acceleration,
+            saturation,
+            velocity_integral: self.position.velocity_integral(),
+            hover_thrust: self.estimator.estimate(),
+        });
+        observe(rates, desired_attitude, allocation.commands, saturation);
         Ok(())
     }
 }

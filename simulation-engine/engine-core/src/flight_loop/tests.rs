@@ -157,7 +157,7 @@ fn hover_fixture(enabled: bool, config: SimConfig) -> (Simulation, FlightLoop, f
     let g = PositionGains { mpc_use_hte: u8::from(enabled) as f64, ..PositionGains::px4_v1_13_3() };
     // Ground surface from environment/tests.rs:115-118. Start at the lower
     // slowdown altitude, above the estimator's in-air gate (hover_thrust.rs:187-191).
-    let env = Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), obstacles: vec![] };
+    let env = Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), terrain: None, obstacles: vec![] };
     let sim = Simulation::with_environment(&v, config, &env, [0.0, 0.0, g.mpc_land_alt2]).unwrap();
     let controller = FlightLoop::new(&v, flight, yaw_ratio, Gains::px4_v1_13_3(), g, 0, hover).unwrap();
     (sim, controller, predicted)
@@ -215,6 +215,34 @@ fn airborne_estimation_replays_the_same_hash() {
         (sim.state_hash_with(&controller.flight().hash_words()), estimate)
     };
     assert_eq!(replay(), replay());
+}
+
+#[test]
+fn last_step_reports_resolved_setpoints_and_the_active_mode() {
+    use super::FlightMode;
+
+    let (mut sim, mut controller, _) = hover_fixture(true, SimConfig::default());
+    assert!(controller.last_step().is_none());
+    controller.step(&mut sim, FlightCommand::Altitude(Sticks::default())).unwrap();
+    let snapshot = controller.last_step().unwrap();
+    assert_eq!(snapshot.mode, FlightMode::Altitude);
+    assert!(snapshot.position_setpoint[..2].iter().all(|v| v.is_nan()));
+    assert!(snapshot.position_setpoint[2].is_finite());
+    assert_eq!(
+        snapshot.velocity_setpoint.map(f64::to_bits),
+        controller.velocity_feedback.unwrap().map(f64::to_bits),
+    );
+    assert!(snapshot.acceleration_setpoint.iter().all(|v| v.is_finite()));
+    assert_eq!(snapshot.velocity_integral, controller.position.velocity_integral());
+    assert_eq!(snapshot.hover_thrust, controller.hover_thrust_estimate());
+    assert_eq!(snapshot.saturation.positive, controller.saturation.positive);
+    assert_eq!(snapshot.saturation.negative, controller.saturation.negative);
+
+    controller.step(&mut sim, FlightCommand::Stabilized(Sticks::default())).unwrap();
+    let snapshot = controller.last_step().unwrap();
+    assert_eq!(snapshot.mode, FlightMode::Stabilized);
+    assert!(snapshot.position_setpoint.iter().chain(&snapshot.velocity_setpoint)
+        .chain(&snapshot.acceleration_setpoint).all(|v| v.is_nan()));
 }
 
 #[test]

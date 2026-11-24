@@ -128,6 +128,7 @@ fn drop_onto_the_ground_comes_to_rest_at_its_half_height_and_reports_the_contact
         assert!(s.quaternion[3].abs() > 1.0 - 1e-6, "not flat: {:?}", s.quaternion);
     }
     let (events, dropped) = sim.contacts();
+    assert_eq!(sim.state_hash(), 0xdfe219fa9c21b4bd, "pre-6.4 plane hash");
     assert_eq!(dropped, 0);
     assert_eq!(events.len(), 1, "{events:?}");
     let c = &events[0];
@@ -205,6 +206,7 @@ fn drop_onto_an_obstacle() {
     steps(&mut sim, 1500, &BodyInput::default());
     let z = sim.state().position_m[2];
     assert!(z <= 0.12 + 1e-9 && z >= 0.12 - REST_PENETRATION_M, "rest height {z}");
+    assert_eq!(sim.state_hash(), 0xa30649724c1c9d2f, "pre-6.4 box obstacle hash");
     let (events, _) = sim.contacts();
     assert_eq!(events.iter().map(|e| e.with.as_str()).collect::<Vec<_>>(), ["obstacle:table"]);
 }
@@ -222,6 +224,222 @@ fn refuses_to_start_inside_the_ground_and_runs_deterministically() {
         (sim.state_hash(), sim.contacts())
     };
     assert_eq!(run(), run());
+}
+
+fn terrain_grid(rows: usize, columns: usize, cell: f64, corner: [f64; 2], heights: &[f64], friction: f64) -> Value {
+    json!({
+        "rows": rows, "columns": columns, "cellSizeM": cell, "cornerM": corner, "heightsM": heights,
+        "friction": friction, "restitution": 0
+    })
+}
+
+fn flat_terrain(height: f64) -> Environment {
+    // Same spacing as the TS fixture, centred about the drop axis.
+    let cell = 2.0;
+    env(json!({ "terrain": terrain_grid(2, 2, cell, [-cell; 2], &[height; 4], 0.5), "obstacles": [] }))
+}
+
+#[test]
+fn height_below_matches_the_typescript_grid() {
+    // Same Ascii Grid, nodes, diagonal and interior points as tests/unit/terrain.test.ts:15–31.
+    let grid = terrain_grid(2, 2, 2.0, [10.0, 20.0], &[2.0, 8.0, 0.0, 4.0], 0.5);
+    let env = env(json!({ "ground": null, "terrain": grid, "obstacles": [] }));
+    for (x, y, height) in [
+        (11.0, 21.0, 0.0), (13.0, 21.0, 4.0), (11.0, 23.0, 2.0), (13.0, 23.0, 8.0),
+        (11.5, 22.5, 3.0), (12.0, 22.0, 4.0), (12.5, 21.5, 4.0),
+    ] {
+        assert_eq!(env.height_below(x, y), Some(height));
+    }
+    assert_eq!(env.height_below(10.0, 20.0), None);
+    assert_eq!(env.height_below(f64::NAN, 21.0), None);
+    assert_eq!(ground(0.5, 0.0).height_below(10.0, 20.0), Some(0.0));
+    assert_eq!(Environment::default().height_below(10.0, 20.0), None);
+}
+
+#[test]
+fn terrain_collider_registers_the_correct_world_corner_and_triangles() {
+    // Add a column to the TS grid to give the X and Y axes different extents.
+    let grid = terrain_grid(2, 3, 2.0, [10.0, 20.0], &[2.0, 8.0, 8.0, 0.0, 4.0, 4.0], 0.5);
+    let env = env(json!({ "terrain": grid, "obstacles": [] }));
+    let (builder, pose) = env.terrain.as_ref().unwrap().collider();
+    let collider = builder.build();
+    let shape = collider.shape();
+    let (nw, _) = shape.as_heightfield().unwrap().triangles_at(0, 0);
+    let corner = pose * nw.unwrap().a;
+    let error = (corner - Vector::new(11.0, 23.0, 2.0)).length();
+    // The quarter turn and translation each introduce floating-point rounding.
+    assert!(error <= 23.0 * f64::EPSILON, "northwest corner is {corner:?}");
+    for (x, y) in [(11.5, 22.5), (12.5, 21.5), (14.0, 22.5)] {
+        let z = env.height_below(x, y).unwrap();
+        let ray = query::Ray::new(Vector::new(x, y, z + 2.0), -Vector::Z);
+        let distance = shape.cast_ray(&pose, &ray, 4.0, false).unwrap();
+        assert!((distance - 2.0).abs() <= ALLOWED_LINEAR_ERROR_M, "height at {x}, {y}: ray travelled {distance}");
+    }
+}
+
+#[test]
+fn terrain_validation_reports_paths() {
+    let invalid = json!({
+        "ground": { "friction": 0.5, "restitution": 0 },
+        "terrain": {
+            "rows": 1, "columns": 2.5, "cellSizeM": 0, "cornerM": [10, "east"],
+            "heightsM": [2, null, "missing", 4], "friction": -1, "restitution": 2, "size": 1
+        },
+        "obstacles": []
+    });
+    let mut got = paths(Environment::from_json(&invalid).unwrap_err());
+    got.sort();
+    assert_eq!(got, [
+        "environment.terrain", "environment.terrain.cellSizeM", "environment.terrain.columns",
+        "environment.terrain.cornerM", "environment.terrain.friction", "environment.terrain.heightsM[1]",
+        "environment.terrain.heightsM[2]", "environment.terrain.restitution", "environment.terrain.rows",
+        "environment.terrain.size",
+    ]);
+    let wrong_count = terrain_grid(2, 2, 2.0, [10.0, 20.0], &[2.0, 8.0, 0.0], 0.5);
+    let error = Environment::from_json(&json!({ "terrain": wrong_count, "obstacles": [] })).unwrap_err();
+    assert_eq!(paths(error), ["environment.terrain.heightsM"]);
+    let error = Environment::from_json(&json!({ "terrain": [], "obstacles": [] })).unwrap_err();
+    assert_eq!(paths(error), ["environment.terrain"]);
+}
+
+#[test]
+fn flat_terrain_rests_at_plane_height_and_is_deterministic() {
+    let vehicle = brick();
+    let run = |env: &Environment| {
+        let mut sim = Simulation::with_environment(&vehicle, SimConfig::default(), env, [0.0, 0.0, 0.5]).unwrap();
+        steps(&mut sim, 2500, &BodyInput::default());
+        assert!(sim.touching_ground());
+        assert_eq!(sim.contacts().0.last().map(|event| (event.part_id.as_str(), event.with.as_str(), event.end_s)),
+            Some(("brick", "ground", None)));
+        (sim.state(), sim.state_hash(), sim.contacts())
+    };
+    let plane = run(&ground(0.5, 0.0)).0;
+    let terrain = flat_terrain(0.0);
+    let (state, hash, contacts) = run(&terrain);
+    assert!((state.position_m[2] - plane.position_m[2]).abs() <= ALLOWED_LINEAR_ERROR_M, "{state:?}");
+    // At this speed the brick moves less than one contact tolerance in the
+    // one-second resting observation window of the plane test.
+    let rest_window_s = 1.0;
+    assert!(Vector::from_array(state.linear_velocity_mps).length() < ALLOWED_LINEAR_ERROR_M / rest_window_s, "{state:?}");
+    let (repeat, repeat_hash, repeat_contacts) = run(&terrain);
+    assert_eq!((repeat, repeat_hash), (state, hash));
+    assert_eq!(serde_json::to_value(contacts).unwrap(), serde_json::to_value(repeat_contacts).unwrap());
+}
+
+#[test]
+fn terrain_slope_slides_above_and_rests_below_atan_of_friction() {
+    let mu = 0.5;
+    let config = SimConfig::default();
+    // The test runs for one second. A half-width of g metres is twice the
+    // maximum gravitational displacement from rest in that time.
+    let half_width = G;
+    let cell = 2.0 * half_width;
+    let vehicle = brick();
+    let run = |slope: f64| {
+        let edge_z = half_width * slope;
+        let grid = terrain_grid(2, 2, cell, [-cell; 2], &[-edge_z, edge_z, -edge_z, edge_z], mu);
+        let env = env(json!({ "terrain": grid, "obstacles": [] }));
+        let mut sim = Simulation::with_environment(&vehicle, config, &env, [0.0, 0.0, 0.5]).unwrap();
+        // Place the 40 mm brick flush with the slope before the first step.
+        let angle = slope.atan();
+        let (_, body) = sim.world_mut().bodies.iter_mut().find(|(_, body)| body.is_dynamic()).unwrap();
+        body.set_rotation(Rotation::from_rotation_y(-angle), true);
+        body.set_translation(Vector::new(0.0, 0.0, 0.02 / angle.cos()), true);
+        steps(&mut sim, 1000, &BodyInput::default());
+        assert!(sim.touching_ground());
+        sim.state().linear_velocity_mps[0]
+    };
+    let held_vx = run(mu / 2.0);
+    let sliding_vx = run(2.0 * mu);
+    assert!(held_vx.abs() < 1e-6, "held vx = {held_vx}");
+    assert!(sliding_vx < -ALLOWED_LINEAR_ERROR_M / config.dt_s, "sliding vx = {sliding_vx}");
+}
+
+#[test]
+fn terrain_refuses_a_start_wholly_below_the_surface() {
+    let vehicle = brick();
+    let terrain = flat_terrain(0.0);
+    let start = |position| Simulation::with_environment(&vehicle, SimConfig::default(), &terrain, position);
+    let error = start([0.0, 0.0, -0.5]).err().unwrap();
+    assert!(error.contains("brick is 520.000 mm inside the ground"), "{error}");
+    assert!(start([0.0, 0.0, 0.02]).is_ok());
+    assert!(start([2.0, 0.0, -0.5]).is_ok());
+}
+
+#[test]
+fn fast_fall_does_not_tunnel_through_terrain() {
+    let config = SimConfig::default();
+    let thickness = 0.04; // The brick fixture's Z extent.
+    let terrain = flat_terrain(0.0);
+    let mut sim = Simulation::with_environment(&brick(), config, &terrain, [0.0, 0.0, 2.0 * thickness]).unwrap();
+    // 120 m/s travels three brick thicknesses in the 1 ms step. The lower
+    // face starts 60 mm above the surface (past the 20 mm prediction gap),
+    // and the upper face would end 20 mm below the surface if unchecked.
+    // Rapier 0.36.1 rigid_body.rs:591–596 documents the automatic sweep
+    // against fixed colliders.
+    sim.set_velocity(Vector::new(0.0, 0.0, -3.0 * thickness / config.dt_s), Vector::ZERO);
+    sim.step(&BodyInput::default());
+    let z = sim.state().position_m[2];
+    assert!(z >= thickness / 2.0 - REST_PENETRATION_M, "first step tunneled to z = {z}");
+    // Contact reporting samples the state at the start of the step.
+    sim.step(&BodyInput::default());
+    assert!(sim.touching_ground(), "{:?}", sim.state());
+}
+
+#[test]
+fn cylinder_and_hull_report_the_part_and_id_and_refuse_containment() {
+    // Same top and width as the legacy table. The hull is the table's eight
+    // vertices relative to its centre; the cylinder uses its full height.
+    let points: Vec<_> = [-0.3, 0.3].into_iter().flat_map(|x| {
+        [-0.3, 0.3].into_iter().flat_map(move |y| [-0.05, 0.05].into_iter().map(move |z| [x, y, z]))
+    }).collect();
+    for obstacle in [
+        json!({ "id": "column", "type": "cylinder", "radius": 0.3, "height": 0.1 }),
+        json!({ "id": "convex-table", "type": "hull", "points": points }),
+    ] {
+        let mut obstacle = obstacle;
+        let id = obstacle["id"].as_str().unwrap().to_owned();
+        obstacle["center"] = json!([0, 0, 0.05]);
+        obstacle["quaternion"] = json!([0, 0, 0, 1]);
+        obstacle["friction"] = json!(0.6);
+        obstacle["restitution"] = json!(0);
+        let env = env(json!({ "ground": null, "obstacles": [obstacle] }));
+        let vehicle = brick();
+        let error = Simulation::with_environment(&vehicle, SimConfig::default(), &env, [0.0, 0.0, 0.05]).err().unwrap();
+        // A centred 40 mm brick inside a 100 mm obstacle takes 70 mm to clear it vertically.
+        assert!(error.contains(&format!("brick is 70.000 mm inside the obstacle {id}")), "{error}");
+        let mut sim = Simulation::with_environment(&vehicle, SimConfig::default(), &env, [0.0, 0.0, 0.4]).unwrap();
+        steps(&mut sim, 1500, &BodyInput::default());
+        let z = sim.state().position_m[2];
+        assert!((z - 0.12).abs() <= REST_PENETRATION_M, "{id}: rest height {z}");
+        let events = sim.contacts().0;
+        assert!(events.iter().any(|c| c.part_id == "brick" && c.with == format!("obstacle:{id}") && c.end_s.is_none()), "{events:?}");
+        assert!(!sim.touching_ground());
+    }
+}
+
+#[test]
+fn obstacle_shape_validation_reports_paths() {
+    let mut obstacles = [
+        json!({ "type": "cylinder", "radius": 0, "height": "unknown", "halfExtents": [1, 1, 1] }),
+        json!({ "type": "hull", "points": [[0, 0, 0], [1, 0, null], [0, 1, 0]] }),
+        json!({ "type": "hull", "points": [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]] }),
+        json!({ "type": "mesh" }),
+    ];
+    for (i, obstacle) in obstacles.iter_mut().enumerate() {
+        obstacle["id"] = json!(i.to_string());
+        obstacle["center"] = json!([0, 0, 0]);
+        obstacle["quaternion"] = json!([0, 0, 0, 1]);
+        obstacle["friction"] = json!(0.6);
+        obstacle["restitution"] = json!(0);
+    }
+    let mut got = paths(Environment::from_json(&json!({ "ground": null, "obstacles": obstacles })).unwrap_err());
+    got.sort();
+    assert_eq!(got, [
+        "environment.obstacles[0].halfExtents", "environment.obstacles[0].height", "environment.obstacles[0].radius",
+        "environment.obstacles[1].points", "environment.obstacles[1].points[1]",
+        "environment.obstacles[2].points", "environment.obstacles[3].type",
+    ]);
 }
 
 #[test]

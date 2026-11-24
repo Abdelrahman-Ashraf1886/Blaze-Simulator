@@ -23,6 +23,8 @@ pub mod propulsion;
 pub mod takeoff;
 pub mod land_detector;
 pub mod scenario;
+pub mod step_test;
+pub mod trace;
 pub mod sim;
 pub mod vehicle;
 pub mod hover_thrust;

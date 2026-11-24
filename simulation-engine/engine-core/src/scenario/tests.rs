@@ -282,7 +282,7 @@ fn invalid_inputs_are_errors_not_panics() {
     assert!(overweight_payload(&v0, &p0, &config()).is_err());
     // A start inside the ground is refused, naming the part.
     let ground = Ground {
-        environment: Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), obstacles: vec![] },
+        environment: Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), terrain: None, obstacles: vec![] },
         start_m: [0.0, 0.0, -0.01],
     };
     assert!(with(&|c| c.ground = Some(ground.clone())).contains("inside"));
@@ -394,7 +394,7 @@ fn the_beyond_authority_offset_follows_the_gains_in_use() {
 fn a_scenario_can_start_in_an_environment() {
     let (v, p) = quad();
     let ground = Ground {
-        environment: Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), obstacles: vec![] },
+        environment: Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), terrain: None, obstacles: vec![] },
         start_m: [0.0, 0.0, 0.5],
     };
     let c = ScenarioConfig { ground: Some(ground), ..config() };

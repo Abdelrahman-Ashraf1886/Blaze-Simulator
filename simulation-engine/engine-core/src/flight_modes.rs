@@ -74,6 +74,10 @@ pub enum FlightCommand {
     Stabilized(Sticks),
     Altitude(Sticks),
     Position(Sticks),
+    /// Height above the run start. None uses MIS_TAKEOFF_ALT.
+    Takeoff { altitude_m: Option<f64> },
+    Hold,
+    Land,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -184,14 +188,14 @@ impl FlightModes {
     }
 
     /// Advance one fixed sample. Feedback is the preceding position controller
-    /// velocity setpoint (FlightTask/FlightTask.cpp:169-185). On ground contact
-    /// the hold modes use stabilized sticks until airborne (plan's stand-in).
+    /// velocity setpoint (FlightTask/FlightTask.cpp:169-185). The landed flag
+    /// applies to manual attitude generation.
     pub fn step(
         &mut self,
         command: FlightCommand,
         state: &PositionInput,
         feedback: Option<[f64; 3]>,
-        ground_contact: bool,
+        landed: bool,
         dt: f64,
     ) -> Result<ModeSetpoint, String> {
         if !dt.is_finite()
@@ -252,12 +256,12 @@ impl FlightModes {
                 return Ok(ModeSetpoint::Position(sp));
             }
             FlightCommand::Stabilized(s) => (Mode::Stabilized, s),
-            FlightCommand::Altitude(s) | FlightCommand::Position(s) if ground_contact => {
-                (Mode::Stabilized, s)
-            }
             FlightCommand::Altitude(s) => (Mode::Altitude, s),
             FlightCommand::Position(s) if self.gains.mpc_pos_mode == 0.0 => (Mode::Velocity, s),
             FlightCommand::Position(s) => (Mode::Acceleration, s),
+            FlightCommand::Takeoff { .. } | FlightCommand::Hold | FlightCommand::Land => {
+                return Err("auto commands require the flight loop".into());
+            }
         };
         if ![
             sticks.forward,
@@ -275,7 +279,7 @@ impl FlightModes {
         }
         if mode == Mode::Stabilized {
             self.previous = PositionSetpoint::default();
-            return Ok(self.stabilized(sticks, state.yaw, ground_contact, dt));
+            return Ok(self.stabilized(sticks, state.yaw, landed, dt));
         }
         let sp = self.position_task(mode, sticks, state, feedback, dt);
         self.previous = sp;
@@ -555,10 +559,10 @@ impl AccelerationXy {
 // locked position and trajectory velocity/acceleration to manual mode 4.
 // Durations are planned at the END of each sample for evaluation on the next.
 #[derive(Clone, Default, Debug)]
-struct SmoothZ {
-    x: f64,
-    v: f64,
-    a: f64,
+pub(crate) struct SmoothZ {
+    pub(crate) x: f64,
+    pub(crate) v: f64,
+    pub(crate) a: f64,
     locked: bool,
     jerk: f64,
     durations: [f64; 3],
@@ -602,7 +606,7 @@ impl SmoothZ {
 
     // VelocitySmoothing.cpp:58-102,138-149,157-223. Choose the direction
     // relative to the velocity after removing the current acceleration.
-    fn plan(&mut self, target: f64, j_max: f64, a_max: f64) {
+    pub(crate) fn plan(&mut self, target: f64, j_max: f64, a_max: f64) {
         let dv = target - self.v;
         let braking_dv = if self.a.abs() > EPS {
             self.a * self.a.abs() / (2.0 * j_max)
@@ -645,7 +649,7 @@ impl SmoothZ {
 
     // VelocitySmoothing.cpp:225-264. Integrate the three constant-jerk pieces,
     // then cruise at the terminal velocity for any remaining part of dt.
-    fn advance(&mut self, dt: f64) {
+    pub(crate) fn advance(&mut self, dt: f64) {
         let mut left = dt;
         for (duration, jerk) in self.durations.into_iter().zip([self.jerk, 0.0, -self.jerk]) {
             let t = duration.min(left);
@@ -658,6 +662,17 @@ impl SmoothZ {
             self.a = 0.0;
             self.x += self.v * left;
         }
+    }
+
+    pub(crate) fn at(position: f64, velocity: f64) -> Self {
+        Self { x: position, v: velocity, ..Self::default() }
+    }
+
+    pub(crate) fn hash_words(&self) -> [u64; 7] {
+        [
+            self.x.to_bits(), self.v.to_bits(), self.a.to_bits(), self.jerk.to_bits(),
+            self.durations[0].to_bits(), self.durations[1].to_bits(), self.durations[2].to_bits(),
+        ]
     }
 }
 

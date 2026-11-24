@@ -129,7 +129,7 @@ impl ClosedLoop {
         self.saturation = out.saturation;
         let vertical_thrust = out.vertical_thrust;
         self.flight.step(sim, self.motor_output.signals(out.motor_commands));
-        self.hover.after_step(sim, est.z_velocity, vertical_thrust, &mut self.controller.position)
+        self.hover.after_step(sim, est.z_velocity, vertical_thrust, sim.touching_ground(), &mut self.controller.position)
             .expect("valid hover estimate from the shared estimator");
     }
 

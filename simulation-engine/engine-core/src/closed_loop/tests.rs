@@ -47,10 +47,14 @@ fn propulsion(v: &Vehicle) -> Propulsion {
 
 /// Runs the closed loop for `seconds` holding level attitude at CoM height `z`.
 fn fly(v: &Vehicle, z: f64, seconds: f64) -> (Simulation, ClosedLoop) {
+    fly_with_gains(v, z, seconds, Gains::px4_v1_13_3())
+}
+
+fn fly_with_gains(v: &Vehicle, z: f64, seconds: f64, gains: Gains) -> (Simulation, ClosedLoop) {
     let p = propulsion(v);
     let yaw = p.yaw_ratio();
     let flight = Flight::new(v, p, None, None).unwrap();
-    let mut cl = ClosedLoop::new(v, flight, yaw, Gains::px4_v1_13_3()).unwrap();
+    let mut cl = ClosedLoop::new(v, flight, yaw, gains).unwrap();
     let mut sim = Simulation::new(v, SimConfig::default()).unwrap();
     let sp = Setpoint { attitude: LEVEL, yaw_rate: 0.0, z: Some(z), z_velocity: 0.0 };
     for _ in 0..(seconds * 1000.0).round() as u64 {
@@ -76,6 +80,13 @@ fn thrusts(cl: &ClosedLoop) -> Vec<f64> {
 fn hovers_at_the_altitude_setpoint() {
     let v = quad(1.0, [0.0; 3]);
     let (sim, cl) = fly(&v, 1.0, 10.0);
+    let mut fixed = Gains::px4_v1_13_3();
+    fixed.mpc_use_hte = 0.0;
+    let (fixed_sim, fixed_cl) = fly_with_gains(&v, 1.0, 10.0, fixed);
+    // 4.7 reference captured before switching the vertical controller.
+    assert_eq!(fixed_sim.state_hash_with(&fixed_cl.flight().hash_words()), 0xcfbb556a03bb8d55);
+    // The step crosses 1 m and the shared estimator updates the hover thrust.
+    assert_eq!(sim.state_hash_with(&cl.flight().hash_words()), 0x295b055082f6de18);
     let s = sim.state();
     assert!((s.com_m[2] - 1.0).abs() < 0.01, "z = {}", s.com_m[2]);
     assert!(tilt(&sim) < 0.1f64.to_radians(), "tilt = {}", tilt(&sim));
@@ -153,6 +164,20 @@ fn a_payload_raises_the_hover_throttle_as_predicted() {
         assert!(throttle > previous);
         previous = throttle;
     }
+}
+
+/// The 4.9 payload starts near zero. Exercise the in-air gate with the
+/// payload from the hover-throttle test and the altitude from flight_loop/tests.rs.
+#[test]
+fn airborne_payload_consumes_valid_hover_estimates_only_when_enabled() {
+    let v = quad(1.4, [0.0; 3]);
+    let altitude = crate::position_control::PositionGains::px4_v1_13_3().mpc_land_alt2;
+    let mut gains = Gains::px4_v1_13_3();
+    let (_, enabled) = fly_with_gains(&v, altitude, 10.0, gains);
+    gains.mpc_use_hte = 0.0;
+    let (_, disabled) = fly_with_gains(&v, altitude, 10.0, gains);
+    assert_ne!(enabled.controller.position.hover_thrust(), gains.mpc_thr_hover);
+    assert_eq!(disabled.controller.position.hover_thrust(), gains.mpc_thr_hover);
 }
 
 /// Above the maximum thrust (weight 20 % over 4 k_T ω_max² at full throttle)

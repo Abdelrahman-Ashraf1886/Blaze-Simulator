@@ -11,12 +11,13 @@
 //! Collective here is positive UP, the negative of PX4 NED thrust-z.
 //! CW/CCW are viewed from above the rotor: CW reaction is along +thrust axis.
 //!
-//! Deviations: caller supplies filtered estimates; D uses finite differences.
-//! No arming, landed detection, sensor filtering, horizontal control or HTE.
-//! MPC_THR_HOVER stays fixed despite the retained MPC_USE_HTE default; ACRO
-//! limits are retained defaults, unused by this attitude-hold API.
+//! The caller supplies attitude and velocity estimates. PositionControl owns
+//! the vertical PID and filtered velocity derivative. ClosedLoop supplies its
+//! hover estimate after stepping the plant. ACRO limits apply to rate mode.
 
+#[cfg(test)]
 use crate::math::STANDARD_GRAVITY as G;
+use crate::position_control::{PositionControl, VerticalGains};
 use crate::vehicle::{MotorBody, Quat, Spin};
 use rapier3d_f64::math::{Rotation, Vector};
 use serde::{Deserialize, Serialize};
@@ -80,26 +81,15 @@ pub struct Gains {
     pub mc_acro_p_max: f64,
     /// `MC_ACRO_Y_MAX`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_rate_control/mc_rate_control_params.c#L324>.
     pub mc_acro_y_max: f64,
-    /// `MPC_Z_P`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L162>.
-    pub mpc_z_p: f64,
-    /// `MPC_Z_VEL_P_ACC`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L174>.
-    pub mpc_z_vel_p_acc: f64,
-    /// `MPC_Z_VEL_I_ACC`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L188>.
-    pub mpc_z_vel_i_acc: f64,
-    /// `MPC_Z_VEL_D_ACC`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L200>.
-    pub mpc_z_vel_d_acc: f64,
-    /// `MPC_THR_HOVER`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L75>.
-    pub mpc_thr_hover: f64,
-    /// `MPC_USE_HTE`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L86>.
-    pub mpc_use_hte: f64,
-    /// `MPC_THR_MIN`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L54>.
-    pub mpc_thr_min: f64,
-    /// `MPC_THR_MAX`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L137>.
-    pub mpc_thr_max: f64,
-    /// `MPC_Z_VEL_MAX_UP`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L230>.
-    pub mpc_z_vel_max_up: f64,
-    /// `MPC_Z_VEL_MAX_DN`: <https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L260>.
-    pub mpc_z_vel_max_dn: f64,
+    #[serde(flatten)]
+    pub vertical: VerticalGains,
+}
+impl std::ops::Deref for Gains {
+    type Target = VerticalGains;
+    fn deref(&self) -> &VerticalGains { &self.vertical }
+}
+impl std::ops::DerefMut for Gains {
+    fn deref_mut(&mut self) -> &mut VerticalGains { &mut self.vertical }
 }
 impl Gains {
     pub fn px4_v1_13_3() -> Self {
@@ -132,16 +122,7 @@ impl Gains {
             mc_acro_r_max: 720.0,
             mc_acro_p_max: 720.0,
             mc_acro_y_max: 540.0,
-            mpc_z_p: 1.0,
-            mpc_z_vel_p_acc: 4.0,
-            mpc_z_vel_i_acc: 2.0,
-            mpc_z_vel_d_acc: 0.0,
-            mpc_thr_hover: 0.5,
-            mpc_use_hte: 1.0,
-            mpc_thr_min: 0.12,
-            mpc_thr_max: 1.0,
-            mpc_z_vel_max_up: 3.0,
-            mpc_z_vel_max_dn: 1.0,
+            vertical: VerticalGains::px4_v1_13_3(),
         }
     }
     pub fn validate(&self) -> Result<(), String> {
@@ -327,7 +308,7 @@ impl Saturation {
     pub fn any(&self) -> bool {
         self.positive.into_iter().chain(self.negative).any(|x| x)
     }
-    fn blocks(&self, axis: usize, error: f64) -> bool {
+    pub(crate) fn blocks(&self, axis: usize, error: f64) -> bool {
         (self.positive[axis] && error > 0.0) || (self.negative[axis] && error < 0.0)
     }
 }
@@ -687,6 +668,7 @@ pub struct Setpoint {
 /// Borrowed motor buffer: step does not allocate.
 #[derive(Debug)]
 pub struct ControllerOutput<'a> {
+    pub(crate) vertical_thrust: f64,
     pub motor_commands: &'a [f64],
     pub rate_setpoint: [f64; 3],
     pub torque_demand: [f64; 3],
@@ -699,8 +681,7 @@ pub struct Controller {
     allocator: Allocator,
     rate: RateControl,
     saturation: Saturation,
-    vertical_integral: f64,
-    previous_velocity: Option<f64>,
+    pub(crate) position: PositionControl,
 }
 impl Controller {
     pub fn new(motors: &[MotorBody], yaw_ratio: f64, gains: Gains) -> Result<Self, String> {
@@ -710,8 +691,7 @@ impl Controller {
             allocator: Allocator::new(motors, yaw_ratio)?,
             rate: RateControl::default(),
             saturation: Saturation::default(),
-            vertical_integral: 0.0,
-            previous_velocity: None,
+            position: PositionControl::for_vertical(gains.vertical),
         })
     }
     pub fn gains(&self) -> &Gains {
@@ -730,8 +710,7 @@ impl Controller {
     pub fn reset(&mut self) {
         self.rate = RateControl::default();
         self.saturation = Saturation::default();
-        self.vertical_integral = 0.0;
-        self.previous_velocity = None;
+        self.position = PositionControl::for_vertical(self.gains.vertical);
     }
     /// Caller steps at a fixed cadence, normally 1 ms. Panics on invalid dt,
     /// nonfinite state/setpoint or nonunit quaternions. Validate estimator health
@@ -754,37 +733,14 @@ impl Controller {
         let torque = self
             .rate
             .update(g, est.body_rates, rates, self.saturation, dt);
-        let velocity_sp = (sp.z.map_or(0.0, |z| g.mpc_z_p * (z - est.z)) + sp.z_velocity)
-            .clamp(-g.mpc_z_vel_max_dn, g.mpc_z_vel_max_up);
-        let error = velocity_sp - est.z_velocity;
-        let acceleration = self
-            .previous_velocity
-            .map_or(0.0, |v| (est.z_velocity - v) / dt);
-        self.previous_velocity = Some(est.z_velocity);
-        let acc_sp =
-            g.mpc_z_vel_p_acc * error + self.vertical_integral - g.mpc_z_vel_d_acc * acceleration;
-        // PX4 T_NED=a_NED*hover/g-hover. Negate acceleration AND thrust:
-        // T_UP=hover*(1+a_UP/g). Project along desired body +Z as PX4 projects
-        // its planned thrust vector. Here attitude is explicit, since there is
-        // no horizontal loop. At >=90deg upward support is impossible: max.
         let cosine = (q(sp.attitude) * Vector::Z).z;
-        let raw = if cosine > 1e-6 {
-            g.mpc_thr_hover * (1.0 + acc_sp / G) / cosine
-        } else {
-            g.mpc_thr_max
-        };
-        let thrust = raw.clamp(g.mpc_thr_min, g.mpc_thr_max);
-        if !self.saturation.blocks(3, error)
-            && !(raw >= g.mpc_thr_max && error > 0.0 || raw <= g.mpc_thr_min && error < 0.0)
-        {
-            self.vertical_integral =
-                (self.vertical_integral + g.mpc_z_vel_i_acc * error * dt).clamp(-G, G);
-        }
+        let thrust = self.position.step_vertical(est, sp, cosine, self.saturation, dt);
         let a = self
             .allocator
             .allocate([torque[0], torque[1], torque[2], thrust]);
         self.saturation = a.saturation;
         ControllerOutput {
+            vertical_thrust: thrust * cosine,
             motor_commands: a.commands,
             rate_setpoint: rates,
             torque_demand: torque,

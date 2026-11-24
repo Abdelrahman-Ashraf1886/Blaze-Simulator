@@ -116,6 +116,16 @@ fn builtins_match_their_predictions() {
         assert!(r.passed, "{}: {:#?}", r.name, r.checks);
         assert_eq!(r.end_reason, ScenarioEnd::Duration);
     }
+    // Whole-loop hashes recorded from the pre-switch 4.7 controller. The
+    // balanced and payload fixtures start at the frame origin and never reach
+    // the estimator's in-air gate (hover_thrust.rs:187-191).
+    for (report, reference) in [
+        (&balanced, "af9ee8edce279002"), (&loaded, "61788a0a4243cc4a"),
+        (&offset, "9276b50498625d18"), (&overweight, "4e193a090a25a3b1"),
+        (&beyond, "953d2542adf2ee75"),
+    ] {
+        assert_eq!(report.final_state_hash, reference, "{}", report.name);
+    }
     // The independent hand numbers.
     let balance = check(&offset, |c| matches!(c, Check::ThrustBalance { .. }));
     assert!((balance.measured.unwrap() - 1.3076).abs() < 0.02, "{balance:?}");

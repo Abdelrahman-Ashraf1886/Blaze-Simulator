@@ -38,10 +38,7 @@ pub struct FlightLoopSnapshot {
 pub struct FlightLoop {
     flight: Flight,
     modes: FlightModes,
-    estimator: HoverThrustEstimator,
-    interval_steps: u64,
-    sample_time_us: u64,
-    interval_start_vz: Option<f64>,
+    hover: HoverSampling,
     position: PositionControl,
     gains: Gains,
     rate: RateControl,
@@ -49,6 +46,64 @@ pub struct FlightLoop {
     saturation: Saturation,
     velocity_feedback: Option<[f64; 3]>,
     last_step: Option<FlightLoopSnapshot>,
+}
+
+/// Samples the acceleration produced by an interval of plant steps. Both loop
+/// forms consume the same gated EKF update after the last step of the interval.
+pub(crate) struct HoverSampling {
+    estimator: HoverThrustEstimator,
+    interval_steps: u64,
+    sample_time_us: u64,
+    interval_start_vz: Option<f64>,
+}
+
+impl HoverSampling {
+    pub(crate) fn new(hover: HoverThrustParams) -> Result<Self, String> {
+        Ok(Self {
+            estimator: HoverThrustEstimator::new(hover)?,
+            interval_steps: 0,
+            sample_time_us: 0,
+            interval_start_vz: None,
+        })
+    }
+
+    pub(crate) fn after_step(&mut self, sim: &Simulation, initial_vz: f64,
+        vertical_thrust: f64, position: &mut PositionControl) -> Result<(), String> {
+        let start_vz = *self.interval_start_vz.get_or_insert(initial_vz);
+        self.interval_steps += 1;
+        let dt = sim.config().dt_s;
+        let steps = (ESTIMATE_INTERVAL_S / dt).round() as u64;
+        let exact_interval = steps != 0 && ESTIMATE_INTERVAL_S / steps as f64 == dt;
+        // FlightLoop validates exact divisibility. The legacy API also accepts
+        // other fixed steps: use the first plant endpoint at or beyond 10 ms.
+        let steps_per_sample = if exact_interval { steps } else { (ESTIMATE_INTERVAL_S / dt).ceil() as u64 };
+        if self.interval_steps == steps_per_sample {
+            let elapsed = if exact_interval { ESTIMATE_INTERVAL_S } else { self.interval_steps as f64 * dt };
+            self.interval_steps = 0;
+            self.sample_time_us = self.sample_time_us.saturating_add((elapsed * 1_000_000.0).round() as u64);
+            let end = sim.state();
+            let [vx, vy, vz] = end.linear_velocity_mps;
+            self.interval_start_vz = Some(vz);
+            self.estimator.step(HoverThrustSample {
+                timestamp_us: self.sample_time_us,
+                armed: true,
+                landed: sim.touching_ground(),
+                distance_above_ground_m: end.com_m[2],
+                // EKF2.cpp:938-941 publishes the world velocity derivative.
+                vertical_acceleration_up_m_s2: (vz - start_vz) / elapsed,
+                vertical_thrust_up: vertical_thrust,
+                vertical_velocity_up_m_s: vz,
+                horizontal_speed_m_s: vx.hypot(vy),
+            });
+            // MulticopterPositionControl.cpp:327-334 consumes valid estimates.
+            if vertical_thrust.is_finite() {
+                if let Some(hover) = self.estimator.controller_update() {
+                    position.update_hover_thrust(hover)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl FlightLoop {
@@ -69,10 +124,7 @@ impl FlightLoop {
         allocator.set_airmode(airmode)?;
         Ok(Self {
             flight,
-            estimator: HoverThrustEstimator::new(hover)?,
-            interval_steps: 0,
-            sample_time_us: 0,
-            interval_start_vz: None,
+            hover: HoverSampling::new(hover)?,
             modes: FlightModes::new(position, airmode)?,
             position: PositionControl::new(position)?,
             gains,
@@ -89,7 +141,7 @@ impl FlightLoop {
     }
 
     pub fn hover_thrust_estimate(&self) -> HoverThrustEstimate {
-        self.estimator.estimate()
+        self.hover.estimator.estimate()
     }
 
     pub fn last_step(&self) -> Option<FlightLoopSnapshot> {
@@ -227,32 +279,7 @@ impl FlightLoop {
             .allocate([torque[0], torque[1], torque[2], thrust]);
         self.saturation = allocation.saturation;
         self.flight.step(sim, allocation.commands);
-        let start_vz = *self.interval_start_vz.get_or_insert(estimate.velocity[2]);
-        self.interval_steps += 1;
-        if self.interval_steps == steps_per_sample {
-            self.interval_steps = 0;
-            self.sample_time_us += EKF2_PREDICT_US;
-            let end = sim.state();
-            let [vx, vy, vz] = end.linear_velocity_mps;
-            self.interval_start_vz = Some(vz);
-            self.estimator.step(HoverThrustSample {
-                timestamp_us: self.sample_time_us,
-                armed: true,
-                landed: sim.touching_ground(),
-                distance_above_ground_m: end.com_m[2],
-                // EKF2.cpp:938-941 publishes the world velocity derivative.
-                vertical_acceleration_up_m_s2: (vz - start_vz) / ESTIMATE_INTERVAL_S,
-                vertical_thrust_up: vertical_thrust,
-                vertical_velocity_up_m_s: vz,
-                horizontal_speed_m_s: vx.hypot(vy),
-            });
-            // MulticopterPositionControl.cpp:327-334 consumes valid estimates.
-            if vertical_thrust.is_finite() {
-                if let Some(hover) = self.estimator.controller_update() {
-                    self.position.update_hover_thrust(hover)?;
-                }
-            }
-        }
+        self.hover.after_step(sim, estimate.velocity[2], vertical_thrust, &mut self.position)?;
         let saturation = SaturationDiagnostic {
             positive: self.saturation.positive,
             negative: self.saturation.negative,
@@ -264,7 +291,7 @@ impl FlightLoop {
             acceleration_setpoint: setpoints.acceleration,
             saturation,
             velocity_integral: self.position.velocity_integral(),
-            hover_thrust: self.estimator.estimate(),
+            hover_thrust: self.hover.estimator.estimate(),
         });
         observe(rates, desired_attitude, allocation.commands, saturation);
         Ok(())

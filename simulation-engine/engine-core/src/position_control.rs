@@ -177,6 +177,12 @@ pub struct PositionGains {
     pub mpc_land_speed: f64,
     /// `MPC_TKO_SPEED`: `mc_pos_control_params.c:451`; bounds 1.0 .. 5.0.
     pub mpc_tko_speed: f64,
+    #[serde(flatten)]
+    pub vertical: VerticalGains,
+}
+/// Shared PX4 vertical parameters, flattened into both legacy and position gain maps.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct VerticalGains {
     /// `MPC_Z_P`: `mc_pos_control_params.c:162`; bounds 0.0 .. 1.5.
     pub mpc_z_p: f64,
     /// `MPC_Z_VEL_P_ACC`: `mc_pos_control_params.c:174`; bounds 2.0 .. 15.0.
@@ -197,6 +203,29 @@ pub struct PositionGains {
     pub mpc_z_vel_max_up: f64,
     /// `MPC_Z_VEL_MAX_DN`: `mc_pos_control_params.c:260`; bounds 0.5 .. 4.0.
     pub mpc_z_vel_max_dn: f64,
+}
+impl VerticalGains {
+    pub(crate) fn px4_v1_13_3() -> Self {
+        Self {
+            mpc_z_p: 1.0,
+            mpc_z_vel_p_acc: 4.0,
+            mpc_z_vel_i_acc: 2.0,
+            mpc_z_vel_d_acc: 0.0,
+            mpc_thr_hover: 0.5,
+            mpc_use_hte: 1.0,
+            mpc_thr_min: 0.12,
+            mpc_thr_max: 1.0,
+            mpc_z_vel_max_up: 3.0,
+            mpc_z_vel_max_dn: 1.0,
+        }
+    }
+}
+impl std::ops::Deref for PositionGains {
+    type Target = VerticalGains;
+    fn deref(&self) -> &VerticalGains { &self.vertical }
+}
+impl std::ops::DerefMut for PositionGains {
+    fn deref_mut(&mut self) -> &mut VerticalGains { &mut self.vertical }
 }
 impl PositionGains {
     pub fn px4_v1_13_3() -> Self {
@@ -237,16 +266,7 @@ impl PositionGains {
             mpc_land_alt2: 5.0,
             mpc_land_speed: 0.7,
             mpc_tko_speed: 1.5,
-            mpc_z_p: 1.0,
-            mpc_z_vel_p_acc: 4.0,
-            mpc_z_vel_i_acc: 2.0,
-            mpc_z_vel_d_acc: 0.0,
-            mpc_thr_hover: 0.5,
-            mpc_use_hte: 1.0,
-            mpc_thr_min: 0.12,
-            mpc_thr_max: 1.0,
-            mpc_z_vel_max_up: 3.0,
-            mpc_z_vel_max_dn: 1.0,
+            vertical: VerticalGains::px4_v1_13_3(),
         }
     }
     pub fn validate(&self) -> Result<(), String> {
@@ -439,13 +459,22 @@ pub struct PositionControl {
 impl PositionControl {
     pub fn new(gains: PositionGains) -> Result<Self, String> {
         gains.validate()?;
-        Ok(Self {
+        Ok(Self::with_gains(gains))
+    }
+
+    /// The legacy API validates vertical overrides against Gains::validate.
+    pub(crate) fn for_vertical(vertical: VerticalGains) -> Self {
+        Self::with_gains(PositionGains { vertical, ..PositionGains::px4_v1_13_3() })
+    }
+
+    fn with_gains(gains: PositionGains) -> Self {
+        Self {
             gains,
             integral: [0.0; 3],
             derivative: [Derivative::default(); 3],
             hover_thrust: gains.mpc_thr_hover,
             acc_sp_z: 0.0,
-        })
+        }
     }
     pub fn gains(&self) -> &PositionGains {
         &self.gains
@@ -519,6 +548,51 @@ impl PositionControl {
         *self = next;
         Ok(out)
     }
+    fn vertical_velocity(&self, target: f64, z: f64, feed: f64) -> f64 {
+        let g = &self.gains;
+        add_if_not_nan(feed, (target - z) * g.mpc_z_p)
+            .clamp(-g.mpc_z_vel_max_up, g.mpc_z_vel_max_dn)
+    }
+
+    fn vertical_acceleration(&self, error: f64, derivative: f64) -> f64 {
+        self.gains.mpc_z_vel_p_acc * error + self.integral[2]
+            - self.gains.mpc_z_vel_d_acc * derivative
+    }
+
+    fn integrate_z(&mut self, error: f64, thrust_up: f64, minimum: f64, dt: f64) {
+        // PositionControl.cpp:151-155,189-192. Positive NED error asks for less lift.
+        let g = &self.gains;
+        let blocked = (thrust_up <= minimum && error >= 0.0)
+            || (thrust_up >= g.mpc_thr_max && error <= 0.0);
+        if !blocked {
+            self.integral[2] += add_if_not_nan(error, 0.0) * g.mpc_z_vel_i_acc * dt;
+        }
+        self.integral[2] = self.integral[2].clamp(-G, G);
+    }
+
+    /// Explicit-attitude path. PositionControl.cpp:124-155,190-191,197-208.
+    /// 4.7 projects onto the commanded body axis, caps inverted demand at max,
+    /// and also gates integration on the previous collective allocation.
+    pub(crate) fn step_vertical(&mut self, est: &crate::controller::ControllerInput,
+        sp: &crate::controller::Setpoint, cosine: f64, saturation: crate::controller::Saturation,
+        dt: f64) -> f64 {
+        let v = -est.z_velocity;
+        let derivative = self.derivative[2].update(v, dt, self.gains.mpc_veld_lp);
+        let error = self.vertical_velocity(-sp.z.unwrap_or(f64::NAN), -est.z, -sp.z_velocity) - v;
+        self.acc_sp_z = self.vertical_acceleration(error, derivative);
+        let g = &self.gains;
+        let raw = if cosine > 1e-6 {
+            -vertical_thrust(self.acc_sp_z, self.hover_thrust) / cosine
+        } else {
+            g.mpc_thr_max
+        };
+        let collective = raw.clamp(g.mpc_thr_min, g.mpc_thr_max);
+        if !saturation.blocks(3, -error) {
+            self.integrate_z(error, raw, g.mpc_thr_min, dt);
+        }
+        collective
+    }
+
     fn update(
         &mut self,
         input: &PositionInput,
@@ -588,9 +662,8 @@ impl PositionControl {
         };
         // _positionControl:124-138.
         let mut position_velocity = [0.0; 3];
-        for i in 0..3 {
-            let p = if i < 2 { g.mpc_xy_p } else { g.mpc_z_p };
-            let term = (psp[i] - pos[i]) * p;
+        for i in 0..2 {
+            let term = (psp[i] - pos[i]) * g.mpc_xy_p;
             vsp[i] = add_if_not_nan(vsp[i], term);
             position_velocity[i] = add_if_not_nan(term, 0.0);
         }
@@ -601,30 +674,21 @@ impl PositionControl {
         );
         vsp[0] = xy[0];
         vsp[1] = xy[1];
-        vsp[2] = vsp[2].clamp(-g.mpc_z_vel_max_up, g.mpc_z_vel_max_dn);
+        vsp[2] = self.vertical_velocity(psp[2], pos[2], vsp[2]);
         // _velocityControl:140-149.
         let mut error = std::array::from_fn::<_, 3, _>(|i| vsp[i] - vel[i]);
-        for i in 0..3 {
-            let (p, d) = if i < 2 {
-                (g.mpc_xy_vel_p_acc, g.mpc_xy_vel_d_acc)
-            } else {
-                (g.mpc_z_vel_p_acc, g.mpc_z_vel_d_acc)
-            };
-            acc[i] = add_if_not_nan(acc[i], p * error[i] + self.integral[i] - d * derivative[i]);
+        for i in 0..2 {
+            acc[i] = add_if_not_nan(acc[i], g.mpc_xy_vel_p_acc * error[i] + self.integral[i]
+                - g.mpc_xy_vel_d_acc * derivative[i]);
         }
+        acc[2] = add_if_not_nan(acc[2], self.vertical_acceleration(error[2], derivative[2]));
         if !acc.iter().all(|a| a.is_finite()) {
             return Err("nonfinite output acceleration".into());
         }
         self.acc_sp_z = acc[2]; // `_acc_sp(2)`, read by update_hover_thrust.
         let hover = self.hover_thrust;
         let mut thrust = acceleration_control(acc, &g, hover);
-        let min = g.mpc_thr_min.max(1e-3); // setThrustLimits:64
-                                           // Vertical anti-windup BEFORE margin saturation, exactly PX4:151-155.
-        if (thrust[2] >= -min && error[2] >= 0.0)
-            || (thrust[2] <= -g.mpc_thr_max && error[2] <= 0.0)
-        {
-            error[2] = 0.0;
-        }
+        self.integrate_z(error[2], -thrust[2], g.mpc_thr_min.max(1e-3), dt);
         // Vertical priority with a horizontal margin, L157-167. math::max(a, b)
         // is (a > b) ? a : b, so a NaN bound (margin above MPC_THR_MAX) gives a
         // NaN thrust, which the finite check below turns into Err, as PX4's
@@ -654,15 +718,9 @@ impl PositionControl {
         for i in 0..2 {
             error[i] -= 2.0 / g.mpc_xy_vel_p_acc * (acc[i] - thrust[i] * (G / hover));
         }
-        for (i, e) in error.into_iter().enumerate() {
-            let ki = if i < 2 {
-                g.mpc_xy_vel_i_acc
-            } else {
-                g.mpc_z_vel_i_acc
-            };
-            self.integral[i] += add_if_not_nan(e, 0.0) * ki * dt;
+        for (i, e) in error[..2].iter().enumerate() {
+            self.integral[i] += add_if_not_nan(*e, 0.0) * g.mpc_xy_vel_i_acc * dt;
         }
-        self.integral[2] = self.integral[2].clamp(-G, G);
         if !thrust.iter().chain(&self.integral).all(|v| v.is_finite()) {
             return Err("nonfinite thrust/integral".into());
         }
@@ -694,13 +752,18 @@ fn add_if_not_nan(value: f64, addition: f64) -> f64 {
 // Body z is the unit vector of (-a_x, -a_y, g), tilt-limited about world down
 // (0, 0, 1); the collective is a_z * h / g - h (negative: thrust points up),
 // divided by body_z . (0, 0, 1) and at most -MPC_THR_MIN (at least 1e-3).
+fn vertical_thrust(acc_z: f64, hover: f64) -> f64 {
+    // PositionControl.cpp:203. Factor out hover to retain the 4.7 rounding.
+    -hover * (1.0 - acc_z / G)
+}
+
 fn acceleration_control(acc: [f64; 3], g: &PositionGains, hover: f64) -> [f64; 3] {
     let body_z = limit_tilt(
         Vector::new(-acc[0], -acc[1], G).normalize(),
         Vector::Z,
         g.mpc_tiltmax_air.to_radians(),
     );
-    let collective = ((acc[2] * (hover / G) - hover) / body_z.z).min(-g.mpc_thr_min.max(1e-3));
+    let collective = (vertical_thrust(acc[2], hover) / body_z.z).min(-g.mpc_thr_min.max(1e-3));
     (body_z * collective).to_array()
 }
 

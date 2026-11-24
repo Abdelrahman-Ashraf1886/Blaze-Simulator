@@ -130,7 +130,7 @@ describe('the built-ins', () => {
       wind_hold: null, gust: null, takeoff_hold_land: null, terrain: null,
     })
     expect(Object.fromEntries(BUILTINS.filter((b) => b.projectInput).map((b) => [b.name, b.projectInput])))
-      .toEqual({ wind_hold: 'meanWind', gust: 'gust', terrain: 'terrain' })
+      .toEqual({ wind_hold: 'meanWind', gust: 'gust', takeoff_hold_land: 'groundPlane', terrain: 'terrain' })
     expect(BUILTINS.filter((b) => b.expectsFailure).map((b) => b.name)).toEqual(['overweight_payload', 'com_offset_beyond_authority'])
   })
   it('say what is missing before an entered scenario can run', () => {

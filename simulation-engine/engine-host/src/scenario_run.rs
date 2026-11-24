@@ -14,19 +14,21 @@
 //! engine answers no health ping while it runs, and the supervisor kills an engine that
 //! stays silent for 3 s); with a ground (contact steps cost far more) at most
 //! `MAX_SCENARIO_WITH_GROUND_S`.
-use crate::engine::{closed_loop_gains, loaded_vehicle};
+use crate::engine::{closed_loop_gains, loaded_vehicle, manual_flight_with_gains};
 use crate::flight_environment;
 use crate::protocol::{present, ErrorCode, Response};
 use engine_core::aero::BodyDrag;
-use engine_core::environment::Environment;
+use engine_core::environment::{Environment, Surface};
 use engine_core::flight::{Cutoff, Flight, ScaleToAirDensityError};
 use engine_core::propulsion::Propulsion;
 use engine_core::scenario::{
     balanced_hover, com_offset, com_offset_beyond_authority, modified_vehicle, overweight_payload, payload, run_with_flight_config, Ground, Scenario,
-    ScenarioConfig,
+    position_hold_scenario, run_flight_script, takeoff_hold_land_scenario, FlightAcceptance,
+    ScenarioConfig, ScenarioReport, SETTLE_S,
 };
 use engine_core::sim::{SimConfig, Simulation};
 use engine_core::vehicle::Vehicle;
+use engine_core::wind::Wind;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
@@ -72,6 +74,10 @@ enum Builtin {
     OverweightPayload,
     ComOffset,
     ComOffsetBeyondAuthority,
+    WindHold,
+    Gust,
+    TakeoffHoldLand,
+    Terrain,
 }
 
 #[derive(Deserialize)]
@@ -166,6 +172,17 @@ pub fn handle(
         };
         return Response::err(Some(id), code, e.to_string());
     }
+    match flight_script(&p.scenario) {
+        Ok(Some((scenario, builtin))) => {
+            let context = FlightRun { vehicle, propulsion, aero, rho };
+            return match context.run(&p.config, cutoff, flight, &scenario, builtin) {
+                Ok(report) => result(id, &scenario, &report),
+                Err(e) => invalid_scenario(e),
+            };
+        }
+        Ok(None) => {}
+        Err(e) => return invalid_scenario(e),
+    }
     let (gains, thrust_model_factor) = match closed_loop_gains(p.config.gains, p.config.thrust_model_factor) {
         Ok(resolved) => resolved,
         Err(e) => return bad(format!("config.{e}")),
@@ -213,15 +230,135 @@ pub fn handle(
     match run_with_flight_config(vehicle, propulsion.clone(), aero, &config, &scenario, |flight| {
         flight_environment::configure(flight, p.config.wind.as_ref(), p.config.ground_effect.as_ref(), "config.")
     }) {
-        Ok(report) => Response::ok(
-            id,
-            json!({
-                "scenario": scenario,
-                "report": report,
-                "stateHash": report.final_state_hash,
-            }),
-        ),
+        Ok(report) => result(id, &scenario, &report),
         Err(e) => bad(e),
+    }
+}
+
+fn result(id: u64, scenario: &Scenario, report: &ScenarioReport) -> Response {
+    Response::ok(id, json!({
+        "scenario": scenario, "report": report, "stateHash": report.final_state_hash,
+    }))
+}
+
+fn flight_script(request: &ScenarioRequest) -> Result<Option<(Scenario, Option<Builtin>)>, String> {
+    let ScenarioRequest::Builtin { name, mass_kg, offset_m } = request else {
+        if let ScenarioRequest::Custom { scenario } = request {
+            if scenario.get("flightScript").is_some_and(|s| !s.is_null()) {
+                let script = serde_json::from_value(scenario.clone()).map_err(|e| format!("scenario: {e}"))?;
+                return Ok(Some((script, None)));
+            }
+        }
+        return Ok(None);
+    };
+    let scenario = match name {
+        // Two settling windows from 6.7 (engine-core/src/scenario/flight_script.rs).
+        Builtin::WindHold => position_hold_scenario("wind_hold", 2.0 * SETTLE_S),
+        Builtin::Gust => position_hold_scenario("gust", MAX_SCENARIO_S),
+        Builtin::TakeoffHoldLand => takeoff_hold_land_scenario("takeoff_hold_land"),
+        Builtin::Terrain => takeoff_hold_land_scenario("terrain"),
+        _ => return Ok(None),
+    };
+    if mass_kg.is_some() || offset_m.is_some() {
+        return Err(format!("{} takes its inputs from the build and environment, not massKg or offsetM", scenario.name));
+    }
+    Ok(Some((scenario, Some(*name))))
+}
+
+struct FlightRun<'a> {
+    vehicle: &'a Vehicle,
+    propulsion: &'a Propulsion,
+    aero: Option<BodyDrag>,
+    rho: f64,
+}
+
+impl FlightRun<'_> {
+    fn run(
+        self, config: &ConfigRequest, cutoff: Cutoff, mut flight: Flight,
+        scenario: &Scenario, builtin: Option<Builtin>,
+    ) -> Result<ScenarioReport, String> {
+        let FlightRun { vehicle, propulsion, aero, rho } = self;
+        let plant = modified_vehicle(vehicle, scenario)?;
+        let mut sim = Self::simulation(config, &plant, scenario.duration_s, builtin)?;
+        // Flight commands also support custom scenarios with modified mass and geometry.
+        // Keep the nominal controller geometry as on the ClosedLoop path.
+        if !scenario.modifications.is_empty() {
+            flight = Flight::new(&plant, propulsion.clone(), aero, Some(rho))?;
+            flight.scale_to_air_density(rho)?;
+        }
+        let mut acceptance = FlightAcceptance::None;
+        let mut mean_wind = None;
+        if matches!(builtin, Some(Builtin::WindHold | Builtin::Gust)) {
+            let saved = config.wind.as_ref().filter(|wind| !wind.is_null())
+                .ok_or("Save wind in Flight setup to run this scenario")?;
+            let wind = Wind::from_json(saved).map_err(|e| format!("config.wind: {e}"))?;
+            let mut mean = saved.clone();
+            mean["gust"] = Value::Null;
+            let mean_model = Wind::from_json(&mean).map_err(|e| format!("config.wind: {e}"))?;
+            mean_wind = Some(mean);
+            acceptance = match builtin {
+                Some(Builtin::WindHold) => {
+                    if saved["mean"].is_null() {
+                        return Err("Wind hold requires saved mean wind in Flight setup".into());
+                    }
+                    FlightAcceptance::WindHold { wind: mean_model, drag: aero, air_density_kg_m3: rho, mass_kg: plant.totals.mass_kg }
+                }
+                _ => {
+                    let gust = &saved["gust"];
+                    let start_s = gust["startS"].as_f64().ok_or("Save a gust in Flight setup to run this scenario")?;
+                    let length_m = gust["lengthM"].as_f64().ok_or("Save a gust length in Flight setup")?;
+                    if start_s >= scenario.duration_s - SETTLE_S {
+                        return Err("The saved gust starts after the scenario's post-hold window".into());
+                    }
+                    FlightAcceptance::Gust { wind, start_s, length_m }
+                }
+            };
+        }
+        flight_environment::configure(&mut flight, mean_wind.as_ref().or(config.wind.as_ref()), config.ground_effect.as_ref(), "config.")?;
+        flight.set_cutoff(cutoff)?;
+        let (mut controller, gains) = manual_flight_with_gains(
+            vehicle, propulsion, flight, config.gains.as_ref(), None, config.thrust_model_factor,
+        )?;
+        if matches!(builtin, Some(Builtin::TakeoffHoldLand | Builtin::Terrain)) {
+            let land_speed_mps = gains.parameters()["MPC_LAND_SPEED"].as_f64().ok_or("MPC_LAND_SPEED is unavailable")?;
+            acceptance = FlightAcceptance::TakeoffLand { land_speed_mps };
+        }
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_flight_script(&mut sim, &mut controller, scenario, acceptance)))
+            .unwrap_or_else(|_| Err("FlightLoop failed while stepping the scenario".into()))
+    }
+
+    fn simulation(
+        config: &ConfigRequest, plant: &Vehicle, duration: f64, builtin: Option<Builtin>,
+    ) -> Result<Simulation, String> {
+        let sim = SimConfig::default();
+        if matches!(builtin, Some(Builtin::TakeoffHoldLand)) {
+            // The 6.7 ground fixture (engine-core/src/flight_loop/tests.rs:218-232).
+            let environment = Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), terrain: None, obstacles: vec![] };
+            return Simulation::with_start_clearance(plant, sim, &environment, [0.0; 3], Some(0.0));
+        }
+        let terrain = matches!(builtin, Some(Builtin::Terrain));
+        let free = matches!(builtin, Some(Builtin::WindHold | Builtin::Gust));
+        let limit = if config.environment.is_some() && !terrain { MAX_SCENARIO_WITH_GROUND_S } else { MAX_SCENARIO_S };
+        if duration > limit { return Err(format!("the scenario runs {duration} s; the limit is {limit} s")); }
+        match (&config.environment, config.start_position_m, config.start_clearance_m) {
+            (None, None, None) if !terrain => Simulation::new(plant, sim),
+            (None, _, _) if terrain => Err("Save a terrain grid in Workshop > Environment to run this scenario".into()),
+            (None, _, _) => Err("config.startPositionM and config.startClearanceM require config.environment".into()),
+            (Some(_), _, _) if free => Err("Wind hold and gust scenarios start in free space".into()),
+            (Some(value), start, clearance) => {
+                let environment = Environment::from_json(value).map_err(|errors| {
+                    errors.iter().map(|e| format!("config.{}: {}", e.path, e.message)).collect::<Vec<_>>().join("; ")
+                })?;
+                if terrain && environment.terrain.is_none() {
+                    return Err("Save a terrain grid in Workshop > Environment to run this scenario".into());
+                }
+                if terrain && clearance.is_none() {
+                    return Err("Terrain requires config.startClearanceM".into());
+                }
+                let start = start.ok_or("config.environment needs config.startPositionM")?;
+                Simulation::with_start_clearance(plant, sim, &environment, start, clearance)
+            }
+        }
     }
 }
 
@@ -262,6 +399,7 @@ fn build(request: &ScenarioRequest, v: &Vehicle, p: &Propulsion, config: &Scenar
                     only(offset_m.is_some(), "offsetM", "com_offset_beyond_authority (its offset is derived from the build)")?;
                     com_offset_beyond_authority(v, p, config)
                 }
+                _ => unreachable!("FlightLoop built-ins dispatched above"),
             }
         }
     }

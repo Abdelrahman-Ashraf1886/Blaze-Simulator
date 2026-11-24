@@ -75,6 +75,7 @@ fn base(name: &str, v: &Vehicle) -> Scenario {
     Scenario {
         name: name.into(),
         duration_s: 20.0,
+        flight_script: None,
         modifications: vec![],
         script: vec![Segment {
             from_s: 0.0,

@@ -100,11 +100,51 @@ export interface SummaryRow {
   value: string
 }
 
+function flightRows(flight: ScenarioReport['flight']): SummaryRow[] {
+  const unit = (v: number | null, suffix: string) => v === null ? 'Not reached' : `${fmt(v)}${suffix}`
+  switch (flight?.type) {
+    case 'windHold':
+      return [
+        { label: 'Settled horizontal position error', value: unit(flight.horizontalErrorM, ' m') },
+        { label: 'Settled vertical position error', value: unit(flight.verticalErrorM, ' m') },
+        { label: 'Position error limit (each)', value: unit(flight.positionLimitM, ' m') },
+        { label: 'Settled tilt', value: unit(flight.tiltDeg, '°') },
+        { label: 'Force-balance tilt', value: flight.expectedTiltDeg === null ? 'No solution found' : unit(flight.expectedTiltDeg, '°') },
+        { label: 'Tilt tolerance', value: unit(flight.tiltToleranceDeg, '°') },
+      ]
+    case 'gust':
+      return [
+        { label: 'Peak displacement', value: unit(flight.peakDisplacementM, ' m') },
+        { label: 'Recovery time after full gust', value: unit(flight.recoveryS, ' s') },
+        { label: 'Recovery position tolerance (horizontal and vertical)', value: unit(flight.positionLimitM, ' m') },
+      ]
+    case 'takeoffLand': {
+      const { states } = flight
+      return [
+        ...([
+          ['Spool-up', states.spoolUpS], ['Ramp-up', states.rampUpS], ['Flight', states.flightS],
+          ['Automatic hold', states.holdS], ['Land command', states.landS], ['Ground detected', states.groundContactS],
+          ['Maybe landed', states.maybeLandedS], ['Landed', states.landedS], ['Ready for takeoff', states.readyS],
+        ] as const).map(([label, t]) => ({ label, value: unit(t, ' s') })),
+        { label: 'Ended ready and in ground contact', value: flight.endedLanded ? 'Yes' : 'No' },
+        { label: 'Hold height from run start', value: unit(flight.holdHeightFromStartM, ' m') },
+        { label: 'Hold horizontal error', value: unit(flight.holdHorizontalErrorM, ' m') },
+        { label: 'Hold vertical error', value: unit(flight.holdVerticalErrorM, ' m') },
+        { label: 'Hold error limit (each)', value: unit(flight.positionLimitM, ' m') },
+        { label: 'Touchdown vertical speed', value: unit(flight.touchdownSpeedMps, ' m/s') },
+        { label: 'Touchdown speed limit', value: unit(flight.speedLimitMps, ' m/s') },
+      ]
+    }
+    default: return []
+  }
+}
+
 export function summaryRows(report: ScenarioReport): SummaryRow[] {
   const perMotor = (values: readonly number[]) => values.map((v) => fmt(v * 100)).join(' / ') + ' %'
   return [
     { label: 'Time flown', value: `${fmt(report.elapsedS)} s` },
     { label: 'How it ended', value: END_REASONS[report.endReason] },
+    ...flightRows(report.flight),
     { label: 'Largest tilt error', value: `${fmt(report.maxAttitudeErrorDeg)}°` },
     { label: 'Altitude error at the end', value: report.finalAltitudeErrorM === null ? 'no altitude target' : `${fmt(report.finalAltitudeErrorM)} m` },
     { label: 'Mean throttle per motor', value: perMotor(report.meanThrottle) },

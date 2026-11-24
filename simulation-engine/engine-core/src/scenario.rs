@@ -31,6 +31,8 @@ pub struct Scenario {
     pub duration_s: f64,
     pub modifications: Vec<Modification>,
     pub script: Vec<Segment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flight_script: Option<Vec<FlightSegment>>,
     pub checks: Vec<Check>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -207,6 +209,8 @@ pub struct ScenarioReport {
     /// FNV-1a hash (16 hex digits) of the rigid body plus the rotor speeds and
     /// charge used (`Simulation::state_hash_with`); not of the controller's state.
     pub final_state_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flight: Option<FlightMeasurements>,
 }
 fn normalize(q: [f64; 4]) -> [f64; 4] {
     let n = q.iter().map(|x| x * x).sum::<f64>().sqrt();
@@ -305,6 +309,12 @@ impl Scenario {
             || self.duration_s / DT > u64::MAX as f64
         {
             return Err("duration must be finite and positive, within step range".into());
+        }
+        if let Some(script) = &self.flight_script {
+            if !self.script.is_empty() || !self.checks.is_empty() {
+                return Err("flightScript cannot be combined with ClosedLoop segments or checks".into());
+            }
+            return flight_script::validate(script, self.duration_s);
         }
         if self.script.is_empty() || self.script[0].from_s != 0.0 {
             return Err("script must be nonempty and start at time zero".into());
@@ -448,6 +458,9 @@ pub fn run_with_flight_config(
     configure: impl FnOnce(&mut Flight) -> Result<(), String>,
 ) -> Result<ScenarioReport, String> {
     scenario.validate(propulsion.motors.len())?;
+    if scenario.flight_script.is_some() {
+        return Err("flightScript requires a FlightLoop".into());
+    }
     config.gains.validate()?;
     let plant = modified_vehicle(vehicle, scenario)?;
     let yaw_ratio = propulsion.yaw_ratio();
@@ -480,6 +493,7 @@ pub fn run_with_flight_config(
         charge_used_mah: 0.0,
         end_reason: ScenarioEnd::Duration,
         final_state_hash: String::new(),
+        flight: None,
     };
     let mut acc: Vec<Accumulator> = scenario.checks.iter().map(|_| Accumulator::default()).collect();
     let from_step: Vec<u64> = scenario.script.iter().map(|s| steps_for(s.from_s)).collect();
@@ -584,6 +598,9 @@ pub fn run_with_flight_config(
     report.passed = report.end_reason == ScenarioEnd::Duration && report.checks.iter().all(|c| c.passed);
     Ok(report)
 }
+
+mod flight_script;
+pub use flight_script::*;
 
 mod builtins;
 pub use builtins::*;

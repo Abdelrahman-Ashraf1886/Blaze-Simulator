@@ -8,6 +8,8 @@ import type { TuningOverrides } from '@/domain/controller-params'
 import { thrustFactorReadout } from '@/domain/thrust-curve'
 import { readInputCalibration } from '@/lib/prefs'
 import { runChecks } from '@/domain/checks'
+import { lowestPoint } from '@/domain/collisions'
+import { terrainHeightAt } from '@/domain/terrain'
 import { getApi } from '@/services/api'
 import { useProjects } from '@/stores/projects'
 import { useComponents } from '@/stores/components'
@@ -19,7 +21,7 @@ import { useAssets } from '../workshop/asset-store'
 import { useComponentIndex } from '../workshop/component-index'
 import { checkInput } from '../workshop/check-input'
 import { resolveLinks, type ComponentIndex } from '../workshop/links'
-import { massState, type MassState } from '../workshop/mass-input'
+import { massBodies, massState, type MassState } from '../workshop/mass-input'
 import { useWorkshopView } from '../workshop/view-store'
 import { createLiveCalibratedInputReader, gamepads } from '../input/device-input'
 import { NO_DEVICES, type DeviceHandle } from '../input/gamepads'
@@ -111,10 +113,16 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
   const payload = useMemo(() => enginePayload(doc, geo, components, assets, { terrain }), [doc, geo, components, assets, terrain])
   const gate = useMemo(() => flightGate(payload, conditions), [payload, conditions])
   const engineBlock = engineState === 'connected' ? null : 'The engine is not connected.'
-  const idle = useMemo(
-    () => idleFrame(mass.motors.length, payload.ok ? payload.payload.startPositionM : [0, 0, 0], mass.mp.com ?? [0, 0, 0]),
-    [mass, payload],
-  )
+  const idle = useMemo(() => {
+    let position: [number, number, number] = payload.ok ? payload.payload.startPositionM : [0, 0, 0]
+    const grid = terrain?.grid
+    const height = grid && terrainHeightAt(grid, 0, 0)
+    if (height !== undefined) {
+      // Preview only. The engine resolves the actual start from the collision shapes and clearance.
+      position = [0, 0, height - lowestPoint(massBodies(doc, geo, components, assets))]
+    }
+    return idleFrame(mass.motors.length, position, mass.mp.com ?? [0, 0, 0])
+  }, [mass, payload, terrain, doc, geo, components, assets])
   const [frame, setFrame] = useState(idle)
   const latest = useRef(idle)
   const historyRef = useRef<FlightFrame[]>([])

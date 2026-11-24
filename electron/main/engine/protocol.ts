@@ -522,12 +522,15 @@ export type FlightSessionEndResult = z.infer<typeof FlightSessionEndResultSchema
 // vehicle by the engine, or a full scenario. The config carries what a scenario does not own: the air density
 // (from the flight conditions), the battery cut-off (the user's entry; no default), gain overrides, and
 // optionally a ground with its start position (absent = free space from the origin). Longest scenario: 60 s,
-// or 10 s with a ground (engine-host `scenario_run.rs`).
+// or 10 s with a ground for custom and legacy scenarios. FlightLoop landing built-ins use the fixed 6.7 sequence.
 
 export const MAX_SCENARIO_S = 60
 export const MAX_SCENARIO_WITH_GROUND_S = 10
 
-export const BUILTIN_SCENARIO_NAMES = ['balanced_hover', 'payload', 'overweight_payload', 'com_offset', 'com_offset_beyond_authority'] as const
+export const BUILTIN_SCENARIO_NAMES = [
+  'balanced_hover', 'payload', 'overweight_payload', 'com_offset', 'com_offset_beyond_authority',
+  'wind_hold', 'gust', 'takeoff_hold_land', 'terrain',
+] as const
 export type BuiltinScenarioName = (typeof BUILTIN_SCENARIO_NAMES)[number]
 
 const afterS = num.refine((v) => v >= 0, 'cannot be negative')
@@ -544,6 +547,11 @@ export const ScenarioCheckSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('thrustBalance'), afterS, weights: z.array(num), expectedN: num, toleranceN: num }),
 ])
 export type ScenarioCheck = z.infer<typeof ScenarioCheckSchema>
+
+const flightScriptCommand = z.discriminatedUnion('type', [
+  ...autoSetpoint.options,
+  z.strictObject({ type: z.literal('position'), forward: stickAxis, right: stickAxis, yawRight: stickAxis, throttle: stickAxis }),
+])
 
 export const ScenarioSchema = z.strictObject({
   name: z.string().min(1),
@@ -566,6 +574,7 @@ export const ScenarioSchema = z.strictObject({
       zVelocityMps: num,
     }),
   ),
+  flightScript: z.array(z.strictObject({ fromS: afterS, command: flightScriptCommand })).optional(),
   checks: z.array(ScenarioCheckSchema),
 })
 export type Scenario = z.infer<typeof ScenarioSchema>
@@ -604,6 +613,27 @@ export type ScenarioConfigParams = z.infer<typeof ScenarioConfigSchema>
 export const ScenarioRunParamsSchema = z.strictObject({ scenario: ScenarioRequestSchema, config: ScenarioConfigSchema })
 export type ScenarioRunParams = z.infer<typeof ScenarioRunParamsSchema>
 
+const flightMeasurements = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('windHold'), horizontalErrorM: num, verticalErrorM: num, positionLimitM: positive,
+    tiltDeg: num, expectedTiltDeg: num.nullable(), tiltToleranceDeg: positive,
+  }),
+  z.strictObject({
+    type: z.literal('gust'), peakDisplacementM: num.nullable(), recoveryS: num.nullable(), positionLimitM: positive,
+  }),
+  z.strictObject({
+    type: z.literal('takeoffLand'),
+    states: z.strictObject({
+      spoolUpS: num.nullable(), rampUpS: num.nullable(), flightS: num.nullable(), holdS: num.nullable(),
+      landS: num.nullable(), groundContactS: num.nullable(), maybeLandedS: num.nullable(),
+      landedS: num.nullable(), readyS: num.nullable(),
+    }),
+    holdHorizontalErrorM: num.nullable(), holdVerticalErrorM: num.nullable(), positionLimitM: positive,
+    touchdownSpeedMps: num.nullable(), speedLimitMps: positive, holdHeightFromStartM: num.nullable(),
+    endedLanded: z.boolean(),
+  }),
+])
+
 export const ScenarioReportSchema = z.strictObject({
   name: z.string(),
   passed: z.boolean(),
@@ -628,6 +658,7 @@ export const ScenarioReportSchema = z.strictObject({
   endReason: z.enum(['duration', 'voltageCutoff', 'chargeCutoff']),
   /** FNV-1a of the rigid body, rotor speeds and charge used; 16 hex digits. */
   finalStateHash: z.string().regex(/^[0-9a-f]{16}$/),
+  flight: flightMeasurements.optional(),
 })
 export type ScenarioReport = z.infer<typeof ScenarioReportSchema>
 

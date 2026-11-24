@@ -4,6 +4,7 @@ import type { AssemblyDocument, Project } from '../../../electron/ipc/contract'
 import { PageHeader } from '@/components/page-header'
 import { EmptyState, Section } from '@/components/section'
 import { Button } from '@/components/ui/button'
+import { effectiveParams, type TuningOverrides } from '@/domain/controller-params'
 import { runChecks } from '@/domain/checks'
 import { getApi } from '@/services/api'
 import { useProjects } from '@/stores/projects'
@@ -21,10 +22,12 @@ import { DebugPanel, endReason } from './DebugPanel'
 import { EngineFlightSource, idleFrame } from './EngineFlightSource'
 import { FlightSetup } from './FlightSetup'
 import { FlightViewport } from './FlightViewport'
-import type { FlightFrame } from './frame'
+import type { FlightFrame, FlightMode } from './frame'
+import { FLIGHT_MODE_LABELS, flightStartWithTuning } from './flight-mode'
+import { FlightModeStatus } from './FlightModeStatus'
 import { assemblyThrust, collisionIndicator, instabilityIndicator, layoutIndicator, massIndicator } from './indicators'
 import { conditionsOf, EMPTY_CONDITIONS, enginePayload, flightGate, type FlightConditions } from './readiness'
-import { mapSticks, STICK_KEYS, updateHeadingHold, type HeadingHold } from './sticks'
+import { mapPx4Sticks, mapSticks, STICK_KEYS, updateHeadingHold, type HeadingHold } from './sticks'
 
 export default function FlightPage() {
   const { projectId } = useParams()
@@ -99,6 +102,28 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
   const latest = useRef(idle)
   const historyRef = useRef<FlightFrame[]>([])
   const [history, setHistory] = useState<FlightFrame[]>([])
+  const [mode, setMode] = useState<FlightMode>('attitudeHold')
+  const selectedMode = useRef<FlightMode>('attitudeHold')
+  const [saved, setSaved] = useState<TuningOverrides | null>(null)
+  const [tuningError, setTuningError] = useState<string | null>(null)
+  const [tuningAttempt, setTuningAttempt] = useState(0)
+  useEffect(() => {
+    let alive = true
+    async function load() {
+      try {
+        const result = await getApi().tuning.get(project.id)
+        if (!alive) return
+        if (result.ok) setSaved(result.data.overrides)
+        else setTuningError(result.error.message)
+      } catch (error) {
+        if (alive) setTuningError((error as Error).message)
+      }
+    }
+    void load()
+    return () => { alive = false }
+  }, [project.id, tuningAttempt])
+  const tuning = saved === null ? null : flightStartWithTuning(mode, saved)
+  const linearThrottle = saved !== null && effectiveParams(saved).MPC_THR_CURVE === 1
   const [running, setRunning] = useState(false)
   const [engineError, setEngineError] = useState<string | null>(null)
   const source = useRef<EngineFlightSource | null>(null)
@@ -167,9 +192,9 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     }
   }, [])
   const start = () => {
-    if (!gate.ok || engineBlock) return
+    if (!gate.ok || engineBlock || !tuning || running) return
     stopSource()
-    const next = new EngineFlightSource(getApi().engine, gate.input)
+    const next = new EngineFlightSource(getApi().engine, { ...gate.input, ...tuning.session })
     const unsubscribe = [
       next.subscribe(onFrame),
       next.onError((message) => {
@@ -190,6 +215,8 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     headingHold.current = updateHeadingHold(null, keys.current, heading(idle))
     setHeldHeading(headingHold.current.headingRad)
     next.start(() => {
+      const currentMode = selectedMode.current
+      if (currentMode !== 'attitudeHold') return { mode: currentMode, sticks: mapPx4Sticks(keys.current) }
       headingHold.current = updateHeadingHold(headingHold.current, keys.current, heading(latest.current))
       setHeldHeading(headingHold.current.headingRad)
       return mapSticks(keys.current, headingHold.current.headingRad)
@@ -206,13 +233,29 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     'Instability': instabilityIndicator(history),
   }
   const setpoint = mapSticks(pressed, heldHeading)
+  const sticks = mapPx4Sticks(pressed)
   const blockers = gate.ok ? [] : gate.blockers
   const reason = endReason(frame.ended)
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="flight-test">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-2 text-[12.5px]">
         <h1 className="mr-2 font-semibold">{project.name} · Flight test</h1>
-        <Button size="sm" data-testid="flight-start" disabled={running || !gate.ok || engineBlock !== null} title={engineBlock ?? (gate.ok ? undefined : 'Enter the missing values first (Flight setup).')} onClick={start}>Start</Button>
+        <label className="flex items-center gap-2">
+          Mode
+          <select data-testid="flight-mode" className="h-7 rounded-sm border border-line-strong bg-chrome px-2" value={mode}
+            disabled={running && mode === 'attitudeHold'}
+            onChange={(event) => {
+              const next = event.target.value as FlightMode
+              if (running && next === 'attitudeHold') return
+              selectedMode.current = next
+              setMode(next)
+            }}>
+            {(Object.keys(FLIGHT_MODE_LABELS) as FlightMode[]).map((option) => (
+              <option key={option} value={option} disabled={running && option === 'attitudeHold'}>{FLIGHT_MODE_LABELS[option]}</option>
+            ))}
+          </select>
+        </label>
+        <Button size="sm" data-testid="flight-start" disabled={running || !gate.ok || engineBlock !== null || tuning === null} title={engineBlock ?? (gate.ok ? undefined : 'Enter the missing values first (Flight setup).')} onClick={start}>Start</Button>
         <Button size="sm" data-testid="flight-stop" disabled={!running} onClick={() => { stopSource(); setRunning(false); clearKeys() }}>Stop</Button>
         <Button size="sm" data-testid="flight-reset" onClick={() => {
           stopSource(); setRunning(false); clearKeys(); historyRef.current = []; setHistory([]); setFrame(idle); latest.current = idle; setEngineError(null)
@@ -222,6 +265,15 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
         <span role="status" data-testid="flight-status">{reason ? `Run ended: ${reason} at ${frame.timeS.toFixed(3)} s` : running ? 'Running' : 'Stopped'}</span>
         {engineError && <span role="alert" className="text-fault" data-testid="flight-error">Engine: {engineError}</span>}
         <Link className="ml-auto text-accent" to={`/workshop/${project.id}`}>Workshop</Link>
+      </div>
+      <div className="shrink-0 space-y-1 border-b border-line px-3 py-2 text-[12px] text-fg-muted">
+        <FlightModeStatus frame={frame} linearThrottle={linearThrottle} />
+        {tuningError ? <p role="alert" className="text-fault">Saved tuning: {tuningError}{' '}
+          <button className="text-accent" type="button" onClick={() => { setTuningError(null); setTuningAttempt(tuningAttempt + 1) }}>Retry</button>
+        </p> : tuning === null ? <p role="status">Loading saved tuning…</p> : null}
+        {tuning && tuning.unsupported.length > 0 && (
+          <p className="text-warn" role="status">Attitude hold cannot use these saved overrides: {tuning.unsupported.join(', ')}. Choose a PX4 mode to apply them.</p>
+        )}
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-auto @min-[1000px]:flex-row">
         <div className="flex min-h-[320px] min-w-0 flex-1 flex-col">
@@ -243,8 +295,14 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
           </div>
           <div className="shrink-0 space-y-1 border-t border-line px-3 py-2 text-[12px] text-fg-muted">
             <p>Live engine: this build&apos;s mass, motors, battery and drag, flown by the PX4-style controller. It starts on the ground; ground and obstacles are the project environment.</p>
-            <p>Focus the view while running. W / S: climb / descend (±2 m/s); A / D: yaw left / right (±90 deg/s). ↑ / ↓: pitch forward / back; ← / →: roll left / right. Maximum combined tilt: 30°. Release to centre (the controller then holds a vertical speed of 0, not an altitude); focus loss clears keys.</p>
-            <p className="num">Stick preview: vz {setpoint.verticalVelocityMps.toFixed(1)} m/s · yaw {setpoint.yawRateRadps.toFixed(3)} rad/s · attitude x/y/z/w {setpoint.attitude.map((n) => n.toFixed(3)).join(' / ')}</p>
+            <p>Focus the view while running. W / S: throttle up / down. A / D: yaw left / right. ↑ / ↓: forward / back. ← / →: left / right. Release to centre. Focus loss clears keys.</p>
+            {mode === 'attitudeHold' ? <>
+              <p>Limits: ±2 m/s climb, ±90 deg/s yaw, 30° combined tilt. Centred throttle targets zero vertical speed. Attitude hold uses fixed MPC_THR_HOVER.</p>
+              <p className="num">Stick preview: vz {setpoint.verticalVelocityMps.toFixed(1)} m/s · yaw {setpoint.yawRateRadps.toFixed(3)} rad/s · attitude x/y/z/w {setpoint.attitude.map((n) => n.toFixed(3)).join(' / ')}</p>
+            </> : <>
+              <p>PX4 parameters set the stick response and limits.</p>
+              <p className="num">Stick preview: forward {sticks.forward} · right {sticks.right} · yaw right {sticks.yawRight} · throttle {sticks.throttle}</p>
+            </>}
             <p>Z-up · +X forward · +Y left · body → world quaternion · The run ends at your battery cut-off.</p>
           </div>
         </div>

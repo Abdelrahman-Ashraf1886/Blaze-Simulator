@@ -1,4 +1,6 @@
 /** Renderer boundary for Part B. SI units; right-handed +X forward, +Y left, +Z up. */
+import type { FlightStepInput, FlightStepResult } from '../../../electron/ipc/contract'
+
 export type Vec3 = [number, number, number]
 export type Quat = [number, number, number, number]
 export interface AxisVector { x: number; y: number; z: number }
@@ -34,6 +36,10 @@ export interface FlightFrame {
     rateIntegral: Vec3
     saturation: { positive: [boolean, boolean, boolean, boolean]; negative: [boolean, boolean, boolean, boolean] }
   } | null
+  flightLoop: (Omit<NonNullable<FlightStepResult['diagnostic']['flightLoop']>, 'hoverThrust'> & {
+    hoverThrust: { estimate: number | null; standardDeviation: number | null; valid: boolean }
+    requestedMode: FlightStepInput['setpoint']['mode']
+  }) | null
   ended: 'voltageCutoff' | 'chargeCutoff' | null
   contacts: { part: string; object: string; startS: number; endS: number | null }[]
 }
@@ -43,7 +49,10 @@ export interface FlightSetpoint {
   yawRateRadps: number
   verticalVelocityMps: number
 }
-export type SetpointProvider = () => FlightSetpoint
+export type Px4Sticks = NonNullable<FlightStepInput['setpoint']['sticks']>
+export type Px4Mode = Exclude<NonNullable<FlightStepInput['setpoint']['mode']>, 'rates'>
+export type FlightMode = 'attitudeHold' | Px4Mode
+export type SetpointProvider = () => FlightSetpoint | { mode: Px4Mode; sticks: Px4Sticks }
 /** start begins a fresh run; subscribe returns cleanup. stop is idempotent and preserves the last frame.
  * Sources stop themselves after publishing an ended frame. No callbacks after stop/unsubscribe.
  * Part B owns transport errors/readiness outside this per-sample interface.

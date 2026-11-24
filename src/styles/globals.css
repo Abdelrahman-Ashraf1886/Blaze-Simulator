@@ -25,6 +25,7 @@
 
   --color-accent: oklch(0.82 0.11 205);
   --color-accent-fg: oklch(0.2 0.03 215);
+  --color-setpoint: oklch(from magenta 0.82 0.15 h);
 
   --color-ok: oklch(0.76 0.15 150);
   --color-warn: oklch(0.82 0.15 78);

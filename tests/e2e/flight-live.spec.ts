@@ -132,6 +132,25 @@ test('live flight: a ready build starts, W climbs, release holds a vertical spee
   await page.getByTestId('flight-stop').click()
   await expect(page.getByTestId('flight-status')).toHaveText('Stopped')
 
+  // The PX4 session can switch among manual modes in the air; Attitude hold requires a new session.
+  const mode = page.getByTestId('flight-mode')
+  const actualMode = page.getByTestId('flight-mode-actual')
+  await mode.selectOption('stabilized')
+  await page.getByTestId('flight-start').click()
+  await expect(actualMode).toHaveText('Stabilized')
+  await expect(mode.locator('option[value="attitudeHold"]')).toBeDisabled()
+  const groundZ = (await readout(page, 'Origin (world)'))[2]!
+  await page.keyboard.down('KeyW')
+  await expect.poll(async () => (await readout(page, 'Origin (world)'))[2]!, { timeout: 20_000 }).toBeGreaterThan(groundZ + 0.1)
+  await page.keyboard.up('KeyW')
+  for (const next of ['Position', 'Altitude', 'Stabilized']) {
+    await mode.selectOption({ label: next })
+    await expect(actualMode).toHaveText(next)
+    await expect(page.getByTestId('flight-status')).toHaveText('Running')
+  }
+  await page.getByTestId('flight-stop').click()
+  await mode.selectOption('attitudeHold')
+
   // A charge cut-off ends the run, and the end reason is shown (the keys are cleared, the source stops).
   await page.getByTestId('flight-cutoff-type').selectOption('chargeMah')
   await expect(page.getByTestId('flight-start')).toBeDisabled() // the new type's value is not entered yet

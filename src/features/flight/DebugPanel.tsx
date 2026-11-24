@@ -6,10 +6,14 @@ import type { Indicator } from './indicators'
 
 const value = (n: number, unit: Unit, digits = 3) => fromSI(n, unit).toFixed(digits)
 const vector = (v: readonly number[], unit: Unit) => v.map((n) => value(n, unit)).join(' / ')
+const optionalValue = (n: number | null, unit: Unit) => n === null ? '—' : value(n, unit)
+const optionalVector = (v: readonly (number | null)[], unit: Unit) => v.map((n) => optionalValue(n, unit)).join(' / ')
 const axes = (v: AxisVector, unit: Unit) => vector([v.x, v.y, v.z], unit)
 export const endReason = (ended: FlightFrame['ended']) => ended === 'voltageCutoff' ? 'Voltage cut-off' : ended === 'chargeCutoff' ? 'Charge cut-off' : null
 
 export function DebugPanel({ frame, mass, indicators, source = 'demo' }: { frame: FlightFrame; mass: MassProperties; indicators: Record<string, Indicator>; source?: 'demo' | 'live' }) {
+  const loop = frame.flightLoop
+  const saturation = loop?.saturation ?? frame.control?.saturation
   return (
     <div className="space-y-5 text-[12.5px] [&_dd]:break-words [&_dd]:!overflow-visible [&_dd]:!whitespace-normal" data-testid="flight-debug">
       <Section title="Physics debug">
@@ -73,9 +77,21 @@ export function DebugPanel({ frame, mass, indicators, source = 'demo' }: { frame
           ))}
           <Readout label="Control demand" value={frame.control ? vector(frame.control.torqueDemand, 'N·m') : 'Unavailable'} unit="N·m" />
           <Readout label="Rate integral" value={frame.control ? vector(frame.control.rateIntegral, 'N·m') : 'Unavailable'} unit="N·m" />
-          <Readout label="Saturation + / −" value={frame.control ? `${frame.control.saturation.positive.map(Number).join(' ')} / ${frame.control.saturation.negative.map(Number).join(' ')}` : 'Unavailable'} />
+          <Readout label="Saturation + / −" value={saturation ? `${saturation.positive.map(Number).join(' ')} / ${saturation.negative.map(Number).join(' ')}` : 'Unavailable'} />
         </Readouts>
       </Section>
+      {loop && <Section title="PX4 controller">
+        <p className="py-1 text-fg-muted">World X / Y / Z · — = inactive</p>
+        <Readouts>
+          <Readout label="Position setpoint" value={<span className="text-setpoint">{optionalVector(loop.positionSetpointM, 'm')}</span>} unit="m" />
+          <Readout label="Velocity setpoint" value={<span className="text-setpoint">{optionalVector(loop.velocitySetpointMps, 'm/s')}</span>} unit="m/s" />
+          <Readout label="Acceleration setpoint" value={<span className="text-setpoint">{optionalVector(loop.accelerationSetpointMps2, 'm/s²')}</span>} unit="m/s²" />
+          <Readout label="Velocity integral" value={optionalVector(loop.velocityIntegral, 'm/s²')} unit="m/s²" />
+          <Readout label="Hover thrust estimate" value={optionalValue(loop.hoverThrust.estimate, '%')} unit="%" />
+          <Readout label="Hover thrust standard deviation" value={optionalValue(loop.hoverThrust.standardDeviation, '%')} unit="%" />
+          <Readout label="Hover thrust validity" value={loop.hoverThrust.valid ? 'Valid' : 'Invalid'} />
+        </Readouts>
+      </Section>}
       <Section title="Battery and atmosphere">
         <Readouts>
           <Readout label="Pack voltage" value={value(frame.packVoltageV, 'V')} unit="V" />

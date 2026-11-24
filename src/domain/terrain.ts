@@ -11,7 +11,7 @@ export interface TerrainGrid {
 export type TerrainParseResult =
   | { ok: true; grid: TerrainGrid }
   | { ok: false; reason: 'invalid-header' | 'wrong-count' | 'nodata-cell' | 'non-number'
-      | 'non-positive-cell-size' | 'grid-too-small' | 'vertical-unit' | 'missing-nodata-value' }
+      | 'non-positive-cell-size' | 'grid-too-small' | 'vertical-unit' | 'missing-nodata-value' | 'invalid-extent' }
 
 const HEADER_KEYS = new Set([
   'ncols', 'nrows', 'xllcorner', 'yllcorner', 'xllcenter', 'yllcenter', 'cellsize', 'nodata_value',
@@ -65,6 +65,15 @@ export function parseAsciiGrid(
     cornerM = [xCentre - cellSizeM / 2, yCentre - cellSizeM / 2]
   } else {
     return { ok: false, reason: 'invalid-header' }
+  }
+
+  // engine-core/src/environment.rs:228–245 requires finite, distinct sample bounds.
+  const west = cornerM[0] + cellSizeM / 2
+  const south = cornerM[1] + cellSizeM / 2
+  const east = west + (columns - 1) * cellSizeM
+  const north = south + (rows - 1) * cellSizeM
+  if (!Number.isFinite(east) || !Number.isFinite(north) || east <= west || north <= south) {
+    return { ok: false, reason: 'invalid-extent' }
   }
 
   const noData = header.get('nodata_value') ?? implicitNoDataValue

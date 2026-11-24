@@ -1,13 +1,15 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 import { CONTROLLER_PARAMS, effectiveParams } from '../../src/domain/controller-params'
-import { Channels, type IpcResult, type SystemStatus } from './contract'
+import { Channels, type IpcResult, type SystemStatus, type TerrainAssetInfo } from './contract'
 import {
+  assetIdSchema,
   createProjectSchema,
   listRunsSchema,
   projectIdSchema,
   renameProjectSchema,
   saveAssemblySchema,
   setTuningSchema,
+  terrainImportSchema,
 } from './schemas'
 import {
   componentIdSchema,
@@ -20,6 +22,28 @@ import {
 } from './component-schemas'
 import { fieldDef, isOverridable, type SpecValue } from './component-fields'
 import { ConflictError, NotFoundError, TuningValidationError, ValidationError, type Repositories } from '../main/db/repositories'
+import { importTerrainFile, readTerrainFile } from '../main/assets/terrain-store'
+
+export function createTerrainHandlers(repos: Repositories, dir: string) {
+  return {
+    [Channels.terrainList]: (p: unknown) => validated(z.undefined(), p, () => repos.terrain.list()),
+    [Channels.terrainRead]: (p: unknown) => validated(assetIdSchema, p, (id) => readTerrainFile(id, dir, repos)),
+  }
+}
+
+export async function importTerrain(
+  payload: unknown,
+  pickFile: () => Promise<string | undefined>,
+  dir: string,
+  repos: Repositories,
+): Promise<IpcResult<TerrainAssetInfo | null>> {
+  const parsed = terrainImportSchema.safeParse(payload)
+  if (!parsed.success) {
+    return { ok: false, error: { code: 'VALIDATION', message: describeIssues(parsed.error.issues, payload) } }
+  }
+  const path = await pickFile()
+  return path ? importTerrainFile(path, dir, repos, parsed.data) : { ok: true, data: null }
+}
 
 /**
  * Pure handler table (channel → function). Kept free of Electron imports so it

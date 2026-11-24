@@ -1,6 +1,6 @@
 import { Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { MAX_OBSTACLES, type AssemblyDocument, type DropTestResult, type EnvironmentDoc, type ObstacleDoc } from '../../../electron/ipc/contract'
+import { MAX_OBSTACLES, type AssemblyDocument, type DropTestResult, type EnvironmentDoc, type LegacyBoxObstacleDoc } from '../../../electron/ipc/contract'
 import { NumberField, numberParser } from '@/components/number-field'
 import { Button } from '@/components/ui/button'
 import { lowestPoint } from '@/domain/collisions'
@@ -40,7 +40,7 @@ export function EnvironmentPanel({ doc, geo }: { doc: AssemblyDocument; geo: Fra
       <SurfaceFields id="ground" values={env.ground} onCommit={(key, v) => setEnv(`Set ground ${key}`, (e) => ({ ...e, ground: { ...e.ground, [key]: v } }))} />
       <h3 className="mb-1 mt-3 text-[12px] font-medium text-fg-muted">Obstacles</h3>
       {env.obstacles.length === 0 && <p className="border-t border-line py-1.5 text-[12px] text-fg-subtle">None.</p>}
-      {env.obstacles.map((o, i) => (
+      {env.obstacles.map((o, i) => o.type === undefined && (
         <ObstacleRow key={o.id} o={o} index={i} />
       ))}
       <Button
@@ -110,9 +110,9 @@ function SurfaceFields({ id, values, onCommit }: { id: string; values: { frictio
   )
 }
 
-function ObstacleRow({ o, index }: { o: ObstacleDoc; index: number }) {
-  const update = (label: string, patch: Partial<ObstacleDoc>) =>
-    setEnv(`${label} of ${o.name}`, (e) => ({ ...e, obstacles: e.obstacles.map((x) => (x.id === o.id ? { ...x, ...patch } : x)) }))
+function ObstacleRow({ o, index }: { o: LegacyBoxObstacleDoc; index: number }) {
+  const update = (label: string, patch: Partial<LegacyBoxObstacleDoc>) =>
+    setEnv(`${label} of ${o.name}`, (e) => ({ ...e, obstacles: e.obstacles.map((x) => (x.type === undefined && x.id === o.id ? { ...x, ...patch } : x)) }))
   const vec = (key: 'center' | 'size', i: number, v: number) => {
     const next = [...o[key]] as [number, number, number]
     next[i] = v / 1000

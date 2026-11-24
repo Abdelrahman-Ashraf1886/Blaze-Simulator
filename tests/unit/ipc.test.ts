@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Channels, type IpcResult, type Project } from '../../electron/ipc/contract'
-import { createHandlers } from '../../electron/ipc/handlers'
+import { createHandlers, createTerrainHandlers } from '../../electron/ipc/handlers'
 import { openDatabase } from '../../electron/main/db/database'
 import { createRepositories } from '../../electron/main/db/repositories'
 
@@ -10,7 +10,7 @@ let handlers: ReturnType<typeof createHandlers>
 
 beforeEach(() => {
   const repos = createRepositories(openDatabase(':memory:'))
-  handlers = createHandlers(repos, () => ({
+  handlers = { ...createHandlers(repos, () => ({
     engine: {
       state: 'connected',
       engineVersion: '0.1.0',
@@ -23,7 +23,7 @@ beforeEach(() => {
     },
     database: { path: ':memory:', schemaVersion: 1 },
     app: { version: '0.1.0', electron: 'x', chrome: 'x', node: 'x', platform: 'test' },
-  }))
+  })), ...createTerrainHandlers(repos, __dirname) }
 })
 
 const call = <T>(channel: string, payload?: unknown) => handlers[channel]!(payload) as IpcResult<T>
@@ -85,6 +85,7 @@ describe('IPC handlers', () => {
       Channels.engineStatusChanged,
       Channels.assemblySaveSync,
       Channels.assetsImport,
+      Channels.terrainImport,
       Channels.viewportSavePng,
       Channels.componentsExportPack,
       Channels.componentsImportPack,

@@ -6,14 +6,14 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import type { EnvironmentDoc } from '../../electron/ipc/contract'
+import type { EnvironmentDoc, LegacyBoxObstacleDoc } from '../../electron/ipc/contract'
 import { environmentDocSchema, saveAssemblySchema } from '../../electron/ipc/schemas'
 import { openDatabase } from '../../electron/main/db/database'
 import { createRepositories } from '../../electron/main/db/repositories'
 import { dropTest, type EngineForDropTest } from '../../electron/main/engine/drop-test'
 import { EMPTY_ENVIRONMENT, simEnvironment, yawQuaternion } from '../../src/domain/environment'
 
-const obstacle = (over: Partial<EnvironmentDoc['obstacles'][number]> = {}): EnvironmentDoc['obstacles'][number] => ({
+const obstacle = (over: Partial<LegacyBoxObstacleDoc> = {}): LegacyBoxObstacleDoc => ({
   id: 'o1',
   name: 'Table',
   center: [1, 0, 0.1],
@@ -51,6 +51,66 @@ describe('simEnvironment', () => {
     expect(yawQuaternion(Math.PI / 2)[3]).toBeCloseTo(Math.SQRT1_2, 15)
     // Zero is a value, not "missing".
     expect(simEnvironment({ ground: { friction: 0, restitution: 0 }, obstacles: [] }).ok).toBe(true)
+  })
+
+  it('serializes terrain and each tagged obstacle shape in the engine frame', () => {
+    const terrainId = 'a'.repeat(64)
+    const modelId = 'b'.repeat(64)
+    const grid = { rows: 2, columns: 2, cellSizeM: 2, cornerM: [4, -2] as const, heightsM: Float64Array.of(30, 40, 10, 20) }
+    const pose = { center: [1, 2, 3] as [number, number, number], yaw: 0, friction: 0.5, restitution: 0 }
+    const env: EnvironmentDoc = {
+      ground: EMPTY_ENVIRONMENT.ground,
+      terrain: { assetId: terrainId, friction: 0.4, restitution: 0.2 },
+      obstacles: [
+        { ...pose, id: 'box', name: 'Box', type: 'box', size: [2, 4, 6] },
+        { ...pose, id: 'cyl', name: 'Cylinder', type: 'cylinder', radius: 0.75, height: 2 },
+        { ...pose, id: 'hull', name: 'Hull', type: 'hull', assetId: modelId, units: 'mm', upAxis: 'y' },
+      ],
+    }
+    expect(environmentDocSchema.parse(env)).toEqual(env)
+    const result = simEnvironment(env, {
+      grids: { [terrainId]: grid },
+      models: { [modelId]: {
+        bounds: { min: [0, 0, 0], max: [2000, 4000, 6000] },
+        hull: { points: [[0, 0, 0], [2000, 0, 0], [0, 4000, 0], [0, 0, 6000]], reason: null },
+      } },
+    })
+    const enginePose = { center: [1, 2, 3], quaternion: [0, 0, 0, 1], friction: 0.5, restitution: 0 }
+    expect(result).toEqual({
+      ok: true,
+      environment: {
+        ground: null,
+        terrain: { rows: 2, columns: 2, cellSizeM: 2, cornerM: [4, -2], heightsM: [30, 40, 10, 20], friction: 0.4, restitution: 0.2 },
+        obstacles: [
+          { ...enginePose, id: 'box', type: 'box', halfExtents: [1, 2, 3] },
+          { ...enginePose, id: 'cyl', type: 'cylinder', radius: 0.75, height: 2 },
+          { ...enginePose, id: 'hull', type: 'hull', points: [[-1, 3, -2], [1, 3, -2], [-1, 3, 2], [-1, -3, -2]] },
+        ],
+      },
+    })
+  })
+
+  it('lists missing terrain, dimensions and hull inputs with their entry locations', () => {
+    const env: EnvironmentDoc = {
+      ground: EMPTY_ENVIRONMENT.ground,
+      terrain: { assetId: 'a'.repeat(64), friction: null, restitution: 0 },
+      obstacles: [
+        { type: 'cylinder', id: 'cyl', name: 'Cylinder', center: null, yaw: null, radius: null, height: null, friction: 0, restitution: 0 },
+        { type: 'hull', id: 'hull', name: 'Hull', center: [0, 0, 0], yaw: 0, assetId: 'b'.repeat(64), units: null, upAxis: null, friction: 0, restitution: 0 },
+      ],
+    }
+    expect(environmentDocSchema.parse(env)).toEqual(env)
+    const result = simEnvironment(env)
+    expect(result).toMatchObject({ ok: false })
+    if (result.ok) return
+    expect(result.missing.map((m) => m.field)).toEqual([
+      'terrain.friction', 'terrain.assetId', 'obstacles[0].center', 'obstacles[0].yaw', 'obstacles[0].radius',
+      'obstacles[0].height', 'obstacles[1].units', 'obstacles[1].upAxis', 'obstacles[1].assetId',
+    ])
+    expect(result.missing.every(({ message }) => message.includes('Environment in the workshop'))).toBe(true)
+    const cylinder = env.obstacles[0]!
+    expect(environmentDocSchema.safeParse({ ...env, obstacles: [{ ...cylinder, height: -1 }] }).success).toBe(false)
+    expect(environmentDocSchema.safeParse({ ...env, obstacles: [{ ...cylinder, size: [1, 1, 1] }] }).success).toBe(false)
   })
 })
 

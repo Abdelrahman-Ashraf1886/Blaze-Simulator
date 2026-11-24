@@ -27,6 +27,7 @@ function fakeApi(overrides: Partial<DesktopApi['projects']> = {}): DesktopApi {
       saveSync: vi.fn(),
     },
     assets: { list: vi.fn(), import: vi.fn() },
+    terrain: { list: vi.fn(), import: vi.fn(), read: vi.fn() },
     viewport: { savePng: vi.fn() },
     engine: { dropTest: vi.fn(), flightStart: vi.fn(), flightStep: vi.fn(), flightEnd: vi.fn(), scenarioRun: vi.fn(), stepTest: vi.fn() },
     testHooks: false,

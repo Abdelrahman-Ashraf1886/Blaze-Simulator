@@ -37,6 +37,11 @@ const api: DesktopApi = {
     list: () => ipcRenderer.invoke('assets:list'),
     import: () => ipcRenderer.invoke('assets:import'),
   },
+  terrain: {
+    import: (input) => ipcRenderer.invoke('terrain:import', input),
+    read: (id) => ipcRenderer.invoke('terrain:read', id),
+    list: () => ipcRenderer.invoke('terrain:list'),
+  },
   engine: {
     dropTest: (input) => ipcRenderer.invoke('engine:dropTest', input),
     flightStart: (input) => ipcRenderer.invoke('engine:flightStart', input),

@@ -55,8 +55,24 @@ describe('flight conditions persistence (schema v12)', () => {
     const loaded = repos.assemblies.load(p.id)
     expect(loaded.flight).toEqual(entered)
     expect(conditionsOf(loaded)).toEqual(entered)
+    const extended: FlightConditionsDoc = {
+      ...entered,
+      wind: {
+        kind: 'wind',
+        fromDeg: 45,
+        mean: { kind: 'shear', speedAt20FtMps: 2, roughness: { kind: 'custom', lengthM: null } },
+        gust: { kind: 'none' },
+      },
+      groundEffect: true,
+    }
+    const updated = repos.assemblies.save(saveAssemblySchema.parse({ ...input, baseRevision: loaded.revision, flight: extended }))
+    expect(repos.assemblies.load(p.id).flight).toEqual(extended)
+    repos.assemblies.save(saveAssemblySchema.parse({
+      ...input, baseRevision: updated.revision, flight: { ...entered, wind: null, groundEffect: null },
+    }))
+    expect(repos.assemblies.load(p.id).flight).toEqual({ ...entered, wind: null, groundEffect: null })
     // Clearing it removes the field again.
-    repos.assemblies.save({ ...input, baseRevision: loaded.revision, flight: null })
+    repos.assemblies.save({ ...input, baseRevision: repos.assemblies.load(p.id).revision, flight: null })
     expect(repos.assemblies.load(p.id)).not.toHaveProperty('flight')
     // An invalid document is refused before it reaches the database.
     expect(saveAssemblySchema.safeParse({ ...input, flight: { ...entered, cutoffValue: 0 } }).success).toBe(false)

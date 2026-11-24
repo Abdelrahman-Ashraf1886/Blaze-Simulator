@@ -88,7 +88,10 @@ impl HoverSampling {
                 timestamp_us: self.sample_time_us,
                 armed: true,
                 landed: sim.touching_ground(),
-                distance_above_ground_m: end.com_m[2],
+                // Over the ground plane or terrain. With no ground below (free space) PX4's
+                // dist_bottom gate has nothing to close it, so the vehicle is in the air.
+                distance_above_ground_m: sim.height_below(end.com_m[0], end.com_m[1])
+                    .map_or(f64::INFINITY, |ground| end.com_m[2] - ground),
                 // EKF2.cpp:938-941 publishes the world velocity derivative.
                 vertical_acceleration_up_m_s2: (vz - start_vz) / elapsed,
                 vertical_thrust_up: vertical_thrust,

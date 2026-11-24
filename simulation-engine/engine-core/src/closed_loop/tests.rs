@@ -85,8 +85,8 @@ fn hovers_at_the_altitude_setpoint() {
     let (fixed_sim, fixed_cl) = fly_with_gains(&v, 1.0, 10.0, fixed);
     // 4.7 reference captured before switching the vertical controller.
     assert_eq!(fixed_sim.state_hash_with(&fixed_cl.flight().hash_words()), 0xcfbb556a03bb8d55);
-    // The step crosses 1 m and the shared estimator updates the hover thrust.
-    assert_eq!(sim.state_hash_with(&cl.flight().hash_words()), 0x295b055082f6de18);
+    // In free space the vehicle is in the air from the start, so the shared estimator runs.
+    assert_eq!(sim.state_hash_with(&cl.flight().hash_words()), 0xe0790009e92f7b);
     let s = sim.state();
     assert!((s.com_m[2] - 1.0).abs() < 0.01, "z = {}", s.com_m[2]);
     assert!(tilt(&sim) < 0.1f64.to_radians(), "tilt = {}", tilt(&sim));

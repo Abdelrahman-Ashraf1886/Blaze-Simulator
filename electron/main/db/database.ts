@@ -12,11 +12,12 @@ import m0010 from '../../../database/migrations/0010_collisions.sql?raw'
 import m0011 from '../../../database/migrations/0011_physics_inputs.sql?raw'
 import m0012 from '../../../database/migrations/0012_flight_conditions.sql?raw'
 import m0013 from '../../../database/migrations/0013_controller_tuning.sql?raw'
+import m0014 from '../../../database/migrations/0014_camera_fov.sql?raw'
 
 export type Db = Database.Database
 
 /** Ordered list of migrations. Append only; never edit a shipped migration. */
-export const MIGRATIONS: readonly string[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013]
+export const MIGRATIONS: readonly string[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0014]
 
 /**
  * Open (or create) the database and bring it to the latest schema version.

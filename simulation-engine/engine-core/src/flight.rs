@@ -20,22 +20,32 @@
 //!    shaft torque J_i dω_i/dt, whose reaction on the body over the step is
 //!    exactly −s_i J_i (ω_i(t+dt) − ω_i(t))/dt · a_i.
 //! 3. Body drag (`aero.rs`), F = −½ ρ C_d A v|v| per body axis through the
-//!    CoM, from the velocity at the start of the step. ρ is the caller's (ISA at
+//!    CoM, from the air-relative velocity at the start of the step. ρ is the caller's (ISA at
 //!    the user's altitude, `src/domain/atmosphere.ts`); there is no default.
 //! 4. The body steps (rapier, gravity included).
 //!
 //! Throttles are given in the order of `VehicleDefinition.motors`.
-//! Not modelled (stated): rotor inflow and ground effect, blade flapping, prop
-//! drag in forward flight (thrust is the static k_T ω² at any airspeed), motor
-//! and ESC thermal limits. A battery cut-off is enforced only when the caller
-//! sets one (`set_cutoff`, 4.8); `sim.run` sets none.
+//! With optional wind, sample the mean plus gust at the CoM's height above
+//! ground or terrain. Where there is no ground below the sample, use world z.
+//! Use the start-of-step gust distance for all samples, then advance it with
+//! the CoM speed relative to the mean air (`wind.rs:252-265`).
+//!
+//! With optional ground effect, scale each rotor's thrust by the single-rotor
+//! model in `ground_effect.rs` (phase-6-flight-environment.md:66-68,191-200).
+//! Use the vertical hub clearance and the horizontal airspeed at the moving
+//! hub. Skip rotors with no ground below them or whose world thrust axis points
+//! down. Shaft power and drag torque are unchanged. Rotor interactions, rotor
+//! inflow, forward-flight prop drag, blade flapping and thermal limits are
+//! outside this model. Battery cut-off is opt-in (`set_cutoff`).
 
 use crate::aero::{rotate_inverse, BodyDrag};
+use crate::ground_effect::{self, InvalidInput, RotorInput};
 use crate::math::Vec3 as MVec3;
 use crate::propulsion::{Propulsion, PropulsionState};
-use crate::sim::{BodyInput, Simulation};
+use crate::sim::{BodyInput, SimState, Simulation};
 use crate::vehicle::{vec, Spin, Vehicle};
-use rapier3d_f64::math::Vector;
+use crate::wind::{GustState, Wind, WindError};
+use rapier3d_f64::math::{Rotation, Vector};
 use serde::Serialize;
 
 /// One motor as the flight step uses it.
@@ -58,6 +68,7 @@ pub struct MotorReading {
     pub part_id: String,
     pub throttle: f64,
     pub rpm: f64,
+    /// Free-air thrust at the end-of-step speed. Applied thrust is in `StepLoads`.
     pub thrust_n: f64,
     pub drag_torque_nm: f64,
 }
@@ -78,6 +89,21 @@ pub struct BatteryReading {
 pub struct Loads {
     pub force_body_n: Vector,
     pub torque_body_nm: Vector,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RotorForces {
+    thrust: Vector,
+    arm: Vector,
+    reaction: Vector,
+    torque: Vector,
+    momentum: Vector,
+}
+
+impl RotorForces {
+    fn loads(self, omega_body: Vector) -> Loads {
+        Loads { force_body_n: self.thrust, torque_body_nm: self.torque - omega_body.cross(self.momentum) }
+    }
 }
 
 /// A battery cut-off the user chose; the run ends when it is reached (4.8).
@@ -102,7 +128,7 @@ pub enum EndReason {
 /// panel, 4.8). Forces in N, torques about the CoM in N·m. The rotor speeds
 /// are those at the start of the step (the loads of step 1 of the module
 /// header); `total_torque_nm` is the sum actually applied.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StepLoads {
     /// Σ F_i of the rotors.
@@ -118,6 +144,59 @@ pub struct StepLoads {
     /// −ω_b × Σ h_i.
     pub rotor_gyro_torque_nm: [f64; 3],
     pub total_torque_nm: [f64; 3],
+    /// World wind at the CoM at the start of the step, m/s.
+    #[serde(skip)]
+    pub wind_com_world_mps: [f64; 3],
+    /// Sum of scalar thrust increases in N, before projection onto the rotor axes.
+    #[serde(skip)]
+    pub ground_effect_added_thrust_n: f64,
+    /// Per-rotor status in vehicle motor order. Empty when ground effect is disabled.
+    #[serde(skip)]
+    pub ground_effect_status: Vec<RotorGroundEffect>,
+    /// The CoM or a sampled hub was above the 1000 ft shear limit.
+    #[serde(skip)]
+    pub wind_above_range: bool,
+    /// A wind sample or gust update failed. A failed CoM sample uses calm air
+    /// for drag, a failed hub sample skips ground effect, and a failed gust
+    /// update leaves the gust state unchanged.
+    #[serde(skip)]
+    pub wind_invalid: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RotorGroundEffect {
+    Inactive,
+    Applied { below_tested_range: bool },
+    /// Use free-air thrust and retain the reason. With radii and density checked
+    /// at setup, only a non-finite hub height, airspeed or free-air thrust can
+    /// be rejected by the model during a step.
+    InvalidInput(InvalidInput),
+    InvalidWind,
+    /// A non-finite result from scaling. Use free-air thrust.
+    NonFiniteThrust,
+}
+
+#[derive(Default)]
+struct WindFlags {
+    above_range: bool,
+    invalid: bool,
+}
+
+impl WindFlags {
+    fn sample(&mut self, wind: &Wind, height: f64, gust_distance: Option<f64>) -> Option<Vector> {
+        let at = |height| match gust_distance {
+            Some(distance) => wind.velocity(height, distance),
+            None => wind.mean_velocity(height),
+        };
+        let mut sample = at(height);
+        if matches!(sample, Err(WindError::ShearHeightAboveLimit(_))) {
+            // Reviewer's decision: hold at the top of the shear profile (wind.rs:16,21,187-199).
+            self.above_range = true;
+            sample = at(1000.0 * 0.3048);
+        }
+        self.invalid |= sample.is_err();
+        sample.ok()
+    }
 }
 
 fn arr(v: Vector) -> [f64; 3] {
@@ -160,6 +239,11 @@ pub struct Flight {
     propulsion: Propulsion,
     state: PropulsionState,
     drag: Option<(BodyDrag, f64)>,
+    rotor_air_density: Option<f64>,
+    wind: Option<Wind>,
+    gust: Option<GustState>,
+    rotor_radii: Vec<f64>,
+    last_ground_effect_rotors: Option<RotorForces>,
     throttle: Vec<f64>,
     cutoff: Option<Cutoff>,
     ended: Option<EndReason>,
@@ -201,7 +285,37 @@ impl Flight {
         let state = propulsion.rest();
         let n = motors.len();
         let base_coefficients = propulsion.motors.iter().map(|m| (m.k_thrust, m.k_torque)).collect();
-        Ok(Flight { motors, propulsion, state, drag, throttle: vec![0.0; n], cutoff: None, ended: None, loads: StepLoads::default(), base_coefficients })
+        Ok(Flight {
+            motors, propulsion, state, drag, throttle: vec![0.0; n], cutoff: None,
+            ended: None, loads: StepLoads::default(), base_coefficients,
+            rotor_air_density: air_density.filter(|rho| rho.is_finite() && *rho > 0.0),
+            wind: None, gust: None, rotor_radii: Vec::new(), last_ground_effect_rotors: None,
+        })
+    }
+
+    /// Install wind. Configure before the first step to measure gust start time
+    /// from simulation time zero. Replacing wind starts its gust clock anew.
+    pub fn set_wind(&mut self, wind: Wind) {
+        self.gust = wind.gust_state();
+        self.wind = Some(wind);
+    }
+
+    /// Enable the single-rotor model with one finite, positive radius in metres
+    /// per vehicle motor. Hub positions are the vehicle's motor positions.
+    /// Supply the actual air density to `new` or `scale_to_air_density` first.
+    /// Call `scale_to_air_density` when the loaded coefficients need conversion
+    /// from their reference densities. Invalid settings leave the flight unchanged.
+    pub fn set_ground_effect(&mut self, radii_m: &[f64]) -> Result<(), String> {
+        if self.rotor_air_density.is_none() {
+            return Err("ground effect requires a finite, positive air density".into());
+        }
+        if radii_m.len() != self.motors.len() || !radii_m.iter().all(|r| r.is_finite() && *r > 0.0) {
+            return Err(format!("give {} propeller radii in metres, each finite and positive", self.motors.len()));
+        }
+        self.rotor_radii = radii_m.to_vec();
+        self.loads.ground_effect_status.resize(radii_m.len(), RotorGroundEffect::Inactive);
+        self.last_ground_effect_rotors = None;
+        Ok(())
     }
 
     /// Ends the run when the battery reaches `cutoff` (checked after each step,
@@ -238,6 +352,7 @@ impl Flight {
             m.k_thrust = k_thrust * ratio;
             m.k_torque = k_torque * ratio;
         }
+        self.rotor_air_density = Some(air_kg_m3);
         Ok(())
     }
 
@@ -267,36 +382,49 @@ impl Flight {
         self.motors.len()
     }
 
-    /// Rotor loads (step 1 of the module header) for body rate `omega_body`.
+    /// Rotor loads for body rate `omega_body`. With ground effect enabled,
+    /// use the last step's rotor sample so it agrees with the applied thrust
+    /// and arm torque. Before that sample, use current speeds and free-air thrust.
     pub fn rotor_loads(&self, omega_body: Vector) -> Loads {
-        let (mut f, mut t, mut h) = (Vector::ZERO, Vector::ZERO, Vector::ZERO);
-        for m in &self.motors {
-            let model = &self.propulsion.motors[m.model];
-            let w = self.state.omega[m.model];
-            let thrust = m.axis * model.thrust(w);
-            f += thrust;
-            t += m.arm.cross(thrust) - m.axis * (m.spin * model.drag_torque(w));
-            h += m.axis * (m.spin * model.j * w);
-        }
-        t -= omega_body.cross(h);
-        Loads { force_body_n: f, torque_body_nm: t }
+        self.last_ground_effect_rotors
+            .unwrap_or_else(|| self.rotor_forces(|_, _, thrust| thrust))
+            .loads(omega_body)
     }
 
-    /// The rotor loads of `rotor_loads` by source: thrust force, arm torque,
-    /// drag-torque reaction and gyroscopic torque (for the debug panel only; the
-    /// step applies `rotor_loads`).
-    fn rotor_split(&self, omega_body: Vector) -> (Vector, Vector, Vector, Vector) {
-        let (mut f, mut arm, mut reaction, mut h) = (Vector::ZERO, Vector::ZERO, Vector::ZERO, Vector::ZERO);
-        for m in &self.motors {
+    fn rotor_forces(&self, mut adjust_thrust: impl FnMut(usize, &FlightMotor, f64) -> f64) -> RotorForces {
+        let mut result = RotorForces {
+            thrust: Vector::ZERO, arm: Vector::ZERO, reaction: Vector::ZERO,
+            torque: Vector::ZERO, momentum: Vector::ZERO,
+        };
+        for (i, m) in self.motors.iter().enumerate() {
             let model = &self.propulsion.motors[m.model];
             let w = self.state.omega[m.model];
-            let thrust = m.axis * model.thrust(w);
-            f += thrust;
-            arm += m.arm.cross(thrust);
-            reaction -= m.axis * (m.spin * model.drag_torque(w));
-            h += m.axis * (m.spin * model.j * w);
+            let thrust = m.axis * adjust_thrust(i, m, model.thrust(w));
+            let arm = m.arm.cross(thrust);
+            let drag = m.axis * (m.spin * model.drag_torque(w));
+            result.thrust += thrust;
+            result.arm += arm;
+            result.reaction -= drag;
+            // Preserve the original sum order for the applied torque and state hash.
+            result.torque += arm - drag;
+            result.momentum += m.axis * (m.spin * model.j * w);
         }
-        (f, arm, reaction, -omega_body.cross(h))
+        result
+    }
+
+    fn step_wind(
+        &mut self, sim: &Simulation, s: &SimState, dt: f64, gust_distance: Option<f64>, flags: &mut WindFlags,
+    ) -> Vector {
+        let Some(wind) = &self.wind else { return Vector::ZERO };
+        let [x, y, z] = s.com_m;
+        let height = z - sim.height_below(x, y).unwrap_or(0.0);
+        let sample = flags.sample(wind, height, gust_distance).unwrap_or(Vector::ZERO);
+        if let Some(gust) = &mut self.gust {
+            if let Some(mean) = flags.sample(wind, height, None) {
+                flags.invalid |= gust.advance((vec(s.linear_velocity_mps) - mean).length(), dt).is_err();
+            }
+        }
+        sample
     }
 
     /// One fixed step of the vehicle with `throttle` (vehicle motor order,
@@ -312,8 +440,57 @@ impl Flight {
         }
         let s = sim.state();
         let omega_body = vec(s.angular_velocity_body_radps);
-        let mut loads = self.rotor_loads(omega_body);
-        let (thrust, arm, reaction, gyro) = self.rotor_split(omega_body);
+        let gust_distance = self.gust.as_ref().map(GustState::distance_m);
+        let mut wind_flags = WindFlags::default();
+        let wind_com = self.step_wind(sim, &s, dt, gust_distance, &mut wind_flags);
+        let mut ground_status = std::mem::take(&mut self.loads.ground_effect_status);
+        let mut added_thrust = 0.0;
+        let rotors = if let Some(rho) = self.rotor_air_density.filter(|_| !self.rotor_radii.is_empty()) {
+            let [x, y, z, w] = s.quaternion;
+            let attitude = Rotation::from_xyzw(x, y, z, w);
+            let rotors = self.rotor_forces(|i, motor, thrust| {
+                ground_status[i] = RotorGroundEffect::Inactive;
+                if (attitude * motor.axis).z < 0.0 {
+                    return thrust;
+                }
+                let hub = vec(s.com_m) + attitude * motor.arm;
+                let Some(ground) = sim.height_below(hub.x, hub.y) else { return thrust };
+                let height = hub.z - ground;
+                let mut air_velocity = vec(s.linear_velocity_mps) + attitude * omega_body.cross(motor.arm);
+                if let Some(wind) = &self.wind {
+                    let Some(sample) = wind_flags.sample(wind, height, gust_distance) else {
+                        ground_status[i] = RotorGroundEffect::InvalidWind;
+                        return thrust;
+                    };
+                    air_velocity -= sample;
+                }
+                let input = RotorInput {
+                    hub_height_m: height, radius_m: self.rotor_radii[i],
+                    horizontal_airspeed_m_s: air_velocity.x.hypot(air_velocity.y),
+                    thrust_n: thrust, air_density_kg_m3: rho,
+                };
+                let effect = match ground_effect::thrust_ratio(&input) {
+                    Ok(effect) => effect,
+                    Err(error) => {
+                        ground_status[i] = RotorGroundEffect::InvalidInput(error);
+                        return thrust;
+                    }
+                };
+                let adjusted = effect.ratio * thrust;
+                if !adjusted.is_finite() {
+                    ground_status[i] = RotorGroundEffect::NonFiniteThrust;
+                    return thrust;
+                }
+                ground_status[i] = RotorGroundEffect::Applied { below_tested_range: effect.below_tested_range };
+                added_thrust += adjusted - thrust;
+                adjusted
+            });
+            self.last_ground_effect_rotors = Some(rotors);
+            rotors
+        } else {
+            self.rotor_forces(|_, _, thrust| thrust)
+        };
+        let mut loads = rotors.loads(omega_body);
         let mut spin_up = Vector::ZERO;
         let mut drag_force = Vector::ZERO;
         // Propulsion takes throttles in its own (definition) order.
@@ -330,20 +507,26 @@ impl Flight {
             spin_up -= q;
         }
         if let Some((drag, rho)) = &self.drag {
-            let v = s.linear_velocity_mps;
+            // Keep the original velocity bits when wind is absent or exactly calm.
+            let v = if wind_com == Vector::ZERO { s.linear_velocity_mps } else { arr(vec(s.linear_velocity_mps) - wind_com) };
             let fw = drag.force_world(*rho, s.quaternion, MVec3::new(v[0], v[1], v[2]));
             let fb = rotate_inverse(s.quaternion, fw);
             drag_force = Vector::new(fb.x, fb.y, fb.z);
             loads.force_body_n += drag_force;
         }
         self.loads = StepLoads {
-            thrust_body_n: arr(thrust),
+            thrust_body_n: arr(rotors.thrust),
             drag_body_n: arr(drag_force),
-            arm_torque_nm: arr(arm),
-            drag_reaction_torque_nm: arr(reaction),
+            arm_torque_nm: arr(rotors.arm),
+            drag_reaction_torque_nm: arr(rotors.reaction),
             spin_up_reaction_torque_nm: arr(spin_up),
-            rotor_gyro_torque_nm: arr(gyro),
+            rotor_gyro_torque_nm: arr(-omega_body.cross(rotors.momentum)),
             total_torque_nm: arr(loads.torque_body_nm),
+            wind_com_world_mps: arr(wind_com),
+            ground_effect_added_thrust_n: added_thrust,
+            ground_effect_status: ground_status,
+            wind_above_range: wind_flags.above_range,
+            wind_invalid: wind_flags.invalid,
         };
         sim.step(&BodyInput { force_body_n: loads.force_body_n, torque_body_nm: loads.torque_body_nm });
         if let Some(cutoff) = self.cutoff {
@@ -388,11 +571,14 @@ impl Flight {
         }
     }
 
-    /// Exact bit patterns of the rotor speeds and the charge used, appended
+    /// Exact bit patterns of the rotor speeds, charge used and optional gust state, appended
     /// to the body's state hash (`Simulation::state_hash_with`).
     pub fn hash_words(&self) -> Vec<u64> {
         let mut words: Vec<u64> = self.state.omega.iter().map(|w| w.to_bits()).collect();
         words.push(self.state.charge_used_c.to_bits());
+        if let Some(gust) = &self.gust {
+            words.extend(gust.hash_words());
+        }
         words
     }
 }

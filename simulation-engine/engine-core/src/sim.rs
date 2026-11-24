@@ -142,6 +142,11 @@ impl Simulation {
         Ok(sim)
     }
 
+    /// Ground plane or terrain height at world (x, y), in metres. Excludes obstacles.
+    pub fn height_below(&self, x_m: f64, y_m: f64) -> Option<f64> {
+        self.env.as_ref().and_then(|env| env.height_below(x_m, y_m))
+    }
+
     /// Contacts with the environment so far (open ones have no end), and how
     /// many were dropped beyond `MAX_CONTACT_EVENTS`.
     pub fn contacts(&self) -> (Vec<ContactEvent>, u64) {
@@ -275,3 +280,37 @@ impl Fnv1a {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn placed_height_matches_the_environment_query() {
+    use crate::vehicle::fixtures::{box_part, with_totals};
+    use serde_json::json;
+
+    let v = Vehicle::from_definition(with_totals(vec![
+        box_part("body", 1.0, [0.0; 3], [1.0, 1.0, 1.0, 0.0, 0.0, 0.0]),
+    ])).unwrap();
+    let config = SimConfig::default();
+    assert_eq!(Simulation::new(&v, config).unwrap().height_below(12.0, 22.0), None);
+    // Grid and queries from environment/tests.rs:243-256.
+    let terrain = json!({
+        "rows": 2, "columns": 2, "cellSizeM": 2.0, "cornerM": [10.0, 20.0],
+        "heightsM": [2.0, 8.0, 0.0, 4.0], "friction": 0.5, "restitution": 0
+    });
+    // The table from environment/tests.rs:196-202, moved underneath the centre query.
+    let table = json!({
+        "id": "table", "center": [12, 22, 0.05], "halfExtents": [0.3, 0.3, 0.05],
+        "quaternion": [0, 0, 0, 1], "friction": 0.6, "restitution": 0
+    });
+    for definition in [
+        json!({"terrain": terrain, "obstacles": []}),
+        json!({"ground": {"friction": 0.5, "restitution": 0}, "obstacles": [table]}),
+        json!({"ground": null, "obstacles": [table]}),
+    ] {
+        let env = Environment::from_json(&definition).unwrap();
+        let sim = Simulation::with_environment(&v, config, &env, [12.0, 22.0, 10.0]).unwrap();
+        for (x, y) in [(11.0, 21.0), (12.0, 22.0), (13.0, 23.0), (10.0, 20.0), (f64::NAN, 21.0)] {
+            assert_eq!(sim.height_below(x, y), env.height_below(x, y));
+        }
+    }
+}

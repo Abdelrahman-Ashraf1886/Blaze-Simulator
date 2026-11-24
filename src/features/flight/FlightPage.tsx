@@ -291,7 +291,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
               headingHold.current = updateHeadingHold(headingHold.current, keys.current, heading(latest.current))
               setHeldHeading(headingHold.current.headingRad)
             }}>
-            <FlightViewport frame={frame} doc={display} geo={geo} />
+            <FlightViewport frame={frame} doc={display} geo={geo} projectId={project.id} running={running} />
           </div>
           <div className="shrink-0 space-y-1 border-t border-line px-3 py-2 text-[12px] text-fg-muted">
             <p>Live engine: this build&apos;s mass, motors, battery and drag, flown by the PX4-style controller. It starts on the ground; ground and obstacles are the project environment.</p>

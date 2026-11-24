@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import {
+  CAMERA_FOV_DEG,
   MODEL_UNITS,
   PART_KINDS,
   type AssemblyDocument,
@@ -385,6 +386,18 @@ export function PartInspector({ doc, geo }: { doc: AssemblyDocument; geo: FrameG
         </Row>
       </div>
 
+      {part.kind === 'camera' && (
+        <NumberField key={`${id}:${part.cameraFovDeg}`} id="part-camera-fov" label="Vertical field of view"
+          initial={part.cameraFovDeg === undefined ? '' : String(part.cameraFovDeg)} unit="°" placeholder="Unset"
+          parse={(text) => {
+            if (text.trim() === '') return { ok: true, value: undefined }
+            const value = Number(text.trim().replace(',', '.'))
+            return value > CAMERA_FOV_DEG.min && value < CAMERA_FOV_DEG.max
+              ? { ok: true, value }
+              : { ok: false, message: 'Enter an angle between 0° and 180° (exclusive)' }
+          }}
+          onCommit={(cameraFovDeg) => set(`Set vertical FOV on ${part.name}`, { cameraFovDeg })} />
+      )}
       <SubHeading>Placement · relative to {relativeTo}</SubHeading>
       <div className="border-t border-line">
         {(['X', 'Y', 'Z'] as const).map((axis, i) => (

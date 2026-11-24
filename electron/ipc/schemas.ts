@@ -5,6 +5,7 @@ import { overridableField, type SpecValue } from './component-fields'
 import { userSpecSchema } from './component-schemas'
 import { inertiaProblem } from './inertia'
 import {
+  CAMERA_FOV_DEG,
   FRAME_PARAM_LIMITS,
   FRAME_PART_ID,
   FRAME_TYPES,
@@ -93,6 +94,7 @@ const partSchema = z.object({
   mountId: z.string().min(1).max(64).nullable(),
   position: z.tuple([coord, coord, coord]),
   rotation: quaternion,
+  cameraFovDeg: z.number().gt(CAMERA_FOV_DEG.min).lt(CAMERA_FOV_DEG.max).optional(),
   mass: z.object({ valueKg: z.number().gt(0).max(1000), source: z.literal('user') }).nullable(),
   componentId: z.uuid().nullable().optional(),
   inertia: z

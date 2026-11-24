@@ -8,7 +8,17 @@ interface CameraFrame {
 }
 
 export interface CameraPose extends CameraFrame {
+  /** Vertical field of view in degrees. */
   readonly fovDeg: number
+}
+
+// Three camera +X is right, +Y is up and -Z is forward (three/src/cameras/Camera.js:106–109).
+const threeCameraToFlu = new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(
+  new Vector3(0, -1, 0), new Vector3(0, 0, 1), new Vector3(-1, 0, 0),
+))
+
+export function toThreeCameraQuaternion(orientation: CameraPose['quaternion']): Quaternion {
+  return new Quaternion(...orientation).multiply(threeCameraToFlu)
 }
 
 function horizontalHeading(frame: CameraFrame): Vector3 {
@@ -40,10 +50,32 @@ function lookAtFrame(position: Vector3, frame: CameraFrame, fovDeg: number): Cam
 }
 
 /** Chase looks back at the frame origin from behind its horizontal heading. */
-export function chaseCameraPose(frame: CameraFrame, distanceM: number, heightM: number, fovDeg: number): CameraPose {
-  const position = new Vector3(...frame.positionM).addScaledVector(horizontalHeading(frame), -distanceM)
+export function chaseHeading(frame: CameraFrame): number {
+  const nose = horizontalHeading(frame)
+  return Math.atan2(nose.y, nose.x)
+}
+
+export function easeChaseHeading(previous: number | undefined, target: number, deltaS: number): number {
+  if (previous === undefined) return target
+  const difference = target - previous
+  const shortest = Math.atan2(Math.sin(difference), Math.cos(difference))
+  // Use the workshop camera's time scale (camera-controls.module.js:427).
+  return previous + shortest * -Math.expm1(-deltaS / 0.25)
+}
+
+export function chaseCameraPose(
+  frame: CameraFrame, distanceM: number, heightM: number, fovDeg: number, heading = chaseHeading(frame),
+): CameraPose {
+  const position = new Vector3(...frame.positionM)
+  position.x -= distanceM * Math.cos(heading)
+  position.y -= distanceM * Math.sin(heading)
   position.z += heightM
   return lookAtFrame(position, frame, fovDeg)
+}
+
+/** The original Follow offset, in world axes. */
+export function followCameraPose(frame: CameraFrame, distanceM: number, heightM: number, fovDeg: number): CameraPose {
+  return lookAtFrame(new Vector3(...frame.positionM).add(new Vector3(-distanceM, -distanceM, heightM)), frame, fovDeg)
 }
 
 /** Orbit azimuth measures the camera offset from world +X toward +Y. */

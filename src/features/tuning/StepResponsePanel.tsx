@@ -1,4 +1,4 @@
-import { useId, useState, type CSSProperties } from 'react'
+import { useId, useState } from 'react'
 import { EmptyState, Readout, Readouts, Section } from '@/components/section'
 import { RECOMMENDED_STEP_METRICS_OPTIONS, stepMetrics, type ResponseStep, type StepMetricsOptions, type StepMetricsResult, type StepSample } from '@/domain/step-response'
 import { responsePlot } from './response-plot'
@@ -9,10 +9,8 @@ export interface StepResponsePanelProps {
   samples: readonly StepSample[]
   step: ResponseStep
   gainsUsed: Readonly<Record<string, number>>
+  unit?: string
 }
-
-// documentation/DESIGN.md:18 assigns magenta to targets and setpoints.
-const plotTheme = { '--color-setpoint': 'magenta' } as CSSProperties
 
 const thresholdLabels = {
   riseLower: 'Rise lower fraction',
@@ -32,7 +30,7 @@ const unavailableMessages = {
   'numeric-overflow': 'The response exceeds the numeric range for these metrics.',
 } satisfies Record<Exclude<StepMetricsResult['status'], 'ok'>, string>
 
-export function StepResponsePanel({ samples, step, gainsUsed }: StepResponsePanelProps) {
+export function StepResponsePanel({ samples, step, gainsUsed, unit }: StepResponsePanelProps) {
   const thresholdErrorId = useId()
   const [edits, setEdits] = useState<Partial<Record<keyof StepMetricsOptions, string>>>({})
   const options: Record<keyof StepMetricsOptions, number> = { ...RECOMMENDED_STEP_METRICS_OPTIONS }
@@ -49,9 +47,9 @@ export function StepResponsePanel({ samples, step, gainsUsed }: StepResponsePane
       <Section title="Step response">
         <ExactSignalsNotice />
         {samples.length === 0 ? <EmptyState>No step-response samples.</EmptyState> : plot && (
-          <figure className="border-t border-line py-2" style={plotTheme}>
+          <figure className="border-t border-line py-2">
             <figcaption className="mb-2 flex gap-4 text-[12.5px]">
-              <span className="text-[var(--color-setpoint)]">Setpoint</span><span>State</span>
+              <span className="text-setpoint">Setpoint</span><span>State{unit && ` (${unit})`}</span>
             </figcaption>
             <div className="flex items-stretch gap-2">
               <div aria-hidden className="num flex flex-col justify-between text-right text-fg-subtle">
@@ -74,7 +72,7 @@ export function StepResponsePanel({ samples, step, gainsUsed }: StepResponsePane
               </svg>
             </div>
             <div className="num flex justify-between gap-2 text-fg-subtle">
-              <span>{plot.start}</span><span>Time</span>{plot.end !== plot.start && <span>{plot.end}</span>}
+              <span>{plot.start}</span><span>Time (s)</span>{plot.end !== plot.start && <span>{plot.end}</span>}
             </div>
           </figure>
         )}
@@ -94,7 +92,7 @@ export function StepResponsePanel({ samples, step, gainsUsed }: StepResponsePane
           ))}
         </div>
         {invalidThresholds && <p id={thresholdErrorId} role="alert" className="py-2 text-[12.5px] text-fault">{unavailableMessages['invalid-options']}</p>}
-        {samples.length > 0 && !invalidThresholds && <ResponseMetrics metrics={metrics} />}
+        {samples.length > 0 && !invalidThresholds && <ResponseMetrics metrics={metrics} unit={unit} />}
       </Section>
       <Section title="Gains used">
         {Object.keys(gainsUsed).length === 0 ? <EmptyState>No gains supplied.</EmptyState> : (
@@ -107,16 +105,16 @@ export function StepResponsePanel({ samples, step, gainsUsed }: StepResponsePane
   )
 }
 
-function ResponseMetrics({ metrics }: { metrics: StepMetricsResult }) {
+function ResponseMetrics({ metrics, unit }: { metrics: StepMetricsResult; unit?: string }) {
   if (metrics.status !== 'ok') return <EmptyState>{unavailableMessages[metrics.status]}</EmptyState>
   const { riseTime, peakTime, overshoot, settlingTime, steadyStateError } = metrics
   return (
     <Readouts>
-      <Readout label="Rise time" {...(riseTime.status === 'reached' ? { value: riseTime.time } : { value: 'Did not reach the rise thresholds', mono: false })} />
-      <Readout label="Peak time" value={peakTime} />
+      <Readout label="Rise time" {...(riseTime.status === 'reached' ? { value: riseTime.time, unit: 's' } : { value: 'Did not reach the rise thresholds', mono: false })} />
+      <Readout label="Peak time" value={peakTime} unit="s" />
       <Readout label="Overshoot" {...(overshoot.status === 'overshoot' ? { value: overshoot.percent, unit: '%' } : { value: 'No overshoot', mono: false })} />
-      <Readout label="Settling time" {...(settlingTime.status === 'settled' ? { value: settlingTime.time } : { value: 'Did not settle', mono: false })} />
-      <Readout label="Steady-state error" value={steadyStateError} />
+      <Readout label="Settling time" {...(settlingTime.status === 'settled' ? { value: settlingTime.time, unit: 's' } : { value: 'Did not settle', mono: false })} />
+      <Readout label="Steady-state error" value={steadyStateError} unit={unit} />
     </Readouts>
   )
 }

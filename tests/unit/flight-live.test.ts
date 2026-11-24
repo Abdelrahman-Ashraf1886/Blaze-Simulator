@@ -13,7 +13,8 @@ import { EngineSupervisor } from '../../electron/main/engine/supervisor'
 import type { ReadyItem } from '../../src/domain/propulsion'
 import { EngineFlightSource, idleFrame, MAX_STEP_MS, stepsForElapsed, toEngineSetpoint, toFlightFrame } from '../../src/features/flight/EngineFlightSource'
 import { airDensityFor, conditionBlockers, EMPTY_CONDITIONS, enginePayload, flightGate, type EnginePayload, type FlightConditions } from '../../src/features/flight/readiness'
-import { mapSticks } from '../../src/features/flight/sticks'
+import { flightStartWithTuning } from '../../src/features/flight/flight-mode'
+import { mapPx4Sticks, mapSticks } from '../../src/features/flight/sticks'
 import type { AssemblyDocument, FrameParams } from '../../electron/ipc/contract'
 import { buildFrame } from '../../src/three/frame-geometry'
 
@@ -93,11 +94,53 @@ describe('the response adapter', () => {
       chargeUsedMah: 0.144 / 3.6, // coulombs to mAh
       densityKgM3: 1.2,
       control: { torqueDemand: [0.1, 0.2, 0.3], rateIntegral: [0, 0.1, 0], saturation: { positive: [true, false, false, false], negative: [false, false, false, true] } },
+      flightLoop: null,
       ended: null,
       contacts: [
         { part: 'frame', object: 'obstacle:wall', startS: 0.01, endS: null },
         { part: 'leg-1', object: 'ground', startS: 0, endS: 0.5 },
       ],
+    })
+  })
+
+  it('maps actual PX4 mode, inactive axes and hover variance', () => {
+    const flightLoop = {
+      mode: 'stabilized',
+      positionSetpointM: [null, null, null],
+      velocitySetpointMps: [null, 0, 1],
+      accelerationSetpointMps2: [null, null, 1],
+      saturation: diagnostic().control.saturation,
+      hoverThrust: { estimate: 0.5, variance: 0.01, valid: false },
+      velocityIntegral: [0, 0, 1],
+    }
+    const frame = toFlightFrame(FlightDiagnosticSchema.parse(diagnostic({ control: null, flightLoop })), null, [], 'position')
+    expect(frame.flightLoop).toMatchObject({
+      mode: 'stabilized', requestedMode: 'position',
+      positionSetpointM: [null, null, null], velocitySetpointMps: [null, 0, 1],
+      accelerationSetpointMps2: [null, null, 1], velocityIntegral: [0, 0, 1],
+      hoverThrust: { estimate: 0.5, standardDeviation: 0.1, valid: false },
+    })
+    const unavailable = { ...flightLoop, hoverThrust: { estimate: null, variance: null, valid: false } }
+    expect(toFlightFrame(FlightDiagnosticSchema.parse(diagnostic({ flightLoop: unavailable })), null, []).flightLoop?.hoverThrust.standardDeviation).toBeNull()
+  })
+
+  it('maps each PX4 stick with opposing keys cancelling and no UI limits', () => {
+    const positive = ['ArrowUp', 'ArrowRight', 'KeyD', 'KeyW']
+    const negative = ['ArrowDown', 'ArrowLeft', 'KeyA', 'KeyS']
+    const sticks = mapPx4Sticks(new Set(positive))
+    expect(sticks).toEqual({ forward: 1, right: 1, yawRight: 1, throttle: 1 })
+    expect(mapPx4Sticks(new Set(negative))).toEqual({ forward: -1, right: -1, yawRight: -1, throttle: -1 })
+    expect(mapPx4Sticks(new Set([...positive, ...negative]))).toEqual({ forward: 0, right: 0, yawRight: 0, throttle: 0 })
+    expect(toEngineSetpoint({ mode: 'altitude', sticks })).toEqual({ mode: 'altitude', sticks })
+  })
+
+  it('uses all saved overrides for PX4 and names unsupported overrides for 4.7', () => {
+    const saved = { MC_ROLL_P: 7, MPC_USE_HTE: 1, MPC_THR_CURVE: 0, MC_AIRMODE: 1 }
+    expect(flightStartWithTuning('position', saved)).toEqual({
+      session: { gains: saved, controller: { mode: 'position' } }, unsupported: [],
+    })
+    expect(flightStartWithTuning('attitudeHold', saved)).toEqual({
+      session: { gains: { MC_ROLL_P: 7, MPC_USE_HTE: 1 } }, unsupported: ['MPC_THR_CURVE', 'MC_AIRMODE'],
     })
   })
 
@@ -426,6 +469,7 @@ describe('IPC validation', () => {
   })
 
   it.each([
+    ['an unknown controller mode', (p: Record<string, unknown>) => { p.controller = { mode: 'attitudeHold' } }],
     ['no cut-off', (p: Record<string, unknown>) => { delete p.cutoff }],
     ['a zero cut-off', (p: Record<string, unknown>) => { p.cutoff = { type: 'voltageV', value: 0 } }],
     ['an unknown cut-off type', (p: Record<string, unknown>) => { p.cutoff = { type: 'capacity', value: 5 } }],
@@ -475,6 +519,19 @@ describe('IPC validation', () => {
     expect((await flightStep(engine, { steps: 100, setpoint })).ok).toBe(true)
     expect((await flightStep(engine, { steps: 1, setpoint: { altitudeM: 2, climbRateMps: 0 } })).ok).toBe(true)
     expect(calls).toEqual(['step', 'step'])
+  })
+
+  it('passes a PX4 mode change and normalized sticks through IPC validation', async () => {
+    const { engine } = fakeEngine()
+    const controller = { mode: 'stabilized' }
+    expect((await flightStart(engine, { ...startInput(), controller })).ok).toBe(true)
+    expect(engine.startFlightSession).toHaveBeenCalledWith(expect.objectContaining({ controller }))
+
+    const setpoint = { mode: 'position', sticks: mapPx4Sticks(new Set(['ArrowUp', 'KeyD'])) }
+    expect((await flightStep(engine, { steps: 1, setpoint })).ok).toBe(true)
+    expect(engine.stepFlightSession).toHaveBeenCalledWith({ steps: 1, setpoint })
+    expect(err(await flightStep(engine, { steps: 1, setpoint: { ...setpoint, sticks: { ...setpoint.sticks, forward: 2 } } }))?.message).toContain('setpoint.sticks.forward')
+    expect(engine.stepFlightSession).toHaveBeenCalledTimes(1)
   })
 
   it('passes engine step errors and end through the same envelope', async () => {

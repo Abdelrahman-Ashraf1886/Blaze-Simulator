@@ -10,7 +10,7 @@
 import type { Component, ComponentCategory, ComponentInput, SpecValue } from './component-fields'
 import type { ControllerParam, ParamError, TuningOverrides } from '../../src/domain/controller-params'
 export type * from './component-fields'
-import type { FlightSessionEndResult, FlightSessionStartResult, FlightSessionStepParams, FlightSessionStepResult, ScenarioConfigParams, ScenarioRequest, ScenarioRunResult } from '../main/engine/protocol'
+import type { FlightSessionEndResult, FlightSessionStartParams, FlightSessionStartResult, FlightSessionStepParams, FlightSessionStepResult, ScenarioConfigParams, ScenarioRequest, ScenarioRunResult, StepTestRunParams, StepTestRunResult } from '../main/engine/protocol'
 
 // ---- Domain types -----------------------------------------------------------
 
@@ -365,6 +365,7 @@ export interface FlightStartInput {
   startPositionM: [number, number, number]
   /** PX4 gain overrides by exact parameter name; absent = the v1.13.3 defaults. */
   gains?: Record<string, number>
+  controller?: FlightSessionStartParams['controller']
 }
 export type FlightStartResult = FlightSessionStartResult
 export type FlightStepInput = FlightSessionStepParams
@@ -389,6 +390,9 @@ export interface ScenarioRunInput {
   config: ScenarioConfigParams
 }
 export type ScenarioRunOutput = ScenarioRunResult
+
+export type StepTestInput = Pick<ScenarioRunInput, 'vehicle' | 'propulsion' | 'aero'> & StepTestRunParams
+export type StepTestOutput = StepTestRunResult
 
 /** Id an allowed pair uses for the parametric frame (its plate and arms are one part). */
 export const FRAME_PART_ID = 'frame'
@@ -498,6 +502,7 @@ export const Channels = {
   engineFlightEnd: 'engine:flightEnd',
   /** Loads the vehicle and flies a scripted scenario; answers with its report. */
   engineScenarioRun: 'engine:scenarioRun',
+  engineStepTest: 'engine:stepTest',
 } as const
 
 /** Shape exposed on `window.api` by the preload script. */
@@ -552,6 +557,7 @@ export interface DesktopApi {
     flightStep(input: FlightStepInput): Promise<IpcResult<FlightStepResult>>
     flightEnd(): Promise<IpcResult<FlightEndResult>>
     scenarioRun(input: ScenarioRunInput): Promise<IpcResult<ScenarioRunOutput>>
+    stepTest(input: StepTestInput): Promise<IpcResult<StepTestOutput>>
   }
   /** True when main was started for end-to-end tests (BLAZE_UAV_TEST_HOOKS=1); never in normal use. */
   testHooks: boolean

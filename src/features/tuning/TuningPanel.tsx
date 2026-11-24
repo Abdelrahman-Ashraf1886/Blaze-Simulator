@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Section } from '@/components/section'
 import { Button } from '@/components/ui/button'
 import { CONTROLLER_PARAM_GROUPS, CONTROLLER_PARAMS, type ParamError, type TuningOverrides } from '@/domain/controller-params'
@@ -9,13 +9,14 @@ import { documentedRange, readOverrides, tuningInputClass } from './tuning-value
 export interface TuningPanelProps {
   projectId: string
   gainsAffectFlights: boolean
+  renderStepTest?: (tuning: { saved: TuningOverrides | null; dirty: boolean; pending: boolean }) => ReactNode
 }
 
 export function TuningPanel(props: TuningPanelProps) {
   return <ProjectTuning key={props.projectId} {...props} />
 }
 
-function ProjectTuning({ projectId, gainsAffectFlights }: TuningPanelProps) {
+function ProjectTuning({ projectId, gainsAffectFlights, renderStepTest }: TuningPanelProps) {
   const id = useId()
   const [saved, setSaved] = useState<TuningOverrides | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -76,7 +77,7 @@ function ProjectTuning({ projectId, gainsAffectFlights }: TuningPanelProps) {
     })
   }
 
-  return (
+  const editor = (
     <div className="space-y-3">
       <Section title="Controller tuning">
         <ExactSignalsNotice />
@@ -128,6 +129,13 @@ function ProjectTuning({ projectId, gainsAffectFlights }: TuningPanelProps) {
           </div>
         </Section>
       ))}
+    </div>
+  )
+  if (!renderStepTest) return editor
+  return (
+    <div className="grid items-start gap-6 @min-[900px]:grid-cols-2">
+      {editor}
+      {renderStepTest({ saved, dirty, pending: pending !== null })}
     </div>
   )
 }

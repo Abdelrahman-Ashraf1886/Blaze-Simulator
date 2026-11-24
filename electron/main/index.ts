@@ -15,6 +15,7 @@ import { createRepositories } from './db/repositories'
 import { dropTest } from './engine/drop-test'
 import { flightEnd, flightStart, flightStep } from './engine/flight-session'
 import { scenarioRun } from './engine/scenario-run'
+import { stepTest } from './engine/step-test'
 import { EngineSupervisor } from './engine/supervisor'
 
 const APP_ID = 'com.blazeuav.app'
@@ -316,11 +317,19 @@ function start(): void {
     event.returnValue = handlers[Channels.assemblySave]!(payload)
   })
 
-  ipcMain.handle(Channels.engineDropTest, (_event, payload: unknown) => dropTest(engine!, payload))
-  ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => flightStart(engine!, payload))
+  // The sidecar has one loaded vehicle. Keep each load and its consuming command together.
+  let vehicleQueue = Promise.resolve()
+  function withLoadedVehicle<T>(run: () => Promise<T>): Promise<T> {
+    const result = vehicleQueue.then(run)
+    vehicleQueue = result.then(() => {}, () => {})
+    return result
+  }
+  ipcMain.handle(Channels.engineDropTest, (_event, payload: unknown) => withLoadedVehicle(() => dropTest(engine!, payload)))
+  ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => withLoadedVehicle(() => flightStart(engine!, payload)))
   ipcMain.handle(Channels.engineFlightStep, (_event, payload: unknown) => flightStep(engine!, payload))
   ipcMain.handle(Channels.engineFlightEnd, () => flightEnd(engine!))
-  ipcMain.handle(Channels.engineScenarioRun, (_event, payload: unknown) => scenarioRun(engine!, payload))
+  ipcMain.handle(Channels.engineScenarioRun, (_event, payload: unknown) => withLoadedVehicle(() => scenarioRun(engine!, payload)))
+  ipcMain.handle(Channels.engineStepTest, (_event, payload: unknown) => withLoadedVehicle(() => stepTest(engine!, payload)))
 
   engine.on('status', (status) => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(Channels.engineStatusChanged, status)

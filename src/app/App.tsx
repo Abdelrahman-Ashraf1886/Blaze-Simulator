@@ -22,6 +22,13 @@ const analysis = (
   </Suspense>
 )
 
+const TuningPage = lazy(() => import('@/features/tuning/TuningPage'))
+const tuning = (
+  <Suspense fallback={<p className="px-6 pt-5 text-[12.5px] text-fg-subtle">Loading tuning…</p>}>
+    <TuningPage />
+  </Suspense>
+)
+
 const scenarios = (
   <Suspense fallback={<p className="px-6 pt-5 text-[12.5px] text-fg-subtle">Loading scenarios…</p>}>
     <ScenariosPage />
@@ -56,6 +63,8 @@ export function App() {
           <Route path="analysis/:projectId" element={analysis} />
           <Route path="scenarios" element={scenarios} />
           <Route path="scenarios/:projectId" element={scenarios} />
+          <Route path="tuning" element={tuning} />
+          <Route path="tuning/:projectId" element={tuning} />
           <Route path="components" element={<ComponentsPage />} />
           <Route path="electrical" element={electrical} />
           <Route path="electrical/:projectId" element={electrical} />

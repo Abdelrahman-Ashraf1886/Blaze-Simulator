@@ -7,8 +7,8 @@
  * last diagnostic becomes one `FlightFrame`, so subscribers see at most one frame per animation frame, never
  * the 1 kHz step stream.
  */
-import type { DesktopApi, FlightStartInput, FlightStepResult } from '../../../electron/ipc/contract'
-import type { AxisVector, FlightFrame, FlightSetpoint, FlightSource, SetpointProvider, Vec3 } from './frame'
+import type { DesktopApi, FlightStartInput, FlightStepInput, FlightStepResult } from '../../../electron/ipc/contract'
+import type { AxisVector, FlightFrame, FlightSource, SetpointProvider, Vec3 } from './frame'
 
 /** Most simulated time one request advances (ms = steps). Engine limit is 100; 50 ms bounds the gap between frames. */
 export const MAX_STEP_MS = 50
@@ -26,7 +26,8 @@ export function stepsForElapsed(owedMs: number): { steps: number; owedMs: number
  * The stick setpoint as the controller takes it: a vertical-speed hold (no altitude target), a yaw-rate
  * feed-forward and the attitude. Each request carries the current one for all its steps.
  */
-export function toEngineSetpoint(s: FlightSetpoint): { attitude: FlightSetpoint['attitude']; yawRateRadps: number; climbRateMps: number } {
+export function toEngineSetpoint(s: ReturnType<SetpointProvider>): FlightStepInput['setpoint'] {
+  if ('mode' in s) return s
   return { attitude: [...s.attitude], yawRateRadps: s.yawRateRadps, climbRateMps: s.verticalVelocityMps }
 }
 
@@ -41,7 +42,9 @@ const RAD_PER_S_PER_RPM = (2 * Math.PI) / 60
  * The ONE place the engine's camelCase diagnostic becomes a `FlightFrame`. Conversions only: rpm to rad/s,
  * coulombs to mAh (1 mAh = 3.6 C), vectors to axis objects; the total thrust is the sum of the motors'.
  */
-export function toFlightFrame(d: Diagnostic, endReason: EndReason, contacts: readonly EngineContact[]): FlightFrame {
+export function toFlightFrame(d: Diagnostic, endReason: EndReason, contacts: readonly EngineContact[], requestedMode?: FlightStepInput['setpoint']['mode']): FlightFrame {
+  const loop = d.flightLoop
+  const variance = loop?.hoverThrust.variance
   return {
     timeS: d.state.timeS,
     positionM: [...d.state.positionM],
@@ -67,6 +70,20 @@ export function toFlightFrame(d: Diagnostic, endReason: EndReason, contacts: rea
       rateIntegral: [...d.control.rateIntegral],
       saturation: { positive: [...d.control.saturation.positive], negative: [...d.control.saturation.negative] },
     },
+    flightLoop: loop ? {
+      mode: loop.mode,
+      positionSetpointM: [...loop.positionSetpointM],
+      velocitySetpointMps: [...loop.velocitySetpointMps],
+      accelerationSetpointMps2: [...loop.accelerationSetpointMps2],
+      velocityIntegral: [...loop.velocityIntegral],
+      saturation: { positive: [...loop.saturation.positive], negative: [...loop.saturation.negative] },
+      requestedMode,
+      hoverThrust: {
+        estimate: loop.hoverThrust.estimate,
+        standardDeviation: variance != null && variance >= 0 ? Math.sqrt(variance) : null,
+        valid: loop.hoverThrust.valid,
+      },
+    } : null,
     ended: endReason,
     contacts: contacts.map((c) => ({ part: c.partId, object: c.with, startS: c.startS, endS: c.endS })),
   }
@@ -96,6 +113,7 @@ export function idleFrame(motorCount: number, startPositionM: Vec3, bodyCom: Vec
     chargeUsedMah: 0,
     densityKgM3: 0,
     control: null,
+    flightLoop: null,
     ended: null,
     contacts: [],
   }
@@ -201,11 +219,12 @@ export class EngineFlightSource implements FlightSource {
         owedMs = due.owedMs
         if (due.steps > 0) {
           try {
-            const result = await this.api.flightStep({ steps: due.steps, setpoint: toEngineSetpoint(setpoint()) })
+            const command = toEngineSetpoint(setpoint())
+            const result = await this.api.flightStep({ steps: due.steps, setpoint: command })
             if (generation !== this.generation) return
             if (!result.ok) return this.fail(generation, result.error.message)
             for (const c of result.data.contacts) this.contacts.set(`${c.partId}|${c.with}|${c.startS}`, c)
-            this.publish(generation, toFlightFrame(result.data.diagnostic, result.data.endReason, [...this.contacts.values()]))
+            this.publish(generation, toFlightFrame(result.data.diagnostic, result.data.endReason, [...this.contacts.values()], command.mode))
             // A cut-off ended the run: sources stop themselves after publishing an ended frame.
             if (result.data.endReason !== null) return this.stop()
           } catch (e) {

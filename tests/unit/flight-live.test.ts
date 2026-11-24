@@ -269,6 +269,27 @@ describe('EngineFlightSource', () => {
     expect(h.errors).toEqual([])
   })
 
+  it('stops requesting steps while paused and drops time and fractions across a resume', async () => {
+    const h = harness()
+    const sticks = mapPx4Sticks(new Set(['ArrowUp']))
+    let paused = false
+    h.source.start(() => paused ? null : { mode: 'position', sticks })
+    await flush()
+    await h.frame(16.75)
+    paused = true
+    h.source.resetStepClock()
+    await h.frame(5000)
+    expect(h.api.flightStep.mock.calls.map(([input]) => input.steps)).toEqual([16])
+    expect(h.frames).toHaveLength(2)
+    paused = false
+    h.source.resetStepClock()
+    await h.frame(16.5)
+    expect(h.api.flightStep.mock.calls.map(([input]) => input)).toEqual([
+      { steps: 16, setpoint: { mode: 'position', sticks } },
+      { steps: 16, setpoint: { mode: 'position', sticks } },
+    ])
+  })
+
   it('carries the current stick setpoint on every request and skips frames shorter than 1 ms', async () => {
     const h = harness()
     let keys = new Set<string>()

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Link, useParams } from 'react-router'
 import type { AssemblyDocument, Project } from '../../../electron/ipc/contract'
 import { PageHeader } from '@/components/page-header'
@@ -6,6 +6,7 @@ import { EmptyState, Section } from '@/components/section'
 import { Button } from '@/components/ui/button'
 import type { TuningOverrides } from '@/domain/controller-params'
 import { thrustFactorReadout } from '@/domain/thrust-curve'
+import { readInputCalibration } from '@/lib/prefs'
 import { runChecks } from '@/domain/checks'
 import { getApi } from '@/services/api'
 import { useProjects } from '@/stores/projects'
@@ -20,11 +21,15 @@ import { checkInput } from '../workshop/check-input'
 import { resolveLinks, type ComponentIndex } from '../workshop/links'
 import { massState, type MassState } from '../workshop/mass-input'
 import { useWorkshopView } from '../workshop/view-store'
+import { createLiveCalibratedInputReader, gamepads } from '../input/device-input'
+import { NO_DEVICES, type DeviceHandle } from '../input/gamepads'
 import { DebugPanel, endReason } from './DebugPanel'
 import { EngineFlightSource, idleFrame } from './EngineFlightSource'
+import { FlightCommandControls, FlightInputSelector, FlightPauseControls } from './FlightControls'
 import { FlightSetup } from './FlightSetup'
 import { FlightViewport } from './FlightViewport'
-import type { FlightFrame, FlightMode } from './frame'
+import type { AutoCommand, FlightFrame, FlightMode, Px4Sticks } from './frame'
+import { flightPause, inputBlocker, pauseLabels, selectFlightCommand, type InputBlocker, type PauseReason } from './flight-controls'
 import { FLIGHT_MODE_LABELS, flightStartWithTuning } from './flight-mode'
 import { FlightModeStatus } from './FlightModeStatus'
 import { assemblyThrust, collisionIndicator, instabilityIndicator, layoutIndicator, massIndicator } from './indicators'
@@ -84,6 +89,14 @@ function heading(frame: FlightFrame) {
   return Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
 }
 
+type InputStatus = { paused: PauseReason | null; blocker: InputBlocker | null; sticks: Px4Sticks | null }
+const readyInput: InputStatus = { paused: null, blocker: null, sticks: null }
+
+function sameSticks(a: Px4Sticks | null, b: Px4Sticks | null) {
+  return a === b || (a !== null && b !== null && Object.is(a.forward, b.forward) && Object.is(a.right, b.right)
+    && Object.is(a.yawRight, b.yawRight) && Object.is(a.throttle, b.throttle))
+}
+
 function FlightRun({ project, doc, display, geo, mass, components }: {
   project: Project; doc: AssemblyDocument; display: AssemblyDocument; geo: FrameGeometry; mass: MassState; components: ComponentIndex
 }) {
@@ -108,6 +121,18 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
   const [history, setHistory] = useState<FlightFrame[]>([])
   const [mode, setMode] = useState<FlightMode>('attitudeHold')
   const selectedMode = useRef<FlightMode>('attitudeHold')
+  const [device, setDevice] = useState<DeviceHandle | null>(null)
+  const devices = useSyncExternalStore(gamepads.subscribe, gamepads.getDevices, () => NO_DEVICES)
+  const deviceOptions = devices.map(({ id, index, connection }) => ({
+    id, index, connection, calibrated: readInputCalibration(id).status === 'saved',
+  }))
+  const selectedDevice = deviceOptions.find(({ id, index }) => id === device?.id && index === device.index)
+  const deviceBlocked = device !== null && (mode === 'attitudeHold' || !selectedDevice?.calibrated)
+  const [inputStatus, setInputStatus] = useState(readyInput)
+  const updateRunInput = useRef<((event: 'pause' | 'resume' | 'input', issue?: InputBlocker) => InputStatus) | null>(null)
+  const activeCommand = useRef<AutoCommand | null>(null)
+  const [command, setCommand] = useState<AutoCommand | null>(null)
+  const [takeoffHeight, setTakeoffHeight] = useState<string | null>('')
   const [saved, setSaved] = useState<TuningOverrides | null>(null)
   const [tuningError, setTuningError] = useState<string | null>(null)
   const [tuningAttempt, setTuningAttempt] = useState(0)
@@ -157,6 +182,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     if (next.ended) {
       if (flushHandle.current !== null) cancelAnimationFrame(flushHandle.current)
       flush()
+      stopSource()
       setRunning(false)
       keys.current.clear()
       setPressed(new Set())
@@ -167,10 +193,15 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     source.current = null
     teardown.current?.()
     teardown.current = null
+    updateRunInput.current = null
+    activeCommand.current = null
+    setInputStatus(readyInput)
+    setCommand(null)
   }
   useEffect(() => {
     const held = keys.current
     const blur = () => {
+      updateRunInput.current?.('input', 'blur')
       keys.current.clear()
       headingHold.current = updateHeadingHold(headingHold.current, keys.current, heading(latest.current))
       setHeldHeading(headingHold.current.headingRad)
@@ -195,17 +226,43 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     }
   }, [])
   const start = () => {
-    if (!gate.ok || engineBlock || !tuning || running) return
+    if (!gate.ok || engineBlock || !tuning || running || deviceBlocked) return
     stopSource()
     const next = new EngineFlightSource(getApi().engine, { ...gate.input, ...tuning.session })
+    const readDevice = selectedDevice ? createLiveCalibratedInputReader(selectedDevice) : null
+    let inputStatus = readyInput
+    const updateInput: NonNullable<typeof updateRunInput.current> = (event, issue) => {
+      const input = readDevice?.() ?? null
+      const blocker = readDevice ? issue ?? inputBlocker(input, document.hasFocus() && !document.hidden) : null
+      const paused = flightPause(inputStatus.paused, event, blocker)
+      const sticks = issue === 'disconnect' || !input?.connected ? null : input.sticks
+      if (paused !== inputStatus.paused) {
+        next.resetStepClock()
+        clearKeys()
+      }
+      if (paused !== inputStatus.paused || blocker !== inputStatus.blocker || !sameSticks(sticks, inputStatus.sticks)) {
+        inputStatus = { paused, blocker, sticks }
+        setInputStatus(inputStatus)
+      }
+      return inputStatus
+    }
     const unsubscribe = [
       next.subscribe(onFrame),
       next.onError((message) => {
+        stopSource()
         setEngineError(message)
         setRunning(false)
         clearKeys()
       }),
     ]
+    if (selectedDevice) {
+      unsubscribe.push(gamepads.subscribe((event) => {
+        if (event === 'disconnect' && !gamepads.getDevices().some(({ id, index }) => id === selectedDevice.id && index === selectedDevice.index)) {
+          updateInput('input', 'disconnect')
+        }
+      }))
+    }
+    updateRunInput.current = updateInput
     source.current = next
     teardown.current = () => unsubscribe.forEach((u) => u())
     clearKeys()
@@ -218,12 +275,30 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     headingHold.current = updateHeadingHold(null, keys.current, heading(idle))
     setHeldHeading(headingHold.current.headingRad)
     next.start(() => {
+      const input = updateInput('input')
+      if (input.paused !== null) return null
       const currentMode = selectedMode.current
-      if (currentMode !== 'attitudeHold') return { mode: currentMode, sticks: mapPx4Sticks(keys.current) }
+      if (currentMode !== 'attitudeHold') {
+        if (activeCommand.current) return { command: activeCommand.current }
+        if (readDevice) return input.sticks && { mode: currentMode, sticks: input.sticks }
+        return { mode: currentMode, sticks: mapPx4Sticks(keys.current) }
+      }
       headingHold.current = updateHeadingHold(headingHold.current, keys.current, heading(latest.current))
       setHeldHeading(headingHold.current.headingRad)
       return mapSticks(keys.current, headingHold.current.headingRad)
     })
+    sticksRegion.current?.focus()
+  }
+  const togglePause = () => {
+    const status = updateRunInput.current?.(inputStatus.paused ? 'resume' : 'pause')
+    if (status?.paused === null) sticksRegion.current?.focus()
+  }
+  const chooseCommand = (next: AutoCommand | null) => {
+    if (!running) return
+    const status = updateRunInput.current?.('input')
+    if (!status || status.paused !== null) return
+    activeCommand.current = selectFlightCommand(activeCommand.current, next, selectedMode.current, status.paused)
+    setCommand(activeCommand.current)
     sticksRegion.current?.focus()
   }
   const findings = useMemo(() => runChecks(checkInput(doc, geo, components)), [doc, geo, components])
@@ -249,28 +324,34 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
             disabled={running && mode === 'attitudeHold'}
             onChange={(event) => {
               const next = event.target.value as FlightMode
-              if (running && next === 'attitudeHold') return
+              if ((running || device !== null) && next === 'attitudeHold') return
               selectedMode.current = next
               setMode(next)
             }}>
             {(Object.keys(FLIGHT_MODE_LABELS) as FlightMode[]).map((option) => (
-              <option key={option} value={option} disabled={running && option === 'attitudeHold'}>{FLIGHT_MODE_LABELS[option]}</option>
+              <option key={option} value={option} disabled={(running || device !== null) && option === 'attitudeHold' && mode !== 'attitudeHold'}>{FLIGHT_MODE_LABELS[option]}</option>
             ))}
           </select>
         </label>
-        <Button size="sm" data-testid="flight-start" disabled={running || !gate.ok || engineBlock !== null || tuning === null} title={engineBlock ?? (gate.ok ? undefined : 'Enter the missing values first (Flight setup).')} onClick={start}>Start</Button>
+        <FlightInputSelector options={deviceOptions} selected={device} locked={running} mode={mode} onChange={setDevice} />
+        <Button size="sm" data-testid="flight-start" disabled={running || deviceBlocked || !gate.ok || engineBlock !== null || tuning === null} title={engineBlock ?? (gate.ok ? undefined : 'Enter the missing values first (Flight setup).')} onClick={start}>Start</Button>
         <Button size="sm" data-testid="flight-stop" disabled={!running} onClick={() => { stopSource(); setRunning(false); clearKeys() }}>Stop</Button>
         <Button size="sm" data-testid="flight-reset" onClick={() => {
           stopSource(); setRunning(false); clearKeys(); historyRef.current = []; setHistory([]); setFrame(idle); latest.current = idle; setEngineError(null)
           headingHold.current = updateHeadingHold(null, keys.current, heading(idle))
           setHeldHeading(headingHold.current.headingRad)
         }}>Reset</Button>
-        <span role="status" data-testid="flight-status">{reason ? `Run ended: ${reason} at ${frame.timeS.toFixed(3)} s` : running ? 'Running' : 'Stopped'}</span>
+        <span role="status" data-testid="flight-status">{reason ? `Run ended: ${reason} at ${frame.timeS.toFixed(3)} s`
+          : running ? inputStatus.paused ? `Paused · ${pauseLabels[inputStatus.paused]}` : 'Running' : 'Stopped'}</span>
         {engineError && <span role="alert" className="text-fault" data-testid="flight-error">Engine: {engineError}</span>}
         <Link className="ml-auto text-accent" to={`/workshop/${project.id}`}>Workshop</Link>
       </div>
       <div className="shrink-0 space-y-1 border-b border-line px-3 py-2 text-[12px] text-fg-muted">
         <FlightModeStatus frame={frame} />
+        {running && <FlightPauseControls paused={inputStatus.paused} blocker={inputStatus.blocker}
+          device={device !== null} sticks={inputStatus.sticks} onToggle={togglePause} />}
+        {running && mode !== 'attitudeHold' && <FlightCommandControls command={command} height={takeoffHeight}
+          paused={inputStatus.paused !== null} onHeight={setTakeoffHeight} onCommand={chooseCommand} />}
         {tuningError ? <p role="alert" className="text-fault">Saved tuning: {tuningError}{' '}
           <button className="text-accent" type="button" onClick={() => { setTuningError(null); setTuningAttempt(tuningAttempt + 1) }}>Retry</button>
         </p> : tuning === null ? <p role="status">Loading saved tuning…</p> : null}
@@ -281,16 +362,16 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-auto @min-[1000px]:flex-row">
         <div className="flex min-h-[320px] min-w-0 flex-1 flex-col">
-          <div ref={sticksRegion} tabIndex={0} aria-label="Keyboard sticks: W S vertical, A D yaw, arrow keys pitch and roll" className="min-h-[240px] flex-1 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
+          <div ref={sticksRegion} tabIndex={0} aria-label={device ? 'Flight view' : 'Keyboard sticks: W S vertical, A D yaw, arrow keys pitch and roll'} className="min-h-[240px] flex-1 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
             onBlur={clearKeys}
             onKeyDown={(event) => {
-              if (!running || !STICK_KEYS.includes(event.code) || event.ctrlKey || event.metaKey || event.altKey) return
+              if (!running || device || inputStatus.paused || !STICK_KEYS.includes(event.code) || event.ctrlKey || event.metaKey || event.altKey) return
               event.preventDefault(); keys.current.add(event.code); setPressed(new Set(keys.current))
               headingHold.current = updateHeadingHold(headingHold.current, keys.current, heading(latest.current))
               setHeldHeading(headingHold.current.headingRad)
             }}
             onKeyUp={(event) => {
-              if (!STICK_KEYS.includes(event.code)) return
+              if (device || !STICK_KEYS.includes(event.code)) return
               event.preventDefault(); keys.current.delete(event.code); setPressed(new Set(keys.current))
               headingHold.current = updateHeadingHold(headingHold.current, keys.current, heading(latest.current))
               setHeldHeading(headingHold.current.headingRad)
@@ -299,13 +380,13 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
           </div>
           <div className="shrink-0 space-y-1 border-t border-line px-3 py-2 text-[12px] text-fg-muted">
             <p>Live engine: this build&apos;s mass, motors, battery and drag, flown by the PX4-style controller. The start and contacts use the project’s ground surface and obstacles.</p>
-            <p>Focus the view while running. W / S: throttle up / down. A / D: yaw left / right. ↑ / ↓: forward / back. ← / →: left / right. Release to centre. Focus loss clears keys.</p>
+            {!device && <p>Focus the view while running. W / S: throttle up / down. A / D: yaw left / right. ↑ / ↓: forward / back. ← / →: left / right. Release to centre. Focus loss clears keys.</p>}
             {mode === 'attitudeHold' ? <>
               <p>Limits: ±2 m/s climb, ±90 deg/s yaw, 30° combined tilt. Centred throttle targets zero vertical speed. Attitude hold uses fixed MPC_THR_HOVER.</p>
               <p className="num">Stick preview: vz {setpoint.verticalVelocityMps.toFixed(1)} m/s · yaw {setpoint.yawRateRadps.toFixed(3)} rad/s · attitude x/y/z/w {setpoint.attitude.map((n) => n.toFixed(3)).join(' / ')}</p>
             </> : <>
               <p>PX4 parameters set the stick response and limits.</p>
-              <p className="num">Stick preview: forward {sticks.forward} · right {sticks.right} · yaw right {sticks.yawRight} · throttle {sticks.throttle}</p>
+              {!device && <p className="num">Stick preview: forward {sticks.forward} · right {sticks.right} · yaw right {sticks.yawRight} · throttle {sticks.throttle}</p>}
             </>}
             <p>Z-up · +X forward · +Y left · body → world quaternion · The run ends at your battery cut-off.</p>
           </div>

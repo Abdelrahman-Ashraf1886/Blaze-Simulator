@@ -54,7 +54,8 @@ export interface FlightSetpoint {
 export type Px4Sticks = NonNullable<FlightStepInput['setpoint']['sticks']>
 export type Px4Mode = Exclude<NonNullable<FlightStepInput['setpoint']['mode']>, 'rates'>
 export type FlightMode = 'attitudeHold' | Px4Mode
-export type SetpointProvider = () => FlightSetpoint | { mode: Px4Mode; sticks: Px4Sticks }
+export type AutoCommand = NonNullable<FlightStepInput['setpoint']['command']>
+export type SetpointProvider = () => FlightSetpoint | { mode: Px4Mode; sticks: Px4Sticks } | { command: AutoCommand }
 /** start begins a fresh run; subscribe returns cleanup. stop is idempotent and preserves the last frame.
  * Sources stop themselves after publishing an ended frame. No callbacks after stop/unsubscribe.
  * Part B owns transport errors/readiness outside this per-sample interface.

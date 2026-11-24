@@ -68,6 +68,8 @@ struct SimRunResult {
     dt_s: f64,
     duration_s: f64,
     gravity_mps2: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_z_m: Option<f64>,
     state: SimState,
     /// 16 hex digits, see `Simulation::state_hash`.
     state_hash: String,
@@ -117,6 +119,7 @@ struct RunArgs {
     wind: Option<Value>,
     ground_effect: Option<Value>,
     start_position_m: Option<[f64; 3]>,
+    start_clearance_m: Option<f64>,
     dt_s: Option<f64>,
     force: Option<[f64; 3]>,
     torque: Option<[f64; 3]>,
@@ -180,6 +183,7 @@ impl Engine {
                 wind,
                 ground_effect,
                 start_position_m,
+                start_clearance_m,
                 dt_s,
                 force_body_n,
                 torque_body_nm,
@@ -194,6 +198,7 @@ impl Engine {
                     wind,
                     ground_effect,
                     start_position_m,
+                    start_clearance_m,
                     dt_s,
                     force: force_body_n,
                     torque: torque_body_nm,
@@ -260,7 +265,7 @@ impl Engine {
     }
 
     fn run(&self, id: u64, args: RunArgs) -> Response {
-        let RunArgs { duration_s, environment, wind, ground_effect, start_position_m, dt_s, force, torque, throttle, rotor_speeds, air_density, controller } = args;
+        let RunArgs { duration_s, environment, wind, ground_effect, start_position_m, start_clearance_m, dt_s, force, torque, throttle, rotor_speeds, air_density, controller } = args;
         let bad = |m: String| Response::err(Some(id), ErrorCode::InvalidParams, m);
         let vehicle = match loaded_vehicle(id, self.vehicle.as_ref()) {
             Ok(v) => v,
@@ -302,10 +307,13 @@ impl Engine {
             return bad("forceBodyN and torqueBodyNm must be finite".into());
         }
         let config = SimConfig { dt_s: dt, ..SimConfig::default() };
-        let mut sim = match Simulation::with_environment(vehicle, config, &environment, start_position_m.unwrap_or([0.0; 3])) {
+        let mut sim = match Simulation::with_start_clearance(
+            vehicle, config, &environment, start_position_m.unwrap_or([0.0; 3]), start_clearance_m,
+        ) {
             Ok(s) => s,
             Err(e) => return bad(e),
         };
+        let start_z_m = start_clearance_m.map(|_| sim.state().position_m[2]);
         // With propulsion the motors, battery and body drag fly the vehicle (engine-core
         // flight.rs), at fixed throttles or under the PX4 controller (closed_loop.rs).
         let mut plant = match &self.propulsion {
@@ -414,6 +422,7 @@ impl Engine {
                 dt_s: dt,
                 duration_s: steps as f64 * dt,
                 gravity_mps2: config.gravity_mps2,
+                start_z_m,
                 state: sim.state(),
                 state_hash: hash_hex(sim.state_hash_with(&hash_words)),
                 contacts,

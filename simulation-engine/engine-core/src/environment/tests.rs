@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::math::STANDARD_GRAVITY as G;
-use crate::sim::{BodyInput, SimConfig, Simulation};
+use crate::sim::{BodyInput, SimConfig, Simulation, START_PENETRATION_TOLERANCE_M};
 use crate::vehicle::fixtures::with_totals;
 use crate::vehicle::{CollisionShape, PartBody, ShapePose, Vehicle};
 use serde_json::json;
@@ -237,6 +237,93 @@ fn flat_terrain(height: f64) -> Environment {
     // Same spacing as the TS fixture, centred about the drop axis.
     let cell = 2.0;
     env(json!({ "terrain": terrain_grid(2, 2, cell, [-cell; 2], &[height; 4], 0.5), "obstacles": [] }))
+}
+
+#[test]
+fn clearance_on_plane_matches_the_lowest_point_of_each_shape() {
+    let vehicle = brick();
+    let CollisionShape::Box { half_extents: [x, y, z] } = &vehicle.definition.parts[0].shape else { unreachable!() };
+    let (x, y, z) = (*x, *y, *z);
+    let half_turn = std::f64::consts::FRAC_PI_4 / 2.0;
+    let tilt = [0.0, half_turn.sin(), 0.0, half_turn.cos()];
+    let identity = [0.0, 0.0, 0.0, 1.0];
+    let cylinder = CollisionShape::Cylinder { radius: x, half_height: z };
+    let hull = CollisionShape::Hull { points: vec![[-x, -y, z], [x, -y, z], [0.0, y, z], [0.0, 0.0, -z]] };
+    let plane = ground(0.5, 0.0);
+    for (shape, quaternion, expected) in [
+        (vehicle.definition.parts[0].shape.clone(), identity, z),
+        (hull, identity, z),
+        (cylinder.clone(), identity, z),
+        (cylinder, tilt, (z + x) * std::f64::consts::FRAC_1_SQRT_2),
+    ] {
+        let mut part = vehicle.definition.parts[0].clone();
+        part.shape = shape;
+        part.pose.quaternion = quaternion;
+        let model = Vehicle::from_definition(with_totals(vec![part])).unwrap();
+        let place = |clearance| Simulation::with_start_clearance(
+            &model, SimConfig::default(), &plane, [x, y, -z], Some(clearance),
+        ).unwrap();
+        let contact = place(0.0);
+        assert!(contact.initial_ground_contact());
+        let [start_x, start_y, start_z] = contact.state().position_m;
+        assert_eq!([start_x, start_y], [x, y]);
+        assert!((start_z - expected).abs() <= START_PENETRATION_TOLERANCE_M);
+        let released = place(z);
+        assert!(!released.initial_ground_contact());
+        assert!((released.state().position_m[2] - (expected + z)).abs() <= START_PENETRATION_TOLERANCE_M);
+    }
+}
+
+#[test]
+fn clearance_finds_a_ridge_and_bridges_a_pit_below_the_belly() {
+    let vehicle = brick();
+    let CollisionShape::Box { half_extents: [half_width, _, half_height] } = vehicle.definition.parts[0].shape else { unreachable!() };
+    let ridge = [0.0, half_height, 0.0];
+    let pit = [0.0, -half_height, 0.0];
+    let config = SimConfig::default();
+    for (profile, expected) in [(ridge, 2.0 * half_height), (pit, half_height)] {
+        // The ridge peak is inside the bottom face; the pit floor is below its edges.
+        let terrain = env(json!({ "terrain": terrain_grid(
+            3, 3, half_width, [-1.5 * half_width; 2], &[profile; 3].concat(), 0.5,
+        ), "obstacles": [] }));
+        let place = |z, clearance| Simulation::with_start_clearance(
+            &vehicle, config, &terrain, [0.0, 0.0, z], Some(clearance),
+        ).unwrap();
+        let contact = place(0.0, 0.0);
+        assert!(contact.initial_ground_contact());
+        let actual = contact.state().position_m[2];
+        assert!((actual - expected).abs() <= START_PENETRATION_TOLERANCE_M, "{actual} vs {expected}");
+        assert_eq!(contact.state_hash(), place(half_height, 0.0).state_hash());
+        let released = place(0.0, half_height);
+        assert!((released.state().position_m[2] - expected - half_height).abs() <= START_PENETRATION_TOLERANCE_M);
+    }
+}
+
+#[test]
+fn clearance_refuses_free_space_no_terrain_overlap_and_obstacle_penetration() {
+    let vehicle = brick();
+    let config = SimConfig::default();
+    let plane = ground(0.5, 0.0);
+    let mut blocked = plane.clone();
+    blocked.obstacles.push(Obstacle {
+        id: "block".into(),
+        center: [0.0, 0.0, 0.0],
+        shape: ObstacleShape::Box { half_extents: [0.05, 0.05, 0.02] },
+        quaternion: [0.0, 0.0, 0.0, 1.0],
+        surface: plane.ground.unwrap(),
+    });
+    let terrain = flat_terrain(0.0);
+    for (environment, x, clearance, message) in [
+        (&Environment::default(), 0.0, 0.0, "requires a ground"),
+        (&terrain, 2.0, 0.0, "no vehicle part above the terrain samples"),
+        (&blocked, 0.0, 0.0, "inside the obstacle block"),
+        (&plane, 0.0, -ALLOWED_LINEAR_ERROR_M, "finite and non-negative"),
+        (&plane, 0.0, f64::INFINITY, "finite and non-negative"),
+        (&plane, 0.0, f64::NAN, "finite and non-negative"),
+    ] {
+        let error = Simulation::with_start_clearance(&vehicle, config, environment, [x, 0.0, 0.0], Some(clearance)).err().unwrap();
+        assert!(error.contains(message), "{error}");
+    }
 }
 
 #[test]

@@ -3,6 +3,10 @@ import { join } from 'node:path'
 
 export const root = join(__dirname, '../..')
 
+/** Real mouse clicks on a test window pass through to what is below; Playwright's input does not use the mouse. */
+export const ignoreRealMouse = (app: ElectronApplication) =>
+  app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.setIgnoreMouseEvents(true)))
+
 export async function launchApp(
   userData: string,
   extraEnv: Record<string, string> = {},
@@ -15,6 +19,7 @@ export async function launchApp(
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
+  await ignoreRealMouse(app)
   return { app, page }
 }
 

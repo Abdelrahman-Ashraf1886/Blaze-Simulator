@@ -9,6 +9,8 @@ const takeoffLabels = {
   flight: 'In flight',
 }
 
+const autoLabels = { takeoff: 'Takeoff', hold: 'Hold', land: 'Land' }
+
 export function FlightModeStatus({ frame }: { frame: FlightFrame }) {
   const loop = frame.flightLoop
   const actual = loop
@@ -18,6 +20,9 @@ export function FlightModeStatus({ frame }: { frame: FlightFrame }) {
   return (
     <div data-testid="flight-mode-status" aria-live="polite">
       <p>Engine mode <span className="font-medium text-fg" data-testid="flight-mode-actual">{actual ?? 'Awaiting diagnostics'}</span></p>
+      {loop?.autoMode && <p data-testid="flight-auto-status">Automatic mode <span className="font-medium text-fg">{autoLabels[loop.autoMode]}</span>
+        {loop.commandFinished ? ' · Finished' : loop.commandFinished === false ? ' · In progress' : ''}
+      </p>}
       {loop?.takeoffState && <p>Takeoff state <span className="font-medium text-fg">{takeoffLabels[loop.takeoffState]}</span></p>}
       {land && <ul className="flex flex-wrap gap-x-3" aria-label="Land detection">
         <li>Freefall {land.freefall ? 'yes' : 'no'}</li>

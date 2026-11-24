@@ -5,6 +5,7 @@
  */
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { Quaternion, Vector3 } from 'three'
 import seed from '../../database/seed/components.v1.json'
 import type { Component } from '../../electron/ipc/component-fields'
 import type { AssemblyDocument, IpcResult, ObstacleDoc } from '../../electron/ipc/contract'
@@ -17,11 +18,12 @@ import {
   type Scenario,
   type ScenarioRunResult,
 } from '../../electron/main/engine/protocol'
-import { dropTest } from '../../electron/main/engine/drop-test'
-import { flightStartSchema } from '../../electron/main/engine/flight-session'
+import { dropTest, type EngineForDropTest } from '../../electron/main/engine/drop-test'
+import { flightStart, flightStartSchema, flightStep } from '../../electron/main/engine/flight-session'
 import { scenarioRun, scenarioRunSchema, type EngineForScenario } from '../../electron/main/engine/scenario-run'
 import { stepTest } from '../../electron/main/engine/step-test'
 import { EngineSupervisor } from '../../electron/main/engine/supervisor'
+import { lowestPoint } from '../../src/domain/collisions'
 import { RECOMMENDED_STEP_METRICS_OPTIONS, stepMetrics } from '../../src/domain/step-response'
 import { thrustFactor, thrustFactorReadout } from '../../src/domain/thrust-curve'
 import { enginePayload, flightGate } from '../../src/features/flight/readiness'
@@ -122,7 +124,7 @@ describe('saved environment payloads', () => {
     })
   })
 
-  it('builds wind, slot radii, terrain and shapes and raises the start on the slope', () => {
+  it('builds wind, slot radii, terrain and shapes and requests ground placement', () => {
     const { doc, geo, components } = catalogueAssembly()
     const saved: AssemblyDocument = {
       ...doc,
@@ -139,11 +141,12 @@ describe('saved environment payloads', () => {
       environment: { ground: null, terrain: { heightsM: [3, 5, 1, 3], friction: 0.4, restitution: 0.2 }, obstacles: [{ type: 'cylinder', radius: 0.25, height: 0.5 }] },
     })
     expect(flightStartSchema.parse(gate.input)).toStrictEqual(gate.input)
-    expect(gate.input.startPositionM[2]).toBeCloseTo(catalogueQuad().input.startPositionM[2] + 3)
+    expect(gate.input).toMatchObject({ startPositionM: [0, 0, 0], startClearanceM: 0 })
     const free = scenarioRunInput(gate, BUILTINS[0]!, { payloadMassKg: null, comOffsetM: null })
     expect(free?.config).toMatchObject({ wind, groundEffect: radii })
     expect(free?.config).not.toHaveProperty('environment')
     expect(free?.config).not.toHaveProperty('startPositionM')
+    expect(free?.config).not.toHaveProperty('startClearanceM')
 
     saved.flight = { ...conditions, wind: { kind: 'none' }, groundEffect: false }
     const calm = flightGate(enginePayload(saved, geo, components, {}, { terrain: { id: terrain.assetId, grid } }), conditions)
@@ -156,16 +159,23 @@ describe('saved environment payloads', () => {
     doc.environment = { ground: { friction: null, restitution: null }, terrain, obstacles: [cylinder] }
     const result = enginePayload(doc, geo, components, {}, { terrain: { id: terrain.assetId, grid } })
     if (!result.ok) throw new Error(JSON.stringify(result.blockers))
-    const { environment, startPositionM: [x, y, z] } = result.payload
-    const startPositionM: [number, number, number] = [x, y, z + 0.2]
-    const runSim = vi.fn(async () => { throw new Error('End of stub run') })
-    await dropTest({ loadVehicle: async () => ({
+    const { environment, startPositionM } = result.payload
+    const startClearanceM = 0.2
+    const startZM = 3 + startClearanceM
+    const runSim = vi.fn<EngineForDropTest['runSim']>(async () => ({
+      steps: 2000, dtS: 0.001, durationS: 2, gravityMps2: 9.80665, startZM,
+      state: { steps: 2000, timeS: 2, positionM: [0, 0, 3], quaternion: [0, 0, 0, 1],
+        comM: [0, 0, 3], linearVelocityMps: [0, 0, 0], angularVelocityRadps: [0, 0, 0], angularVelocityBodyRadps: [0, 0, 0] },
+      stateHash: '0123456789abcdef', contacts: [], contactsDropped: 0,
+    }))
+    const r = await dropTest({ loadVehicle: async () => ({
       valid: true, partCount: 1, motorCount: 4, totals: { massKg: 1, com: [0, 0, 0], inertia: [1, 1, 1, 0, 0, 0] }, missingMass: [],
-    }), runSim }, { vehicle: quad.vehicle, environment, startPositionM, durationS: 2 })
-    expect(runSim).toHaveBeenCalledExactlyOnceWith({ environment, startPositionM, durationS: 2 })
+    }), runSim }, { vehicle: quad.vehicle, environment, startPositionM, startClearanceM, durationS: 2 })
+    expect(runSim).toHaveBeenCalledExactlyOnceWith({ environment, startPositionM, startClearanceM, durationS: 2 })
+    expect(r).toMatchObject({ ok: true, data: { startZM } })
   })
 
-  it('lists unset values, a missing radius, a pending or failed load, and a start outside the grid', () => {
+  it('lists unset values, a missing radius and a pending or failed terrain load', () => {
     const { doc, geo, components, prop } = catalogueAssembly()
     doc.environment = { ground: { friction: null, restitution: null }, terrain, obstacles: [] }
     doc.flight = { ...conditions, groundEffect: null, wind: null }
@@ -183,7 +193,7 @@ describe('saved environment payloads', () => {
       expect.objectContaining({ label: 'Ground effect', detail: expect.stringContaining('Diameter') }),
     ]) })
     const outside = enginePayload(doc, geo, components, {}, { terrain: { id: terrain.assetId, grid: { ...grid, cornerM: [0, 0] } } })
-    expect(outside).toMatchObject({ ok: false, blockers: [expect.objectContaining({ id: 'terrain-grid', detail: expect.stringContaining('outside') })] })
+    expect(outside).toMatchObject({ ok: true, payload: { startClearanceM: 0 } })
   })
 })
 
@@ -295,6 +305,7 @@ describe('the scenario IPC handler', () => {
       airDensityKgM3: gate.input.airDensityKgM3, cutoff: gate.input.cutoff, thrustModelFactor: thrustFactor(gate.thrustFit),
       wind: gate.input.wind, groundEffect: gate.input.groundEffect,
       environment: gate.input.environment, startPositionM: gate.input.startPositionM,
+      startClearanceM: 0,
     })
     expect((await scenarioRun(engine, sent)).ok).toBe(true)
     expect(engine.runScenario).toHaveBeenCalledWith({ scenario, config: sent?.config })
@@ -346,6 +357,47 @@ describe('a real engine', () => {
       sup.on('status', check)
       check()
     })
+  })
+
+  it('starts the catalogue quad grounded on a 45-degree slope and rejects penetration', async () => {
+    const { doc, geo, components } = catalogueAssembly()
+    doc.environment = { ground: { friction: null, restitution: null }, terrain, obstacles: [] }
+    // Sample centres are (±1, ±1) m. The plane z = (x + y) / sqrt(2) has unit slope.
+    const heightsM = new Float64Array([0, Math.SQRT2, -Math.SQRT2, 0])
+    const payload = enginePayload(doc, geo, components, {}, {
+      terrain: { id: terrain.assetId, grid: { ...grid, heightsM } },
+    })
+    if (!payload.ok) throw new Error(JSON.stringify(payload.blockers))
+    const gate = flightGate(payload, conditions)
+    if (!gate.ok) throw new Error(JSON.stringify(gate.blockers))
+    const input = { ...gate.input, controller: { mode: 'position' } as const }
+    const fly = async () => {
+      const start = await flightStart(sup, input)
+      if (!start.ok) throw new Error(start.error.message)
+      const stepped = await flightStep(sup, { steps: 1, setpoint: { command: { type: 'takeoff' } } })
+      if (!stepped.ok) throw new Error(stepped.error.message)
+      expect(stepped.data.diagnostic.flightLoop).toMatchObject({ takeoffState: 'spoolUp' })
+      return { startZM: start.data.diagnostic.state.positionM[2], hash: stepped.data.stateHash }
+    }
+    const placed = await fly()
+    // Rotate the slope normal onto +Z and compute exact support along it.
+    const rotate = new Quaternion().setFromUnitVectors(
+      new Vector3(-0.5, -0.5, Math.SQRT1_2), new Vector3(0, 0, 1),
+    )
+    const support = payload.payload.vehicle.parts.map(({ shape, pose }) => ({
+      shape,
+      position: new Vector3(...pose.position).applyQuaternion(rotate).toArray(),
+      quaternion: rotate.clone().multiply(new Quaternion(...pose.quaternion)).toArray(),
+    }))
+    const expectedZ = -lowestPoint(support) * Math.SQRT2
+    expect(placed.startZM).toBeCloseTo(expectedZ, 9)
+    expect(placed.startZM).toBeGreaterThan(catalogueQuad().input.startPositionM[2])
+    expect(await fly()).toEqual(placed)
+    // START_PENETRATION_TOLERANCE_M from engine-core/src/sim.rs.
+    const lowered = await flightStart(sup, {
+      ...input, startClearanceM: undefined, startPositionM: [0, 0, placed.startZM - 2 * 1e-9],
+    })
+    expect(err(lowered)?.message).toMatch(/^INVALID_PARAMS: .*inside the ground/)
   })
 
   it('flies balanced hover and passes, flies it again to the same hash, and refuses with the engine’s codes', async () => {

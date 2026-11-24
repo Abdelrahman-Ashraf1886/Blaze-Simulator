@@ -69,6 +69,8 @@ struct StartParams {
     ground_effect: Option<Value>,
     #[serde(default)]
     start_position_m: Option<[f64; 3]>,
+    #[serde(default, deserialize_with = "present")]
+    start_clearance_m: Option<f64>,
     /// ISA density at the user's altitude (`src/domain/atmosphere.ts`), kg/m³.
     #[serde(default)]
     air_density_kg_m3: Option<f64>,
@@ -251,7 +253,9 @@ pub fn start(
     let Some(rho) = p.air_density_kg_m3.filter(|r| r.is_finite() && *r > 0.0) else {
         return bad("airDensityKgM3 must be a positive number (ISA at the user's altitude)".into());
     };
-    let sim = match Simulation::with_environment(vehicle, SimConfig::default(), &environment, p.start_position_m.unwrap_or([0.0; 3])) {
+    let sim = match Simulation::with_start_clearance(
+        vehicle, SimConfig::default(), &environment, p.start_position_m.unwrap_or([0.0; 3]), p.start_clearance_m,
+    ) {
         Ok(s) => s,
         Err(e) => return bad(e),
     };

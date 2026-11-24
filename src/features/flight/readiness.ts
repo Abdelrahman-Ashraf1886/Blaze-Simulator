@@ -80,8 +80,9 @@ export interface EnginePayload extends SimFlightEnvironment {
   thrustFit: BuildThrustCurveFit | null
   aero: { cdBody: [number, number, number]; areaM2: [number, number, number] }
   environment: SimEnvironment
-  /** The lowest point of the vehicle starts at the surface height under the start XY. */
+  /** On terrain, the engine resolves Z using startClearanceM. */
   startPositionM: [number, number, number]
+  startClearanceM?: number
 }
 
 export type PayloadResult = { ok: true; payload: EnginePayload } | { ok: false; blockers: FlightBlocker[] }
@@ -148,8 +149,6 @@ export function enginePayload(
     // `readyToFly` is empty, so this cannot happen for a consistent assembly; refuse rather than guess.
     return { ok: false, blockers: [{ id: 'incomplete', label: 'The build is not complete', detail: 'The engine payload could not be built from this assembly.', link: null }] }
   }
-  const low = lowestPoint(vehicle.parts.map((p) => ({ shape: p.shape, ...p.pose })))
-  const { surfaceHeightM } = env
   return {
     ok: true,
     payload: {
@@ -161,7 +160,9 @@ export function enginePayload(
       environment: env.environment,
       ...(wind.wind === undefined ? {} : { wind: wind.wind }),
       ...(groundEffect.radiiM === undefined ? {} : { groundEffect: groundEffect.radiiM }),
-      startPositionM: [0, 0, surfaceHeightM === 0 ? -low : surfaceHeightM - low],
+      ...(env.environment.terrain
+        ? { startPositionM: [0, 0, 0], startClearanceM: 0 }
+        : { startPositionM: [0, 0, -lowestPoint(vehicle.parts.map((p) => ({ shape: p.shape, ...p.pose })))] }),
     },
   }
 }
@@ -187,6 +188,7 @@ export function flightGate(result: PayloadResult, c: FlightConditions): FlightGa
       airDensityKgM3: airDensityFor(c.ambientAltitudeM, c.temperatureC),
       cutoff: { type: c.cutoffType, value: c.cutoffValue },
       startPositionM: payload.startPositionM,
+      ...(payload.startClearanceM === undefined ? {} : { startClearanceM: payload.startClearanceM }),
     },
   }
 }

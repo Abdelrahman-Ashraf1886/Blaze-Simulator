@@ -96,6 +96,8 @@ pub enum Command {
         ground_effect: Option<Value>,
         #[serde(default)]
         start_position_m: Option<[f64; 3]>,
+        #[serde(default, deserialize_with = "present")]
+        start_clearance_m: Option<f64>,
         #[serde(default)]
         dt_s: Option<f64>,
         #[serde(default)]
@@ -443,6 +445,7 @@ mod tests {
                 wind: None,
                 ground_effect: None,
                 start_position_m: None,
+                start_clearance_m: None,
                 dt_s: None,
                 force_body_n: Some([0.0, 0.0, 9.0]),
                 torque_body_nm: None,

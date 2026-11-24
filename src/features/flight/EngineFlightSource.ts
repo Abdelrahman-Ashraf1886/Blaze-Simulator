@@ -27,7 +27,7 @@ export function stepsForElapsed(owedMs: number): { steps: number; owedMs: number
  * feed-forward and the attitude. Each request carries the current one for all its steps.
  */
 export function toEngineSetpoint(s: ReturnType<SetpointProvider>): FlightStepInput['setpoint'] {
-  if ('mode' in s) return s
+  if ('mode' in s || 'command' in s) return s
   return { attitude: [...s.attitude], yawRateRadps: s.yawRateRadps, climbRateMps: s.verticalVelocityMps }
 }
 
@@ -153,6 +153,7 @@ export class EngineFlightSource implements FlightSource {
   private generation = 0
   private sessionOpen = false
   private cancelFrame: (() => void) | null = null
+  private clockResetAt: number | null = null
   private contacts = new Map<string, EngineContact>()
   private readonly now: () => number
   private readonly schedule: (callback: () => void) => () => void
@@ -177,16 +178,22 @@ export class EngineFlightSource implements FlightSource {
     return () => { this.errorListeners.delete(listener) }
   }
 
-  start(setpoint: SetpointProvider) {
+  start(setpoint: () => ReturnType<SetpointProvider> | null) {
     this.stop()
     this.contacts.clear()
     void this.run(this.generation, setpoint)
+  }
+
+  /** A pause or resume discards elapsed time and any fractional step carried over. */
+  resetStepClock() {
+    this.clockResetAt = this.now()
   }
 
   stop() {
     this.generation++
     this.cancelFrame?.()
     this.cancelFrame = null
+    this.clockResetAt = null
     if (this.sessionOpen) {
       this.sessionOpen = false
       void Promise.resolve(this.api.flightEnd()).catch(() => {})
@@ -206,7 +213,7 @@ export class EngineFlightSource implements FlightSource {
     }
   }
 
-  private async run(generation: number, setpoint: SetpointProvider) {
+  private async run(generation: number, setpoint: () => ReturnType<SetpointProvider> | null) {
     try {
       const started = await this.api.flightStart(this.input)
       if (generation !== this.generation) {
@@ -222,20 +229,30 @@ export class EngineFlightSource implements FlightSource {
       const tick = async () => {
         if (generation !== this.generation) return
         const t = this.now()
+        if (this.clockResetAt !== null) {
+          last = Math.max(last, this.clockResetAt)
+          owedMs = 0
+          this.clockResetAt = null
+        }
         owedMs += t - last
         last = t
         const due = stepsForElapsed(owedMs)
         owedMs = due.owedMs
         if (due.steps > 0) {
           try {
-            const command = toEngineSetpoint(setpoint())
-            const result = await this.api.flightStep({ steps: due.steps, setpoint: command })
-            if (generation !== this.generation) return
-            if (!result.ok) return this.fail(generation, result.error.message)
-            for (const c of result.data.contacts) this.contacts.set(`${c.partId}|${c.with}|${c.startS}`, c)
-            this.publish(generation, toFlightFrame(result.data.diagnostic, result.data.endReason, [...this.contacts.values()], command.mode))
-            // A cut-off ended the run: sources stop themselves after publishing an ended frame.
-            if (result.data.endReason !== null) return this.stop()
+            const input = setpoint()
+            if (input === null) {
+              owedMs = 0
+            } else {
+              const command = toEngineSetpoint(input)
+              const result = await this.api.flightStep({ steps: due.steps, setpoint: command })
+              if (generation !== this.generation) return
+              if (!result.ok) return this.fail(generation, result.error.message)
+              for (const c of result.data.contacts) this.contacts.set(`${c.partId}|${c.with}|${c.startS}`, c)
+              this.publish(generation, toFlightFrame(result.data.diagnostic, result.data.endReason, [...this.contacts.values()], command.mode))
+              // A cut-off ended the run: sources stop themselves after publishing an ended frame.
+              if (result.data.endReason !== null) return this.stop()
+            }
           } catch (e) {
             return this.fail(generation, (e as Error).message)
           }

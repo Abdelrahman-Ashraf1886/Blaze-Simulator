@@ -241,12 +241,15 @@ export const ControllerRequestSchema = z.strictObject({
   }
 })
 
+export const StartClearanceSchema = num.refine((v) => v >= 0, 'must be non-negative')
+
 export const SimRunParamsSchema = z.strictObject({
   durationS: num.refine((v) => v > 0, 'must be positive'),
   environment: EnvironmentSchema,
   ...flightEnvironmentShape,
   /** Body origin at the start, world frame (default the origin). */
   startPositionM: vec3.optional(),
+  startClearanceM: StartClearanceSchema.optional(),
   dtS: num.refine((v) => v > 0, 'must be positive').optional(),
   /** Body loads, only for a vehicle loaded without propulsion. */
   forceBodyN: vec3.optional(),
@@ -346,6 +349,7 @@ export const SimRunResultSchema = z.strictObject({
   dtS: num,
   durationS: num,
   gravityMps2: num,
+  startZM: num.optional(),
   state: SimStateSchema,
   stateHash: z.string().regex(/^[0-9a-f]{16}$/),
   /** Which part touched what, and when (s); `endS` null = still touching at the end. */
@@ -393,6 +397,7 @@ export const FlightSessionStartParamsSchema = z.strictObject({
   ...flightEnvironmentShape,
   /** Body origin at the start, world frame. */
   startPositionM: vec3.optional(),
+  startClearanceM: StartClearanceSchema.optional(),
   /** ISA density at the user's altitude (src/domain/atmosphere.ts), kg/m³; each motor's thrust and torque scale by it relative to that motor's own reference density (propulsion definition). */
   airDensityKgM3: num.refine((v) => v > 0, 'must be positive'),
   /** The user's choice; no default. */
@@ -592,6 +597,7 @@ export const ScenarioConfigSchema = z.strictObject({
   ...flightEnvironmentShape,
   /** With an environment: the body origin at the start, world frame. */
   startPositionM: vec3.optional(),
+  startClearanceM: StartClearanceSchema.optional(),
 })
 export type ScenarioConfigParams = z.infer<typeof ScenarioConfigSchema>
 

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { ignoreRealMouse } from './helpers'
 
 const root = join(__dirname, '../..')
 /** In Node, the `electron` package resolves to the path of the Electron binary. */
@@ -21,6 +22,7 @@ async function launch(extraEnv: Record<string, string> = {}): Promise<{ app: Ele
   running.push(app)
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
+  await ignoreRealMouse(app)
   return { app, page }
 }
 

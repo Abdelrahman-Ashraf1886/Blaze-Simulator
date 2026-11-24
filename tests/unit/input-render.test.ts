@@ -87,10 +87,11 @@ it('gives flight consumers mapped sticks, blur, and disconnect for the selected 
     addEventListener: (event: string, listener: Listener) => events.set(event, listener),
     removeEventListener: (event: string) => events.delete(event),
   })
-  const { gamepads, getCalibratedInput, subscribeCalibratedInput } = await server.ssrLoadModule('/src/features/input/device-input.ts') as {
+  const { gamepads, getCalibratedInput, subscribeCalibratedInput, createLiveCalibratedInputReader } = await server.ssrLoadModule('/src/features/input/device-input.ts') as {
     gamepads: ReturnType<typeof createGamepadService>
     getCalibratedInput: (handle: ReturnType<ReturnType<typeof createGamepadService>['getDevices']>[number]) => unknown
     subscribeCalibratedInput: (handle: ReturnType<ReturnType<typeof createGamepadService>['getDevices']>[number], listener: ReturnType<typeof vi.fn>) => () => void
+    createLiveCalibratedInputReader: (handle: ReturnType<ReturnType<typeof createGamepadService>['getDevices']>[number]) => () => unknown
   }
   const stopPolling = gamepads.subscribe(() => {})
   frame?.()
@@ -99,6 +100,12 @@ it('gives flight consumers mapped sticks, blur, and disconnect for the selected 
   prefs.writeInputCalibration('Radio', calibration)
   const sticks = { forward: 1, right: 1, yawRight: 1, throttle: 1 }
   expect(getCalibratedInput(handle)).toEqual({ connected: true, sticks })
+  const readLive = createLiveCalibratedInputReader(handle)
+  expect(readLive()).toEqual({ connected: true, sticks })
+  pads = [{ ...pad, axes: [0.5, -0.75, 0.25, 0] }, otherPad]
+  expect(readLive()).toEqual({ connected: true, sticks: { forward: 0, right: 0.25, yawRight: 0.5, throttle: 0.75 } })
+  pads = [{ ...pad, axes: [] }, otherPad]
+  expect(readLive()).toEqual({ connected: true, sticks: null })
   const listener = vi.fn()
   const stop = subscribeCalibratedInput(handle, listener)
   events.get('blur')?.()
@@ -107,6 +114,9 @@ it('gives flight consumers mapped sticks, blur, and disconnect for the selected 
   events.get('gamepaddisconnected')?.({ gamepad: pad })
   expect(listener).toHaveBeenLastCalledWith('disconnect', { connected: false, sticks: null })
   expect(getCalibratedInput(handle)).toEqual({ connected: false, sticks: null })
+  expect(readLive()).toEqual({ connected: false, sticks: null })
+  pads = [pad, otherPad]
+  expect(readLive()).toEqual({ connected: true, sticks })
   stop()
   stopPolling()
   expect(events.size).toBe(0)

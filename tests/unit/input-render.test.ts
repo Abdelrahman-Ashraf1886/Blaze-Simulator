@@ -121,3 +121,57 @@ it('gives flight consumers mapped sticks, blur, and disconnect for the selected 
   stopPolling()
   expect(events.size).toBe(0)
 })
+
+it('renders guided calibration only for a recognized standard PlayStation controller', async () => {
+  type Device = ReturnType<ReturnType<typeof createGamepadService>['getDevices']>[number]
+  const { CalibrationPanel } = await server.ssrLoadModule('/src/features/input/CalibrationPanel.tsx') as {
+    CalibrationPanel: ComponentType<{ device: Device }>
+  }
+  const device: Device = {
+    id: 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)',
+    connection: 0, index: 0, mapping: 'standard', axes: [0, 0, 0, 0], buttons: [],
+  }
+  const guided = renderToStaticMarkup(createElement(CalibrationPanel, { device }))
+  for (const label of ['PlayStation stick mode', 'Mode 1', 'Mode 2', 'Mode 3', 'Mode 4', 'Start guided setup', 'Left stick X']) {
+    expect(guided).toContain(label)
+  }
+  const generic = renderToStaticMarkup(createElement(CalibrationPanel, { device: { ...device, mapping: '' } }))
+  expect(generic).toContain('Axis 0')
+  expect(generic).not.toContain('Start guided setup')
+})
+
+it('stores the flight view preference and falls back to on for corrupt storage', async () => {
+  const { localStorage } = await loadPrefs()
+  const { readFlightDeviceButtons, writeFlightDeviceButtons } = await server.ssrLoadModule('/src/lib/prefs.ts') as {
+    readFlightDeviceButtons: () => boolean
+    writeFlightDeviceButtons: (enabled: boolean) => void
+  }
+  expect(readFlightDeviceButtons()).toBe(true)
+  writeFlightDeviceButtons(false)
+  expect(readFlightDeviceButtons()).toBe(false)
+  writeFlightDeviceButtons(true)
+  expect(readFlightDeviceButtons()).toBe(true)
+  for (const corrupt of ['"false"', 'null', '{']) {
+    localStorage.setItem('flight.deviceButtons', corrupt)
+    expect(readFlightDeviceButtons()).toBe(true)
+  }
+})
+
+it('reads PlayStation buttons in the same live sample as calibrated sticks', async () => {
+  const { prefs } = await loadPrefs()
+  const id = 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)'
+  prefs.writeInputCalibration(id, calibration)
+  const buttons = [{ value: 1, pressed: true }]
+  const pad = { id, index: 0, mapping: 'standard', connected: true, axes: [0.5, -0.75, 0.25, 0], buttons }
+  const getGamepads = vi.fn(() => [pad])
+  vi.stubGlobal('navigator', { getGamepads })
+  const { createLiveCalibratedInputReader } = await server.ssrLoadModule('/src/features/input/device-input.ts') as {
+    createLiveCalibratedInputReader: (handle: { id: string; index: number; connection: number }) => () => unknown
+  }
+  const read = createLiveCalibratedInputReader({ id, index: 0, connection: 1 })
+  const sticks = { forward: 0, right: 0.25, yawRight: 0.5, throttle: 0.75 }
+  expect(read()).toEqual({ connected: true, sticks, buttons })
+  expect(getGamepads).toHaveBeenCalledOnce()
+  pad.mapping = ''
+  expect(read()).toEqual({ connected: true, sticks: { ...sticks, throttle: -0.75 } })
+})

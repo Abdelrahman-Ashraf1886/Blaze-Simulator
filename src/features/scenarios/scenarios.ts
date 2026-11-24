@@ -7,7 +7,7 @@ import type { ScenarioRunInput } from '../../../electron/ipc/contract'
 import type { TuningOverrides } from '../../domain/controller-params'
 import { thrustFactor } from '../../domain/thrust-curve'
 import type { BuiltinScenarioName } from '../../../electron/main/engine/protocol'
-import type { FlightGate } from '../flight/readiness'
+import type { FlightGate, FlightLink, PayloadResult } from '../flight/readiness'
 
 /** What the user enters for a scenario. null = not entered. SI (kg, m); the page converts from g and mm. */
 export interface ScenarioEntries {
@@ -25,6 +25,7 @@ export interface BuiltinInfo {
   entry: 'payloadMassKg' | 'comOffsetM' | null
   /** True when the scenario passes by showing the failure it predicts (so a pass is not a flight that holds). */
   expectsFailure: boolean
+  projectInput?: 'meanWind' | 'gust' | 'groundPlane' | 'terrain'
 }
 
 export const BUILTINS: readonly BuiltinInfo[] = [
@@ -68,7 +69,45 @@ export const BUILTINS: readonly BuiltinInfo[] = [
     entry: null,
     expectsFailure: true,
   },
+  {
+    name: 'wind_hold', title: 'Wind hold', entry: null, expectsFailure: false, projectInput: 'meanWind',
+    tests: 'Centred Position sticks hold in the saved mean wind in free space. The engine compares settled tilt with the body-drag force balance and checks the position error.',
+  },
+  {
+    name: 'gust', title: 'Gust recovery', entry: null, expectsFailure: false, projectInput: 'gust',
+    tests: 'Centred Position sticks hold in free space for 10 s, then the saved gust clock starts. The report shows peak displacement and the time to recover after the gust reaches full strength.',
+  },
+  {
+    name: 'takeoff_hold_land', title: 'Takeoff, hold and land', entry: null, expectsFailure: false, projectInput: 'groundPlane',
+    tests: 'The PX4 modes take off from the project’s ground plane, hold, and land. The engine checks state order, hold error and pre-contact vertical speed.',
+  },
+  {
+    name: 'terrain', title: 'Takeoff and land on terrain', entry: null, expectsFailure: false, projectInput: 'terrain',
+    tests: 'The same sequence runs on the saved terrain grid at the project’s flight start clearance. Heights are relative to where the run started.',
+  },
 ]
+
+export const PROJECT_INPUTS = {
+  meanWind: { label: 'Mean wind', link: { to: 'flight-field', elementId: 'wind-setting' } },
+  gust: { label: 'Gust', link: { to: 'flight-field', elementId: 'wind-gust' } },
+  groundPlane: { label: 'Ground plane', link: { to: 'environment', elementId: 'ground-friction' } },
+  terrain: { label: 'Terrain grid', link: { to: 'environment', elementId: 'terrain-grid' } },
+} satisfies Record<NonNullable<BuiltinInfo['projectInput']>, { label: string; link: FlightLink }>
+
+function hasProjectInput(info: BuiltinInfo, input: Pick<Extract<PayloadResult, { ok: true }>['payload'], 'wind' | 'environment'>) {
+  switch (info.projectInput) {
+    case 'meanWind': return !!input.wind?.mean
+    case 'gust': return !!input.wind?.gust
+    case 'groundPlane': return !!input.environment.ground
+    case 'terrain': return !!input.environment.terrain
+    default: return true
+  }
+}
+
+export function missingProjectInput(info: BuiltinInfo, payload: PayloadResult): string | null {
+  if (!info.projectInput || !payload.ok || hasProjectInput(info, payload.payload)) return null
+  return `Save a project setting for ${PROJECT_INPUTS[info.projectInput].label.toLowerCase()} to run this scenario.`
+}
 
 /** What a scenario still needs from the user before it can run, or null. */
 export function missingEntry(info: BuiltinInfo, entries: ScenarioEntries): string | null {
@@ -83,14 +122,13 @@ export function missingEntry(info: BuiltinInfo, entries: ScenarioEntries): strin
  * The baseline uses the PX4 gains with the build's effective thrust factor.
  */
 export function scenarioRunInput(gate: FlightGate, info: BuiltinInfo, entries: ScenarioEntries, saved?: TuningOverrides): ScenarioRunInput | null {
-  if (missingEntry(info, entries)) return null
-  // The existing built-ins start in free space (engine-host/src/scenario_run.rs:90).
+  if (!gate.ok || missingEntry(info, entries) || !hasProjectInput(info, gate.input)) return null
   return scenarioRequest(gate, {
     type: 'builtin',
     name: info.name,
     ...(info.entry === 'payloadMassKg' ? { massKg: entries.payloadMassKg! } : {}),
     ...(info.entry === 'comOffsetM' ? { offsetM: entries.comOffsetM! } : {}),
-  }, 'free-space', saved)
+  }, info.projectInput === 'terrain' || info.projectInput === 'groundPlane' ? 'saved-environment' : 'free-space', saved)
 }
 
 /** Keep a scenario's existing start type. The host needs both the environment and start for surface runs. */

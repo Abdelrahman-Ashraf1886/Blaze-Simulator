@@ -450,7 +450,7 @@ export type FlightStepResult = FlightSessionStepResult
 export type FlightEndResult = FlightSessionEndResult
 
 /**
- * A scripted scenario (4.9 part B) flown on the build. As for a flight, the renderer builds the vehicle, propulsion
+ * A scripted ClosedLoop or FlightLoop scenario flown on the build. As for a flight, the renderer builds the vehicle, propulsion
  * and aero payloads from the assembly; main validates all of it with the protocol schemas, loads the vehicle and
  * runs the scenario. Nothing is filled in: the air density, the cut-off and a built-in's parameters are the caller's.
  */
@@ -461,7 +461,7 @@ export interface ScenarioRunInput {
   propulsion: unknown
   /** Body drag: per-axis C_d (entered) and projected areas (derived, src/domain/aero.ts). */
   aero: unknown
-  /** A built-in with its parameters, or a full scenario. */
+  /** A built-in with its inputs, or a custom script. */
   scenario: ScenarioRequest
   /** Air density, the user's cut-off, gain overrides, optionally a ground and its start position. */
   config: ScenarioConfigParams

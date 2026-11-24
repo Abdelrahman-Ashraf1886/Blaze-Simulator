@@ -38,3 +38,20 @@ export function selectFlightCommand(
   if (mode === 'attitudeHold') return null
   return paused === null ? next : current
 }
+
+export function flightPauseAction(paused: PauseReason | null, blocker: InputBlocker | null, onToggle: () => void) {
+  return { label: paused ? 'Resume' : 'Pause', disabled: paused !== null && blocker !== null, run: onToggle }
+}
+
+export function flightCommandActions(command: AutoCommand | null, height: string | null, paused: boolean,
+  onCommand: (command: AutoCommand | null) => void,
+) {
+  const takeoff = height === null ? null : takeoffCommand(height)
+  const actions = {
+    takeoff: { label: 'Takeoff', disabled: paused || takeoff === null, run: () => { if (takeoff) onCommand(takeoff) } },
+    hold: { label: 'Hold', disabled: paused, run: () => onCommand({ type: 'hold' }) },
+    land: { label: 'Land', disabled: paused, run: () => onCommand({ type: 'land' }) },
+    manual: { label: 'Manual', disabled: paused || command === null, run: () => onCommand(null) },
+  }
+  return { actions, invalidAltitude: takeoff === null }
+}

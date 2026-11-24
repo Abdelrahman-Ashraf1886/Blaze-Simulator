@@ -185,6 +185,10 @@ impl FlightLoop {
         &self.flight
     }
 
+    pub(crate) fn flight_mut(&mut self) -> &mut Flight {
+        &mut self.flight
+    }
+
     pub fn with_thrust_model(mut self, factor: f64) -> Result<Self, String> {
         self.motor_output.set_factor(factor)?;
         Ok(self)

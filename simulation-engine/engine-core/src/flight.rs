@@ -312,6 +312,10 @@ impl Flight {
         self.wind = Some(wind);
     }
 
+    pub(crate) fn gust_distance_m(&self) -> Option<f64> {
+        self.gust.as_ref().map(GustState::distance_m)
+    }
+
     /// Enable the single-rotor model with one finite, positive radius in metres
     /// per vehicle motor. Hub positions are the vehicle's motor positions.
     /// Supply the actual air density to `new` or `scale_to_air_density` first.

@@ -127,7 +127,10 @@ describe('the built-ins', () => {
   it('ask for an entry only where the engine takes a parameter, and flag the two that pass by failing', () => {
     expect(Object.fromEntries(BUILTINS.map((b) => [b.name, b.entry]))).toEqual({
       balanced_hover: null, payload: 'payloadMassKg', overweight_payload: null, com_offset: 'comOffsetM', com_offset_beyond_authority: null,
+      wind_hold: null, gust: null, takeoff_hold_land: null, terrain: null,
     })
+    expect(Object.fromEntries(BUILTINS.filter((b) => b.projectInput).map((b) => [b.name, b.projectInput])))
+      .toEqual({ wind_hold: 'meanWind', gust: 'gust', takeoff_hold_land: 'groundPlane', terrain: 'terrain' })
     expect(BUILTINS.filter((b) => b.expectsFailure).map((b) => b.name)).toEqual(['overweight_payload', 'com_offset_beyond_authority'])
   })
   it('say what is missing before an entered scenario can run', () => {

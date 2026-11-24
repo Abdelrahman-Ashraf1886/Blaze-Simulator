@@ -86,7 +86,10 @@ test('scenarios: the checklist gates the page; a ready build runs balanced hover
   await open(page, 'Scenario quad', 'scenarios')
 
   // The page lists the five built-ins; the build is complete but the flight conditions are the user's entries.
-  await expect(page.getByTestId('scenario-list').locator('> li')).toHaveCount(5)
+  await expect(page.getByTestId('scenario-list').locator('> li')).toHaveCount(9)
+  await expect(page.getByTestId('scenario-wind_hold').getByRole('link', { name: /Flight setup.*Mean wind/ })).toBeVisible()
+  await expect(page.getByTestId('scenario-gust').getByRole('link', { name: /Flight setup.*Gust/ })).toBeVisible()
+  await expect(page.getByTestId('scenario-terrain').getByRole('link', { name: /Workshop environment.*Terrain grid/ })).toBeVisible()
   const item = (id: string) => page.locator(`[data-testid=scenarios-blocker][data-item="${id}"]`)
   await expect(page.getByTestId('scenarios-blockers')).toBeVisible()
   await expect(page.getByTestId('scenarios-blocker')).toHaveCount(2)
@@ -120,6 +123,11 @@ test('scenarios: the checklist gates the page; a ready build runs balanced hover
   await expect(page.getByTestId('scenarios-conditions')).toContainText('1.225 kg/m³')
   await expect(page.getByTestId('scenarios-conditions')).toContainText('12 V')
   await expect(page.getByTestId('scenario-run-balanced_hover')).toBeEnabled()
+  await expect(page.getByTestId('scenario-run-takeoff_hold_land')).toBeEnabled()
+  for (const id of ['wind_hold', 'gust', 'terrain']) {
+    await expect(page.getByTestId(`scenario-run-${id}`)).toBeDisabled()
+    await expect(page.getByTestId(`scenario-need-${id}`)).toBeVisible()
+  }
 
   // Balanced hover: no entry needed; the engine flies it and every check passes.
   await page.getByTestId('scenario-run-balanced_hover').click()
@@ -151,6 +159,10 @@ test('scenarios: the checklist gates the page; a ready build runs balanced hover
   await expect(page.getByTestId('scenario-run-all')).toBeEnabled({ timeout: 120_000 })
   for (const name of ['balanced_hover', 'payload', 'overweight_payload', 'com_offset_beyond_authority']) {
     await expect(page.getByTestId(`scenario-result-${name}`)).toBeVisible()
+  }
+  await expect(page.getByTestId('scenario-result-takeoff_hold_land')).toBeVisible()
+  for (const id of ['wind_hold', 'gust', 'terrain']) {
+    await expect(page.getByTestId(`scenario-result-${id}`)).toHaveCount(0)
   }
   await expect(page.getByTestId('scenario-result-com_offset')).toHaveCount(0)
   await expect(page.getByTestId('scenario-need-com_offset')).toContainText('offset')

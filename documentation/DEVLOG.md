@@ -1,5 +1,28 @@
 # Development log
 
+## 2026-11-24 — Phase 6 flight environment
+
+- **6.0a–6.5.** Recorded the PX4 v1.13.3 references and MIL-F-8785C shear and gust sources. Wind pushes through body drag only. Shear clamps and sets the above-range flag above 1000 ft. The discrete gust ramps with mean-air-relative distance and stays at its final amplitude. Optional Cheeseman–Bennett ground effect is a single-rotor thrust correction without rotor interaction. Terrain and fixed obstacles enter the collision world, and start clearance resolves against the build’s collision shapes. The host and storage carry the environment data, and sessions retain accepted inputs for deterministic in-memory replay. The 6.5 host step costs were 1.3 ms / 4.2 ms per 100 steps (milestone measurements supplied for this entry). 6.0b stream measurement remains pending the user’s pass limits. [ADR 0010](adr/0010-flight-environment.md)
+- **6.6–6.9.** Added calibrated Gamepad API inputs, takeoff/hold/land controls, chase/orbit/fixed/FPV cameras and the environment editor and readouts. The PX4 controller receives perfect state. Auto modes smooth vertical motion and omit XY and multi-waypoint smoothing, time stretching and axis synchronization. Hold at speed pulls back toward the captured position. Turbulence and return remain open. [Auto modes](../simulation-engine/engine-core/src/auto_modes.rs#L1-L6) · [Auto state and setpoints](../simulation-engine/engine-core/src/auto_modes.rs#L55-L129)
+- **6.10.** Added four FlightLoop scripts to Scenarios. Wind hold uses the saved mean wind. Gust loads the saved gust after the 10 s pre-hold and honours its start offset from that point. The land sequences reproduce the 6.7 takeoff/hold/land windows, including PX4 spool-up and ramp. The Flight idle preview seats the build at the sampled terrain height minus the lowest collision point. The engine resolves the actual start. [Scenario implementation](../simulation-engine/engine-core/src/scenario/flight_script.rs) · [Preview](../src/features/flight/FlightPage.tsx#L117-L129)
+
+### Catalogue acceptance
+
+The 4.9 Quad X used sea-level ISA, a 12 V battery cutoff and its derived thrust-model factor. The example project used **5 m/s** constant wind from 90° and an **8 m/s** gust ramp over **4 m** with saved offset **0 s**. The 5 m/s setting was chosen for this test only. Both landing sequences received the saved wind. The landing scenarios use the project's own ground; this fixture's plane has friction 0.5 and restitution 0, as in 6.7. The terrain used the existing 45° fixture, friction 0.4, restitution 0.2 and zero start clearance. Ground effect was off. [Build and inputs](../tests/unit/scenario-protocol.test.ts#L62-L113) · [Acceptance fixture](../tests/unit/scenario-protocol.test.ts#L444-L472)
+
+Horizontal radial error and absolute vertical error each had to be below 0.01 m, from the 6.7 hold test. Wind tilt had to be within 0.1°, the centred-attitude tolerance, of the equilibrium obtained by solving for thrust direction against weight and the engine’s per-axis drag at rest. Gust had to return to the same position band before the run ended and stay there. The landing limit was PX4 `MPC_LAND_SPEED` at 0.7 m/s, measured from the last pre-contact vertical velocity. State order and a final ready-and-landed state were also required. Heights are relative to the start. [6.7 tolerances](../simulation-engine/engine-core/src/flight_loop/tests.rs#L98-L119) · [6.7 sequence](../simulation-engine/engine-core/src/flight_loop/tests.rs#L302-L350) · [Landing-speed source](../database/reference/physics.v1.json#L1050-L1057)
+
+| Scenario | Verdict | Measured |
+| --- | --- | --- |
+| `wind_hold` | Pass | At 20 s, horizontal/vertical error 0.001306 / +0.00007138 m. Tilt 0.685681°, force-balance tilt 0.685959°. |
+| `gust` | Pass | 0.332565 m peak displacement. Recovery 17.748 s after full strength in the 60 s run. |
+| `takeoff_hold_land` | Pass | Hold height 2.500021 m. Horizontal/vertical error 0.007781 / +0.00002146 m. Touchdown 0.595345 m/s. Spool, ramp, flight, hold, land, ground detected, maybe landed, landed and ready at 0.001, 1.001, 4.001, 5.872, 24.001, 28.490, 28.840, 29.180 and 29.181 s. |
+| `terrain` | Fail | Hold height 2.500301 m. Horizontal/vertical error 0.026027 / +0.00030140 m. Touchdown 0.636171 m/s. Spool, ramp, flight, hold and land at 0.001, 1.001, 4.001, 7.280 and 24.001 s. The detector did not reach ground contact, maybe landed, landed or ready by 34 s. |
+
+Friction 0.4 is below tan 45°, so nothing can rest on the steep slope; its failure was not traced further. On a 5° grid with the same friction the sequence passes: horizontal/vertical hold error 0.007855 / +0.0000192 m, touchdown 0.541750 m/s, landed at 29.070 s.
+
+All ten complete ClosedLoop reports from the 4.9 catalogue matched the pre-change engine build byte for byte with the thrust curve off and on. Their state hashes also matched the recorded 5.9 baselines. The PX4 snapshot lacked `src/modules/navigator/mission_params.c`. The 2.5 m takeoff target comes from the existing reference record and 6.7 fixture. [Recorded parameter](../database/reference/physics.v1.json#L1332-L1340)
+
 ## 2026-11-24 — Phase 5, milestone 5.9
 
 - **A.** `PositionControl` now owns vertical control in both loops. With `MPC_USE_HTE = 0`, the five scenario hashes match the 4.7 controller. With the estimator enabled, it uses height above the ground beneath the vehicle and treats free space as airborne. The Part A scenario altitude errors changed by less than 1e-5 m. [Hash regression](../simulation-engine/engine-core/src/scenario/tests.rs#L120-L136) · [Estimator sample](../simulation-engine/engine-core/src/flight_loop.rs#L86-L107)

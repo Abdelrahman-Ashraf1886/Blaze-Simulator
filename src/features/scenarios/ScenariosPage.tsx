@@ -20,7 +20,7 @@ import { useComponentIndex } from '../workshop/component-index'
 import { useWorkshopView } from '../workshop/view-store'
 import { airDensityFor, conditionsOf, enginePayload, flightGate, type FlightBlocker, type FlightConditions, type FlightGate, type FlightLink, type PayloadResult } from '../flight/readiness'
 import { checkRows, fmt, modificationRows, summaryRows } from './report'
-import { BUILTINS, missingEntry, NO_ENTRIES, scenarioRunInput, type BuiltinInfo, type ScenarioEntries } from './scenarios'
+import { BUILTINS, missingEntry, missingProjectInput, NO_ENTRIES, PROJECT_INPUTS, scenarioRunInput, type BuiltinInfo, type ScenarioEntries } from './scenarios'
 
 export default function ScenariosPage() {
   const { projectId } = useParams()
@@ -168,7 +168,7 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
       />
       <div className="mx-auto w-full max-w-[1100px] space-y-6 px-6 pb-10 pt-5">
         <p className="text-[12.5px] leading-relaxed text-fg-muted">
-          Scripted runs of this build on the flight engine: the PX4-style controller (default settings, as in the flight test) flies the build’s own motors, battery and drag in free space with the saved wind. Ground effect needs a surface below a rotor, so it adds no thrust in these runs. Each scenario states what it checks; the measured values and limits come from the engine.
+          Scripted runs use the build’s motors, battery and body drag with PX4 controller settings. Hover, payload, offset and wind scenarios start in free space. Takeoff and landing use the project’s ground plane or terrain, where enabled ground effect can act.
         </p>
         <Conditions conditions={conditions} gateOk={gate.ok} blockers={blockers} engineBlock={engineBlock} follow={follow} projectId={project.id} />
         <Section title="Built-in scenarios" count={BUILTINS.length}>
@@ -184,6 +184,7 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
                 runnable={canRun(info)}
                 busy={busy}
                 gateOk={gate.ok}
+                projectId={project.id}
                 onRun={() => void runOne(info)}
               />
             ))}
@@ -257,7 +258,7 @@ const MASS_UNIT = 'g'
 const OFFSET_UNIT = 'mm'
 const show = (v: number | null, unit: 'g' | 'mm') => (v === null ? '' : String(Math.round(fromSI(v, unit) * 1e6) / 1e6))
 
-function ScenarioCard({ info, entries, onEntries, payload, run, runnable, busy, gateOk, onRun }: {
+function ScenarioCard({ info, entries, onEntries, payload, run, runnable, busy, gateOk, projectId, onRun }: {
   info: BuiltinInfo
   entries: ScenarioEntries
   onEntries: (patch: Partial<ScenarioEntries>) => void
@@ -266,9 +267,11 @@ function ScenarioCard({ info, entries, onEntries, payload, run, runnable, busy, 
   runnable: boolean
   busy: boolean
   gateOk: boolean
+  projectId: string
   onRun: () => void
 }) {
-  const need = missingEntry(info, entries)
+  const need = missingEntry(info, entries) ?? missingProjectInput(info, payload)
+  const projectInput = info.projectInput && PROJECT_INPUTS[info.projectInput]
   const vehicle = payload.ok ? payload.payload.vehicle : null
   const arm = vehicle ? Math.max(...vehicle.motors.map((m) => Math.abs(m.position[0]))) : null
   return (
@@ -313,6 +316,13 @@ function ScenarioCard({ info, entries, onEntries, payload, run, runnable, busy, 
           {arm !== null && <p className="mt-1 text-[11.5px] text-fg-subtle">The outermost motor is {fmt(arm * 1000)} mm from the body origin along the forward axis.</p>}
         </div>
       )}
+      {projectInput && (
+        <Link className="mt-1 inline-block text-[12px] text-accent hover:underline"
+          to={projectInput.link.to === 'flight-field' ? `/flight/${projectId}` : `/workshop/${projectId}`}
+          onClick={() => focusWhenPresent(projectInput.link.elementId)}>
+          {projectInput.link.to === 'flight-field' ? 'Flight setup' : 'Workshop environment'} · {projectInput.label}
+        </Link>
+      )}
       {need && <p className="mt-1 text-[12px] text-warn" data-testid={`scenario-need-${info.name}`}>{need}</p>}
       {run?.status === 'error' && <p role="alert" className="mt-2 text-[12.5px] text-fault" data-testid={`scenario-error-${info.name}`}>The engine did not run this scenario: {run.message}</p>}
       {run?.status === 'done' && <Result info={info} result={run.result} />}
@@ -344,7 +354,7 @@ function Result({ info, result }: { info: BuiltinInfo; result: ScenarioRunOutput
           {changed.map((line) => <li key={line}>{line}</li>)}
         </ul>
       )}
-      <table className="mt-2 w-full border-t border-line text-[12.5px]" data-testid={`scenario-checks-${info.name}`}>
+      {rows.length > 0 && <table className="mt-2 w-full border-t border-line text-[12.5px]" data-testid={`scenario-checks-${info.name}`}>
         <thead className="text-left text-[11.5px] text-fg-subtle">
           <tr><th className="py-1.5 pr-3 font-normal">Check</th><th className="py-1.5 pr-3 font-normal">Measured</th><th className="py-1.5 pr-3 font-normal">Limit</th><th className="py-1.5 font-normal">Result</th></tr>
         </thead>
@@ -358,7 +368,7 @@ function Result({ info, result }: { info: BuiltinInfo; result: ScenarioRunOutput
             </tr>
           ))}
         </tbody>
-      </table>
+      </table>}
       <dl className="mt-3 border-t border-line" data-testid={`scenario-summary-${info.name}`}>
         {summaryRows(report).map((row) => (
           <div key={row.label} className="flex min-w-0 items-baseline justify-between gap-4 border-b border-line/60 py-1.5">

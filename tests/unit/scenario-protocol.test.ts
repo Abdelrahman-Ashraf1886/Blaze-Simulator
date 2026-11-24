@@ -3,6 +3,8 @@
  * answers; the IPC handler validates everything before the engine and passes its refusals through; and a real
  * engine flies a built-in through the same handler (the engine's own tests fly every built-in).
  */
+import { createHash } from 'node:crypto'
+import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Quaternion, Vector3 } from 'three'
@@ -341,9 +343,23 @@ describe('the scenario IPC handler', () => {
 
 // ---- a real engine, through the same handler -----------------------------------------------------------------
 
-const binaryPath = join(__dirname, '../../simulation-engine/target/release', process.platform === 'win32' ? 'drone-engine.exe' : 'drone-engine')
+const binaryPath = process.env.BLAZE_SCENARIO_REFERENCE_ENGINE ?? join(__dirname, '../../simulation-engine/target/release', process.platform === 'win32' ? 'drone-engine.exe' : 'drone-engine')
 const sup = new EngineSupervisor({ binaryPath })
 afterAll(() => sup.stop())
+
+// Unmodified catalogue reports from DEVLOG.md (Phase 5.9).
+function recordAcceptance(line: string) {
+  const path = process.env.BLAZE_SCENARIO_ACCEPTANCE_LOG
+  if (path) appendFileSync(path, line + '\n', 'utf8')
+}
+
+const legacyHashes: Record<string, readonly [string, string]> = {
+  balanced_hover: ['b4d5732073603b5b', 'd84d378ce0b70e99'],
+  payload: ['39ad58438e739b44', 'fefe22d4f8ed12b8'],
+  overweight_payload: ['07f31b231caec2b9', 'fa14918d4c4faee6'],
+  com_offset: ['a1a0af78cfe05825', '314d7fc1c5f70dea'],
+  com_offset_beyond_authority: ['01059c09483c7c6b', '649b32eb9bf9b2db'],
+}
 
 describe('a real engine', () => {
   beforeAll(async () => {
@@ -425,13 +441,71 @@ describe('a real engine', () => {
     expect((await scenarioRun(sup, request({ scenario: { type: 'builtin', name: 'payload', massKg: 0.5 } }))).ok).toBe(true)
   }, 60000)
 
+  it('runs the four FlightLoop acceptance scripts on the catalogue build', async () => {
+    const { doc, geo, components } = catalogueAssembly()
+    // Explicit catalogue example: 5 m/s is the milestone 6.10 input, not an app default.
+    // Bearing from this file's saved-wind fixture; amplitude, length and start from wind/tests.rs:16-18,72.
+    doc.flight = { ...conditions, wind: {
+      kind: 'wind', fromDeg: 90, mean: { kind: 'constant', speedMps: 5 },
+      gust: { kind: 'discrete', amplitudeMps: 8, lengthM: 4, startS: 0 },
+    } }
+    // Same project grid and 45-degree plane used by the placement test above.
+    doc.environment = { ground: { friction: null, restitution: null }, terrain, obstacles: [] }
+    const heightsM = new Float64Array([0, Math.SQRT2, -Math.SQRT2, 0])
+    const onGrid = (heights: Float64Array) => flightGate(enginePayload(doc, geo, components, {}, {
+      terrain: { id: terrain.assetId, grid: { ...grid, heightsM: heights } },
+    }), conditions)
+    const steep = onGrid(heightsM)
+    const plane = flightGate(enginePayload({ ...doc, environment: { ground: { friction: 0.5, restitution: 0 }, obstacles: [] } }, geo, components, {}, {}), conditions)
+    for (const info of BUILTINS.filter(({ name }) => !(name in legacyHashes))) {
+      const gate = info.name === 'takeoff_hold_land' ? plane : steep
+      const input = scenarioRunInput(gate, info, { payloadMassKg: null, comOffsetM: null })
+      if (!input) throw new Error(`Catalogue fixture is missing input for ${info.name}`)
+      const started = performance.now()
+      const result = await scenarioRun(sup, input)
+      if (!result.ok) throw new Error(`${info.name}: ${result.error.message}`)
+      recordAcceptance(`TIME ${info.name} ${Math.round(performance.now() - started)} ms`)
+      const { report, scenario } = result.data
+      expect(report.name).toBe(info.name)
+      expect(report.endReason).toBe('duration')
+      expect(scenario.flightScript?.[0]?.fromS).toBe(0)
+      expect(report.flight).toBeDefined()
+      // The existing steep project fixture reaches physical touchdown without completing the detector sequence.
+      expect(report.passed, info.name).toBe(info.name !== 'terrain')
+      if (report.flight?.type === 'takeoffLand') {
+        expect(report.flight.touchdownSpeedMps).not.toBeNull()
+        expect(report.flight.endedLanded).toBe(info.name !== 'terrain')
+      }
+      expect(report.finalStateHash).toBe(result.data.stateHash)
+      recordAcceptance('ACCEPTANCE ' + JSON.stringify({ name: info.name, passed: report.passed, elapsedS: report.elapsedS, flight: report.flight }))
+    }
+    // A 5 degree slope (rise over the 2 m between sample centres), well inside the 0.4 friction cone.
+    const rise = 2 * Math.tan(5 * Math.PI / 180)
+    const gentle = scenarioRunInput(onGrid(new Float64Array([0, rise, 0, rise])), BUILTINS.find(({ name }) => name === 'terrain')!, { payloadMassKg: null, comOffsetM: null })
+    const landed = await scenarioRun(sup, gentle!)
+    if (!landed.ok) throw new Error(landed.error.message)
+    expect(landed.data.report.passed).toBe(true)
+    recordAcceptance('GENTLE ' + JSON.stringify({ passed: landed.data.report.passed, flight: landed.data.report.flight }))
+  }, 20_000)
+
+  it('refuses FlightLoop built-ins with missing project inputs', async () => {
+    const gate = catalogueQuad()
+    const original = scenarioRunInput(gate, BUILTINS[0]!, { payloadMassKg: null, comOffsetM: null })!
+    for (const [name, input] of [['wind_hold', 'wind'], ['gust', 'gust'], ['takeoff_hold_land', 'ground plane'], ['terrain', 'terrain grid']] as const) {
+      const result = await scenarioRun(sup, { ...original, scenario: { type: 'builtin', name },
+        config: name === 'gust' ? { ...original.config, wind: { fromDeg: 90, mean: null, gust: null } } : original.config,
+      })
+      expect(err(result)?.message).toContain(input)
+    }
+  })
+
   it('runs every 4.9 catalogue baseline with the curve off and with the derived factor', async () => {
     const gate = catalogueQuad()
     expect(gate.thrustFit?.factor).toBeGreaterThan(0)
     expect(thrustFactorReadout(gate.thrustFit, {})).toMatch(/derived.*RMS.*Nominal pack 14.8 V with sag/)
     expect(thrustFactorReadout(gate.thrustFit, { THR_MDL_FAC: 0 })).toMatch(/user override.*RMS/)
     const entries = { payloadMassKg: 0.2, comOffsetM: 0.005 }
-    for (const info of BUILTINS) {
+    for (const info of BUILTINS.filter(({ name }) => name in legacyHashes)) {
       const on = scenarioRunInput(gate, info, entries)!
       const off = scenarioRunInput(gate, info, entries, { THR_MDL_FAC: 0 })!
       const runs = []
@@ -441,7 +515,10 @@ describe('a real engine', () => {
         runs.push(response.data.report)
       }
       expect(runs[0]?.passed, info.name).toBe(true)
-      expect(runs[1]?.finalStateHash, info.name).not.toBe(runs[0]?.finalStateHash)
+      expect(runs[1]?.passed, info.name).toBe(true)
+      expect(runs.map(({ finalStateHash }) => finalStateHash), info.name).toEqual(legacyHashes[info.name])
+      expect(runs.every(({ flight }) => flight === undefined), info.name).toBe(true)
+      recordAcceptance(`LEGACY ${info.name} ${createHash('sha256').update(JSON.stringify(runs)).digest('hex')}`)
       if (process.env.BLAZE_SCENARIO_BASELINES) {
         console.info('BASELINE ' + JSON.stringify({ fit: gate.thrustFit?.factor, rms: gate.thrustFit?.rmsError, max: gate.thrustFit?.maxAbsError, runs }))
       }

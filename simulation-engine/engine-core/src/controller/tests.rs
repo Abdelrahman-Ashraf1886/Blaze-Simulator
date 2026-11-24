@@ -613,7 +613,7 @@ fn vertical_integral_and_thrust_limits_block_windup() {
     for _ in 0..1000 {
         c.step(&est, &sp, 0.001);
     }
-    near(c.vertical_integral, 0.0); // At max thrust, positive velocity error cannot integrate.
+    near(c.position.velocity_integral()[2], 0.0); // At max thrust, positive velocity error cannot integrate.
                                     // Descending faster than max descent requests minimum thrust and must also freeze I.
     est.z_velocity = 10.0;
     sp.z_velocity = -100.0;
@@ -621,7 +621,7 @@ fn vertical_integral_and_thrust_limits_block_windup() {
     for _ in 0..1000 {
         c.step(&est, &sp, 0.001);
     }
-    near(c.vertical_integral, 0.0);
+    near(c.position.velocity_integral()[2], 0.0);
     near(
         c.step(&est, &sp, 0.001).collective_thrust,
         gains.mpc_thr_min,
@@ -636,9 +636,9 @@ fn vertical_integral_and_thrust_limits_block_windup() {
     for _ in 0..10000 {
         c.step(&est, &sp, 0.001);
     }
-    assert!(c.vertical_integral.abs() <= G); // PX4 acceleration-integral bound +/- standard gravity.
+    assert!(c.position.velocity_integral()[2].abs() <= G); // PX4 acceleration-integral bound +/- standard gravity.
     c.reset();
-    near(c.vertical_integral, 0.0); // Reset clears vertical trim as well as rate trim.
+    near(c.position.velocity_integral()[2], 0.0); // Reset clears vertical trim as well as rate trim.
 }
 
 // Frozen Phase 4.7 allocation path for bitwise regression.

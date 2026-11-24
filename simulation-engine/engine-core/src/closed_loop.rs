@@ -1,15 +1,14 @@
 //! The controller flying the vehicle (Phase 4.7): `controller.rs` (PX4
-//! v1.13.3 attitude, rate and vertical loops, allocation) in the loop with
+//! v1.13.3 attitude, rate and allocation) and the PositionControl vertical loop in the loop with
 //! `flight.rs` (motors, battery, body drag) and `sim.rs` (rigid body).
 //!
 //! Each fixed step:
-//! 1. Estimate = the true state (no estimator, sensor noise or delay; stated):
+//! 1. The controller reads the true state without sensor noise or delay:
 //!    attitude, body rates, and the CoM's height and vertical velocity.
 //! 2. `Controller::step` gives one normalised command per motor in [0, 1].
 //! 3. The commands are the motors' throttles (linear: PX4's thrust-curve
-//!    compensation is not modelled; the vertical integrator absorbs the
-//!    difference, as it absorbs an MPC_THR_HOVER that is not this vehicle's).
-//! 4. `Flight::step` applies them over the step.
+//!    factor is zero).
+//! 4. `Flight::step` applies them, then the shared hover estimator samples the plant.
 //!
 //! As on a real flight controller, the allocation uses the nominal motor
 //! geometry about the frame origin and never the true CoM or inertia: a CoM
@@ -20,6 +19,8 @@
 
 use crate::controller::{Controller, ControllerInput, Gains, Saturation, Setpoint};
 use crate::flight::Flight;
+use crate::flight_loop::HoverSampling;
+use crate::hover_thrust::HoverThrustParams;
 use crate::sim::Simulation;
 use crate::vehicle::Vehicle;
 use serde::Serialize;
@@ -61,6 +62,7 @@ pub struct ControlDiagnostic {
 pub struct ClosedLoop {
     flight: Flight,
     controller: Controller,
+    hover: HoverSampling,
     commands: Vec<f64>,
     saturated_steps: u64,
     collective: f64,
@@ -84,6 +86,11 @@ impl ClosedLoop {
         Ok(ClosedLoop {
             flight,
             controller,
+            hover: HoverSampling::new(HoverThrustParams {
+                mpc_thr_hover: gains.mpc_thr_hover,
+                mpc_use_hte: gains.mpc_use_hte != 0.0,
+                ..HoverThrustParams::default()
+            })?,
             commands: vec![0.0; n],
             saturated_steps: 0,
             collective: 0.0,
@@ -116,7 +123,10 @@ impl ClosedLoop {
         self.torque_demand = out.torque_demand;
         self.saturation = out.saturation;
         self.commands.copy_from_slice(out.motor_commands);
+        let vertical_thrust = out.vertical_thrust;
         self.flight.step(sim, &self.commands);
+        self.hover.after_step(sim, est.z_velocity, vertical_thrust, &mut self.controller.position)
+            .expect("valid hover estimate from the shared estimator");
     }
 
     /// The last step: torque demand, integrators, collective and saturation.

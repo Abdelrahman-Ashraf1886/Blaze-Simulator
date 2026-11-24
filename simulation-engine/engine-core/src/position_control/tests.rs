@@ -473,33 +473,23 @@ fn quad() -> Vec<MotorBody> {
     })
     .collect()
 }
-/// Plan test 3: identical inputs through 4.7's `Controller::step` and this
-/// controller, 10 s at 1 ms, collective thrust equal to 1e-12 at every step.
-/// Stated differences, none of which is active here:
-/// - D: this controller differentiates with PX4's filtered derivative, 4.7 with
-///   an unfiltered difference. Both are zero because MPC_Z_VEL_D_ACC = 0.
-/// - 4.7 also stops integrating while the allocator reported collective
-///   saturation on the previous step; PX4's PositionControl has no such input.
-///   With a level attitude and 4 motors the allocator saturates only when the
-///   collective reaches 1, which is also where both thrust-limit rules stop the
-///   integrator, so the two agree.
-/// - 4.7 clamps its thrust to [MPC_THR_MIN, MPC_THR_MAX]; PX4 applies the minimum
-///   in `_accelerationControl` and the maximum through the margin rule. For a
-///   vertical-only demand the margin rule is exactly MPC_THR_MAX.
-/// - 4.7 divides by the cosine of the commanded attitude, here the identity (1).
-fn vertical_conformance(thr_min: f64, profile: impl Fn(f64) -> (f64, f64, f64, f64)) -> [bool; 2] {
+/// Every collective command from the explicit-attitude path must reproduce the
+/// original 4.7 trace. The full position path agrees within 1e-12 per step.
+fn vertical_conformance(thr_min: f64, reference_hash: u64,
+    profile: impl Fn(f64) -> (f64, f64, f64, f64)) -> [bool; 2] {
     let mut g = Gains::px4_v1_13_3();
     g.mpc_thr_min = thr_min;
     assert_eq!(g.mpc_z_vel_d_acc, 0.0);
-    let mut old = Controller::new(&quad(), 0.02, g).unwrap();
+    let mut explicit = Controller::new(&quad(), 0.02, g).unwrap();
     let mut gains = PositionGains::px4_v1_13_3();
     gains.mpc_thr_min = thr_min;
     let mut new = PositionControl::new(gains).unwrap();
     let mut limited = [false; 2]; // [upper limit reached, lower limit reached]
+    let mut digest = 0xcbf29ce484222325u64;
     for k in 0..10000 {
         let t = k as f64 * 0.001;
         let (z, v, target, feed) = profile(t);
-        let a = old
+        let a = explicit
             .step(
                 &ControllerInput {
                     attitude: ID,
@@ -531,16 +521,20 @@ fn vertical_conformance(thr_min: f64, profile: impl Fn(f64) -> (f64, f64, f64, f
                 0.001,
             )
             .unwrap();
+        for byte in a.to_le_bytes() {
+            digest = (digest ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+        }
         near(a, b.collective_thrust);
         limited[0] |= b.collective_thrust >= gains.mpc_thr_max - 1e-12;
         limited[1] |= b.collective_thrust <= gains.mpc_thr_min + 1e-12;
     }
+    assert_eq!(digest, reference_hash); // FNV-1a, sim.rs:257-269.
     limited
 }
 #[test]
 fn vertical_conformance_to_47_over_ten_second_profile() {
     // A slow altitude profile with feed-forward, clear of both thrust limits.
-    let limits = vertical_conformance(0.12, |t| {
+    let limits = vertical_conformance(0.12, 0x9f37fd442fb60666, |t| {
         let target = if t < 2.0 {
             0.0
         } else if t < 6.0 {
@@ -563,7 +557,7 @@ fn vertical_conformance_to_47_through_both_thrust_limits() {
     // demand reaches MPC_THR_MAX, downward demand reaches MPC_THR_MIN (raised to
     // 0.4 so that the 1 m/s descent limit demands less than it), exercising both
     // vertical anti-windup branches (PositionControl.cpp:151-155) against 4.7's.
-    let limits = vertical_conformance(0.4, |t| {
+    let limits = vertical_conformance(0.4, 0xf7c17f05df0ef4fa, |t| {
         let target = if t < 3.0 {
             100.0
         } else if t < 6.0 {

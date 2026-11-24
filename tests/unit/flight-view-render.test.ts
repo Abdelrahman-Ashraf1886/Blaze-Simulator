@@ -75,14 +75,23 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
       FlightCommandControls: ComponentType<typeof commandProps>
     }
     const { MemoryRouter } = await server.ssrLoadModule('virtual:flight-test-router') as typeof import('react-router')
-    const pad = { id: 'Test pad', index: 0, connection: 0, calibrated: false }
+    const pad = { id: 'Test pad', index: 0, connection: 0, calibrated: false, mapping: '' }
     const selectorProps = {
       options: [pad], selected: pad, locked: false, mode: 'attitudeHold', onChange: () => {},
+      buttons: { enabled: true, onChange: () => {} },
     }
     const selector = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(controls.FlightInputSelector, selectorProps)))
     for (const text of ['Keyboard', 'Needs calibration', 'href="/input"', 'Attitude hold uses keyboard only']) {
       expect(selector).toContain(text)
     }
+    const sony = { ...pad, id: 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)' }
+    const renderSony = (mapping: string, mode = 'position') => renderToStaticMarkup(createElement(MemoryRouter, null,
+      createElement(controls.FlightInputSelector, { ...selectorProps, options: [{ ...sony, mapping }], selected: sony, mode })))
+    for (const text of ['DualSense', 'PlayStation flight buttons', 'Cross', 'Takeoff', 'Options', 'Next PX4 mode']) {
+      expect(renderSony('standard')).toContain(text)
+    }
+    expect(renderSony('')).not.toContain('PlayStation flight buttons')
+    expect(renderSony('standard', 'attitudeHold')).toContain('Attitude hold uses keyboard only')
     const pauseProps = {
       paused: 'blur', blocker: 'disconnect', device: true, sticks: null, onToggle: () => {},
     }

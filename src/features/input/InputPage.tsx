@@ -1,3 +1,4 @@
+import { identifyPlayStation, playStationButtons, PLAYSTATION_AXES } from './playstation'
 import { useState, useSyncExternalStore } from 'react'
 import { PageHeader } from '@/components/page-header'
 import { Section } from '@/components/section'
@@ -19,17 +20,23 @@ export function InputPage() {
           <p className="mb-3 text-fg-muted">Connect a gamepad or transmitter, then press a button on it to make it appear here.</p>
           {devices.length === 0 && <p className="text-fg-subtle">No input devices detected.</p>}
           <ul>
-            {devices.map((item) => (
-              <li key={item.connection} className="space-y-2 border-t border-line py-3">
-                <Button type="button" className="h-auto min-h-8 max-w-full whitespace-normal break-all text-left aria-pressed:border-accent aria-pressed:text-accent"
-                  aria-pressed={device?.connection === item.connection} onClick={() => setSelected(item)}>
-                  {item.id} · Index <span className="num">{item.index}</span>
-                </Button>
-                <p className="text-fg-muted">Mapping <span className="text-fg">{item.mapping || 'unknown'}</span></p>
-                <Readings title="Axes" values={item.axes} />
-                <Readings title="Buttons" values={item.buttons.map((button) => button.value)} />
-              </li>
-            ))}
+            {devices.map((item) => {
+              const controller = identifyPlayStation(item.id)
+              const standard = item.mapping === 'standard'
+              return (
+                <li key={item.connection} className="space-y-2 border-t border-line py-3">
+                  <Button type="button" className="h-auto min-h-8 max-w-full whitespace-normal break-all text-left aria-pressed:border-accent aria-pressed:text-accent"
+                    aria-pressed={device?.connection === item.connection} onClick={() => setSelected(item)}>
+                    {controller ?? item.id} · Index <span className="num">{item.index}</span>
+                  </Button>
+                  <p className="text-fg-muted">Mapping <span className="text-fg">{item.mapping || 'unknown'}</span></p>
+                  {controller && !standard && <p>PlayStation layout unknown. Use generic calibration.</p>}
+                  <Readings title="Axes" values={item.axes} names={controller && standard ? PLAYSTATION_AXES : undefined} />
+                  <Readings title="Buttons" values={item.buttons.map((button) => button.value)}
+                    names={controller && standard ? playStationButtons(controller) : undefined} />
+                </li>
+              )
+            })}
           </ul>
         </Section>
         {device
@@ -44,7 +51,7 @@ export function InputPage() {
   )
 }
 
-function Readings({ title, values }: { title: string; values: readonly number[] }) {
+function Readings({ title, values, names }: { title: string; values: readonly number[]; names?: readonly string[] }) {
   return (
     <div className="text-[12px] text-fg-muted">
       <p>{title}</p>
@@ -53,7 +60,7 @@ function Readings({ title, values }: { title: string; values: readonly number[] 
         : <dl aria-label={title} className="flex flex-wrap gap-x-3 gap-y-1">
             {values.map((value, index) => (
               <div key={index} className="flex gap-1">
-                <dt className="num">{index}</dt>
+                <dt className="num">{names?.[index] ?? index}</dt>
                 <dd className="num text-fg">{Number.isFinite(value) ? value.toFixed(3) : '—'}</dd>
               </div>
             ))}

@@ -6,6 +6,8 @@ import { readInputCalibration, writeInputCalibration } from '@/lib/prefs'
 import { isAxisSample, readStick, STANDARD_AXES, STICKS, stickNames, type Stick } from './calibration'
 import { checkAxis, createAxisSweep, createDraft } from './calibration-draft'
 import { gamepads } from './device-input'
+import { identifyPlayStation, PLAYSTATION_AXES } from './playstation'
+import { PlayStationSetup } from './PlayStationSetup'
 import type { InputDevice } from './gamepads'
 
 const selectClass = 'h-8 w-full rounded-[var(--radius-sm)] border border-line-strong bg-chrome px-2 text-fg focus:border-accent focus:outline-none aria-invalid:border-fault'
@@ -19,6 +21,7 @@ export function CalibrationPanel({ device }: { device: InputDevice }) {
   const [sweeping, setSweeping] = useState<Stick | null>(null)
   const sweepRef = useRef<ReturnType<typeof createAxisSweep> | null>(null)
   const prefix = useId()
+  const playStation = device.mapping === 'standard' && identifyPlayStation(device.id)
   const { connection } = device
   const currentDevice = () => gamepads.getDevices().find((sample) => sample.connection === connection)
 
@@ -92,7 +95,23 @@ export function CalibrationPanel({ device }: { device: InputDevice }) {
       {stored.status === 'invalid' && <p role="status" className="mb-3 text-warn">Saved calibration is invalid and was ignored.</p>}
       {stored.status === 'unavailable' && <p role="status" className="mb-3 text-warn">Saved calibration could not be read.</p>}
       {incompatible && <p role="status" className="mb-3 text-warn">Saved calibration uses unavailable axes and was ignored.</p>}
-      {device.mapping === 'standard' && (
+      {playStation && <PlayStationSetup connection={connection} disabled={sweeping !== null} onCapture={(next) => {
+        setSaveMessage(null)
+        setDraft(next)
+      }} onDeadZones={({ draft: captured, spreads }) => {
+        setSaveMessage(null)
+        setDraft((previous) => {
+          const next = { ...previous }
+          for (const stick of stickNames) {
+            const spread = spreads[stick]
+            if (spread !== undefined && next[stick].axis === captured[stick].axis && next[stick].trim === captured[stick].trim) {
+              next[stick] = { ...next[stick], deadZone: String(spread) }
+            }
+          }
+          return next
+        })
+      }} />}
+      {device.mapping === 'standard' && !playStation && (
         <div className="mb-3">
           <Button type="button" disabled={sweeping !== null || stickNames.some((stick) => STANDARD_AXES[stick] >= device.axes.length)} onClick={applyPreset}>
             Use standard gamepad preset
@@ -120,7 +139,7 @@ export function CalibrationPanel({ device }: { device: InputDevice }) {
                       aria-describedby={`${id}-axis-error`}
                       onChange={(event) => change(stick, { ...createDraft()[stick], axis: event.target.value === '' ? null : Number(event.target.value) })}>
                       <option value="">Choose an axis</option>
-                      {device.axes.map((_, index) => <option key={index} value={index}>Axis {index}</option>)}
+                      {device.axes.map((_, index) => <option key={index} value={index}>{(playStation && PLAYSTATION_AXES[index]) || `Axis ${index}`}</option>)}
                     </select>
                     <FieldError id={`${id}-axis-error`} message={attempted || axis !== null ? errors.axis : undefined} />
                   </div>

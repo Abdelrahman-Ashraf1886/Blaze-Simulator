@@ -1,3 +1,4 @@
+import { identifyPlayStation } from './playstation'
 import { readInputCalibration } from '@/lib/prefs'
 import { readSticks, type DeviceCalibration, type InputSticks } from './calibration'
 import { createGamepadService, type DeviceHandle } from './gamepads'
@@ -40,8 +41,13 @@ export function getCalibratedInput(handle: DeviceHandle): CalibratedInput {
   return deviceState(handle, saved.status === 'saved' ? saved.calibration : undefined)
 }
 
+export interface LiveCalibratedInput extends CalibratedInput {
+  readonly buttons?: Gamepad['buttons']
+}
+
 /** Read the current poll at the flight step boundary, even when the sticks have stayed still. */
-export function createLiveCalibratedInputReader(handle: DeviceHandle): () => CalibratedInput {
+export function createLiveCalibratedInputReader(handle: DeviceHandle): () => LiveCalibratedInput {
+  const playStation = identifyPlayStation(handle.id)
   const saved = readInputCalibration(handle.id)
   return () => {
     let samples: readonly (Gamepad | null)[]
@@ -54,6 +60,7 @@ export function createLiveCalibratedInputReader(handle: DeviceHandle): () => Cal
     if (!pad?.connected || pad.id !== handle.id || pad.index !== handle.index) return { connected: false, sticks: null }
     return {
       connected: true,
+      ...(playStation && pad.mapping === 'standard' ? { buttons: pad.buttons } : {}),
       sticks: saved.status === 'saved' ? readSticks({
         ...handle, mapping: pad.mapping === 'standard' ? 'standard' : '', axes: pad.axes, buttons: pad.buttons,
       }, saved.calibration) : null,

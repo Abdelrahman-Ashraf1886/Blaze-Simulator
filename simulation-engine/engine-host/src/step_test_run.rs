@@ -4,6 +4,7 @@ use crate::{
     protocol::{ErrorCode, Response},
     scenario_run::MAX_SCENARIO_S,
 };
+use crate::flight_environment;
 use engine_core::{
     aero::BodyDrag,
     flight::Cutoff,
@@ -30,6 +31,10 @@ struct Config {
     airmode: Option<f64>,
     #[serde(default, deserialize_with = "crate::protocol::present")]
     thrust_model_factor: Option<f64>,
+    #[serde(default, deserialize_with = "crate::protocol::present")]
+    wind: Option<Value>,
+    #[serde(default, deserialize_with = "crate::protocol::present")]
+    ground_effect: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -74,8 +79,12 @@ pub fn handle(
         Err(response) => return response,
     };
     let Some(propulsion) = propulsion else {
+        let config = params.get("config");
+        let message = flight_environment::propulsion_required(
+            config.and_then(|c| c.get("wind")), config.and_then(|c| c.get("groundEffect")), "config.",
+        );
         return Response::err(Some(id), ErrorCode::NoPropulsion,
-            "stepTest.run needs propulsion, including each motor's rotor inertia (inertiaKgM2), in vehicle.load");
+            message.unwrap_or_else(|| "stepTest.run needs propulsion, including each motor's rotor inertia (inertiaKgM2), in vehicle.load".into()));
     };
     params.remove("id");
     if params.get("config").and_then(|c| c.get("cutoff")).is_none_or(Value::is_null) {
@@ -97,7 +106,8 @@ pub fn handle(
         Ok(hover) => hover,
         Err(error) => return bad(error),
     };
-    match step_test::run(vehicle, test, hover, |flight| {
+    match step_test::run(vehicle, test, hover, |mut flight| {
+        flight_environment::configure(&mut flight, config.wind.as_ref(), config.ground_effect.as_ref(), "config.")?;
         manual_flight_with_gains(vehicle, propulsion, flight, config.gains.as_ref(), config.airmode, config.thrust_model_factor)
     }) {
         Ok((report, gains)) => Response::ok(id, Output { report, gains: gains.parameters() }),

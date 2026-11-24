@@ -1,6 +1,6 @@
 import { Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
-import { MAX_OBSTACLES, type AssemblyDocument, type DropTestResult, type EnvironmentDoc, type LegacyBoxObstacleDoc } from '../../../electron/ipc/contract'
+import { useMemo, useState } from 'react'
+import { MAX_OBSTACLES, type AssemblyDocument, type AssetInfo, type DropTestResult, type EnvironmentDoc, type LegacyBoxObstacleDoc, type ObstacleDoc, type SurfaceValues } from '../../../electron/ipc/contract'
 import { NumberField, numberParser } from '@/components/number-field'
 import { Button } from '@/components/ui/button'
 import { lowestPoint } from '@/domain/collisions'
@@ -13,6 +13,11 @@ import { useAssembly } from './assembly-store'
 import { useAssets } from './asset-store'
 import { useComponentIndex } from './component-index'
 import { massState } from './mass-input'
+import { ChoiceField } from './environment/fields'
+import { ObstacleFields } from './environment/ObstacleFields'
+import { newObstacle } from './environment/obstacles'
+import { TerrainSection } from './environment/TerrainSection'
+import { selectTerrain, useTerrainGrid } from './environment/terrain-preview'
 
 const edit = (label: string, recipe: (d: AssemblyDocument) => AssemblyDocument) => useAssembly.getState().edit(label, recipe)
 const setEnv = (label: string, change: (e: EnvironmentDoc) => EnvironmentDoc) =>
@@ -33,16 +38,28 @@ const mm = (m: number) => String(Math.round(m * 1e4) / 10)
  */
 export function EnvironmentPanel({ doc, geo }: { doc: AssemblyDocument; geo: FrameGeometry }) {
   const env = doc.environment ?? EMPTY_ENVIRONMENT
-  const ready = simEnvironment(env)
+  const assets = useAssets((s) => s.assets)
+  const [shape, setShape] = useState<'box' | 'cylinder' | 'hull'>('box')
+  const terrainId = env.terrain?.assetId
+  const terrain = useTerrainGrid(terrainId)
+  const grid = terrain?.grid
+  const ready = useMemo(() => simEnvironment(env, { models: assets, grids: grid && terrainId ? { [terrainId]: grid } : undefined }), [env, assets, grid, terrainId])
   return (
     <div data-testid="environment-panel">
-      <h3 className="mb-1 text-[12px] font-medium text-fg-muted">Ground (z = 0)</h3>
-      <SurfaceFields id="ground" values={env.ground} onCommit={(key, v) => setEnv(`Set ground ${key}`, (e) => ({ ...e, ground: { ...e.ground, [key]: v } }))} />
+      {!env.terrain && <>
+        <h3 className="mb-1 text-[12px] font-medium text-fg-muted">Ground (z = 0)</h3>
+        <SurfaceFields id="ground" values={env.ground} onCommit={(key, v) => setEnv(`Set ground ${key}`, (e) => ({ ...e, ground: { ...e.ground, [key]: v } }))} />
+      </>}
+      <TerrainSection selectedId={terrainId} grid={grid} readError={terrain?.error}
+        onSelect={(id) => setEnv(id === null ? 'Remove terrain' : 'Select terrain', (e) => ({ ...e, terrain: selectTerrain(e.terrain, id) }))} />
+      {env.terrain && <SurfaceFields id="terrain" values={env.terrain} onCommit={(key, v) =>
+        setEnv(`Set terrain ${key}`, (e) => e.terrain ? { ...e, terrain: { ...e.terrain, [key]: v } } : e)} />}
       <h3 className="mb-1 mt-3 text-[12px] font-medium text-fg-muted">Obstacles</h3>
       {env.obstacles.length === 0 && <p className="border-t border-line py-1.5 text-[12px] text-fg-subtle">None.</p>}
-      {env.obstacles.map((o, i) => o.type === undefined && (
-        <ObstacleRow key={o.id} o={o} index={i} />
-      ))}
+      {env.obstacles.map((o, i) => <ObstacleRow key={o.id} o={o} index={i} parts={doc.parts} assets={assets} />)}
+      <ChoiceField id="obstacle-shape" label="New obstacle shape" value={shape}
+        options={[[ 'box', 'Box'], ['cylinder', 'Vertical cylinder'], ['hull', 'Convex hull']]}
+        onChange={(kind) => setShape(kind === 'cylinder' || kind === 'hull' ? kind : 'box')} />
       <Button
         size="sm"
         variant="ghost"
@@ -50,14 +67,9 @@ export function EnvironmentPanel({ doc, geo }: { doc: AssemblyDocument; geo: Fra
         data-testid="add-obstacle"
         disabled={env.obstacles.length >= MAX_OBSTACLES}
         onClick={() =>
-          setEnv('Add obstacle', (e) => ({
+          setEnv('Add obstacle', (e) => e.obstacles.length >= MAX_OBSTACLES ? e : ({
             ...e,
-            // A starting box 1 m ahead, like a new part's starting size; its friction and
-            // restitution are not set, so the simulation asks for them.
-            obstacles: [
-              ...e.obstacles,
-              { id: crypto.randomUUID(), name: `Obstacle ${e.obstacles.length + 1}`, center: [1, 0, 0.1], size: [0.4, 0.4, 0.2], yaw: 0, friction: null, restitution: null },
-            ],
+            obstacles: [...e.obstacles, newObstacle(crypto.randomUUID(), e.obstacles.length, shape)],
           }))
         }
       >
@@ -110,14 +122,15 @@ function SurfaceFields({ id, values, onCommit }: { id: string; values: { frictio
   )
 }
 
-function ObstacleRow({ o, index }: { o: LegacyBoxObstacleDoc; index: number }) {
-  const update = (label: string, patch: Partial<LegacyBoxObstacleDoc>) =>
-    setEnv(`${label} of ${o.name}`, (e) => ({ ...e, obstacles: e.obstacles.map((x) => (x.type === undefined && x.id === o.id ? { ...x, ...patch } : x)) }))
-  const vec = (key: 'center' | 'size', i: number, v: number) => {
-    const next = [...o[key]] as [number, number, number]
-    next[i] = v / 1000
-    update(key === 'center' ? 'Move' : 'Resize', { [key]: next })
-  }
+function ObstacleRow({ o, index, parts, assets }: {
+  o: ObstacleDoc
+  index: number
+  parts: AssemblyDocument['parts']
+  assets: Readonly<Record<string, AssetInfo>>
+}) {
+  const replace = (label: string, next: ObstacleDoc) =>
+    setEnv(`${label} of ${o.name}`, (e) => ({ ...e, obstacles: e.obstacles.map((x) => x.id === o.id ? next : x) }))
+  const update = (label: string, patch: Partial<SurfaceValues & { name: string }>) => replace(label, { ...o, ...patch })
   const id = `obstacle-${index + 1}`
   return (
     <div className="border-t border-line py-1" data-testid="obstacle">
@@ -140,6 +153,25 @@ function ObstacleRow({ o, index }: { o: LegacyBoxObstacleDoc; index: number }) {
           <Trash2 className="size-3.5" />
         </button>
       </div>
+      {o.type === undefined
+        ? <LegacyBoxFields id={id} o={o} update={(label, patch) => replace(label, { ...o, ...patch })} />
+        : <ObstacleFields id={id} obstacle={o} parts={parts} assets={assets} onChange={replace} />}
+      <SurfaceFields id={id} values={o} onCommit={(key, v) => update(`Set ${key}`, { [key]: v })} />
+    </div>
+  )
+}
+
+function LegacyBoxFields({ id, o, update }: {
+  id: string
+  o: LegacyBoxObstacleDoc
+  update: (label: string, patch: Partial<LegacyBoxObstacleDoc>) => void
+}) {
+  const vec = (key: 'center' | 'size', i: number, v: number) => {
+    const next = [...o[key]] as [number, number, number]
+    next[i] = v / 1000
+    update(key === 'center' ? 'Move' : 'Resize', { [key]: next })
+  }
+  return <>
       {(['X', 'Y', 'Z'] as const).map((axis, i) => (
         <NumberField key={`c${i}:${o.center[i]}`} id={`${id}-center-${axis.toLowerCase()}`} label={`Centre ${axis}`} unit="mm" initial={mm(o.center[i]!)} parse={numberParser(-1e6, 1e6, 'mm')} onCommit={(v) => vec('center', i, v)} />
       ))}
@@ -155,9 +187,7 @@ function ObstacleRow({ o, index }: { o: LegacyBoxObstacleDoc; index: number }) {
         parse={numberParser(-360, 360, '°')}
         onCommit={(deg) => update('Turn', { yaw: (deg * Math.PI) / 180 })}
       />
-      <SurfaceFields id={id} values={o} onCommit={(key, v) => update(`Set ${key}`, { [key]: v })} />
-    </div>
-  )
+  </>
 }
 
 /** Release from rest, the lowest point `clearance` above the ground, and simulate in the engine. */
@@ -173,18 +203,23 @@ function DropTest({ doc, geo }: { doc: AssemblyDocument; geo: FrameGeometry }) {
   const env = simEnvironment(doc.environment)
   const { mp, motors } = massState(doc, geo, components, assets)
   const vehicle = vehicleDefinition(mp, motors)
-  const blocked = !env.ok
-    ? 'Enter the missing environment values first.'
-    : !vehicle
-      ? 'Every part needs a mass first (see Mass).'
-      : engine?.state !== 'connected'
-        ? 'The engine is not connected.'
-        : null
+  // The current drop-test wire schema only accepts a plane and legacy boxes.
+  // electron/main/engine/protocol.ts:104–116.
+  const pendingEngineSupport = !!doc.environment?.terrain || doc.environment?.obstacles.some((obstacle) => obstacle.type !== undefined)
+  const blocked = pendingEngineSupport
+    ? 'Drop testing this terrain or obstacle shape requires engine support.'
+    : !env.ok
+      ? 'Enter the missing environment values first.'
+      : !vehicle
+        ? 'Every part needs a mass first (see Mass).'
+        : engine?.state !== 'connected'
+          ? 'The engine is not connected.'
+          : null
   const names = new Map(doc.parts.map((p) => [p.id, p.name]))
   const nameOf = (id: string) => names.get(id) ?? (id === 'frame:plate' ? 'Frame plate' : id.startsWith('frame:arm-') ? `Frame arm ${id.slice(10)}` : id)
 
   const run = async () => {
-    if (!env.ok || !vehicle) return
+    if (blocked || !env.ok || !vehicle) return
     const low = lowestPoint(vehicle.parts.map((p) => ({ shape: p.shape, ...p.pose })))
     const startZ = clearanceM - low
     setRunning(true)

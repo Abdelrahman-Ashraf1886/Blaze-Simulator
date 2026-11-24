@@ -9,6 +9,7 @@ import { FrameModel } from '../workshop/FrameModel'
 import { PartsModel } from '../workshop/PartsModel'
 import { mountFrames, shapeExtent, subtreeIds, worldMatrix, type AssetBounds } from '../workshop/assembly-ops'
 import { useAssets } from '../workshop/asset-store'
+import { EnvironmentMeshes } from '../workshop/environment/EnvironmentMeshes'
 import { useComponentIndex } from '../workshop/component-index'
 import { linkedComponent, type ComponentIndex } from '../workshop/links'
 import { PropellerModel } from '@/three/part-models'
@@ -198,17 +199,7 @@ export function FlightViewport({ frame, doc, geo, projectId, running = false }: 
           <directionalLight position={[3, -2, 5]} intensity={2} />
           <CameraRig frame={frame} mode={activeMode} running={running} follow={follow} exterior={settings}
             drag={pointerMode ? drag[pointerMode] ?? initialDrag : initialDrag} mount={mount} />
-          <mesh position={[0, 0, -0.001]}>
-            <planeGeometry args={[200, 200]} />
-            <meshStandardMaterial color="#22262c" />
-          </mesh>
-          <gridHelper args={[200, 200, '#454c55', '#2f343b']} rotation-x={Math.PI / 2} />
-          {doc.environment?.obstacles.map((obstacle) => obstacle.type === undefined && (
-            <mesh key={obstacle.id} position={obstacle.center} rotation-z={obstacle.yaw}>
-              <boxGeometry args={obstacle.size} />
-              <meshStandardMaterial color="#6b6255" />
-            </mesh>
-          ))}
+          <EnvironmentMeshes environment={doc.environment} />
           <group position={pose.position} quaternion={pose.quaternion}>
             {/* Reused workshop models are display-only here; no editor gizmos or picking. */}
             <group raycast={() => null}>

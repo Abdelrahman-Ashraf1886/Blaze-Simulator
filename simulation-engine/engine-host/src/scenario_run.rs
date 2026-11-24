@@ -15,13 +15,14 @@
 //! stays silent for 3 s); with a ground (contact steps cost far more) at most
 //! `MAX_SCENARIO_WITH_GROUND_S`.
 use crate::engine::{closed_loop_gains, loaded_vehicle};
+use crate::flight_environment;
 use crate::protocol::{present, ErrorCode, Response};
 use engine_core::aero::BodyDrag;
 use engine_core::environment::Environment;
 use engine_core::flight::{Cutoff, Flight, ScaleToAirDensityError};
 use engine_core::propulsion::Propulsion;
 use engine_core::scenario::{
-    balanced_hover, com_offset, com_offset_beyond_authority, modified_vehicle, overweight_payload, payload, run, Ground, Scenario,
+    balanced_hover, com_offset, com_offset_beyond_authority, modified_vehicle, overweight_payload, payload, run_with_flight_config, Ground, Scenario,
     ScenarioConfig,
 };
 use engine_core::vehicle::Vehicle;
@@ -89,6 +90,10 @@ struct ConfigRequest {
     /// Ground and obstacles (needs `startPositionM`); absent = free space from the origin.
     #[serde(default)]
     environment: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    wind: Option<Value>,
+    #[serde(default, deserialize_with = "present")]
+    ground_effect: Option<Value>,
     #[serde(default)]
     start_position_m: Option<[f64; 3]>,
 }
@@ -114,10 +119,14 @@ pub fn handle(
         Err(r) => return r,
     };
     let Some(propulsion) = propulsion else {
+        let config = params.get("config");
+        let message = flight_environment::propulsion_required(
+            config.and_then(|c| c.get("wind")), config.and_then(|c| c.get("groundEffect")), "config.",
+        );
         return Response::err(
             Some(id),
             ErrorCode::NoPropulsion,
-            "a scenario needs the propulsion definition (vehicle.load with propulsion)",
+            message.unwrap_or_else(|| "a scenario needs the propulsion definition (vehicle.load with propulsion)".into()),
         );
     };
     // Flattened command parameters also contain the envelope field.
@@ -165,7 +174,7 @@ pub fn handle(
         (Some(e), Some(start_m)) => match Environment::from_json(&e) {
             Ok(environment) => Some(Ground { environment, start_m }),
             Err(errors) => {
-                let list: Vec<String> = errors.iter().map(|e| format!("{}: {}", e.path, e.message)).collect();
+                let list: Vec<String> = errors.iter().map(|e| format!("config.{}: {}", e.path, e.message)).collect();
                 return Response::err(Some(id), ErrorCode::EnvironmentIncomplete, list.join("; "));
             }
         },
@@ -187,7 +196,9 @@ pub fn handle(
             if config.ground.is_some() { " with a ground" } else { "" }
         ));
     }
-    match run(vehicle, propulsion.clone(), aero, &config, &scenario) {
+    match run_with_flight_config(vehicle, propulsion.clone(), aero, &config, &scenario, |flight| {
+        flight_environment::configure(flight, p.config.wind.as_ref(), p.config.ground_effect.as_ref(), "config.")
+    }) {
         Ok(report) => Response::ok(
             id,
             json!({

@@ -19,9 +19,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use engine_core::auto_modes::AutoMode;
 use engine_core::closed_loop::SaturationDiagnostic;
 use engine_core::flight_loop::{FlightLoopSnapshot, FlightMode};
 use engine_core::flight_modes::{FlightCommand, Sticks};
+use engine_core::land_detector::LandState;
+use engine_core::takeoff::TakeoffState;
 
 pub const PROTOCOL_VERSION: u32 = 2;
 
@@ -45,6 +48,11 @@ pub enum Command {
     },
     #[serde(rename = "flight.session.end")]
     FlightSessionEnd,
+    #[serde(rename = "flight.session.log")]
+    FlightSessionLog {
+        #[serde(flatten)]
+        params: serde_json::Map<String, Value>,
+    },
     /// A scripted scenario on the loaded vehicle (4.9 part B), validated in scenario_run.
     #[serde(rename = "scenario.run")]
     ScenarioRun {
@@ -82,6 +90,10 @@ pub enum Command {
         duration_s: f64,
         #[serde(default)]
         environment: Option<Value>,
+        #[serde(default, deserialize_with = "present")]
+        wind: Option<Value>,
+        #[serde(default, deserialize_with = "present")]
+        ground_effect: Option<Value>,
         #[serde(default)]
         start_position_m: Option<[f64; 3]>,
         #[serde(default)]
@@ -211,12 +223,45 @@ impl ControllerRequest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FlightLoopDiagnostic {
     mode: FlightModeRequest,
+    auto_mode: Option<AutoModeName>,
+    #[serde(with = "TakeoffStateWire")]
+    takeoff_state: TakeoffState,
+    #[serde(with = "LandStateWire")]
+    land_state: LandState,
+    command_finished: bool,
     position_setpoint_m: [Option<f64>; 3],
     velocity_setpoint_mps: [Option<f64>; 3],
     acceleration_setpoint_mps2: [Option<f64>; 3],
     saturation: SaturationDiagnostic,
     velocity_integral: [Option<f64>; 3],
     hover_thrust: HoverThrustDiagnostic,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum AutoModeName {
+    Takeoff,
+    Hold,
+    Land,
+}
+
+#[derive(Serialize)]
+#[serde(remote = "TakeoffState", rename_all = "camelCase")]
+enum TakeoffStateWire {
+    Disarmed,
+    SpoolUp,
+    ReadyForTakeoff,
+    RampUp,
+    Flight,
+}
+
+#[derive(Serialize)]
+#[serde(remote = "LandState", rename_all = "camelCase")]
+struct LandStateWire {
+    freefall: bool,
+    ground_contact: bool,
+    maybe_landed: bool,
+    landed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -235,6 +280,19 @@ impl From<FlightLoopSnapshot> for FlightLoopDiagnostic {
                 FlightMode::Stabilized => FlightModeRequest::Stabilized,
                 FlightMode::Altitude => FlightModeRequest::Altitude,
                 FlightMode::Position => FlightModeRequest::Position,
+            },
+            auto_mode: snapshot.auto_mode.map(|mode| match mode {
+                AutoMode::Takeoff => AutoModeName::Takeoff,
+                AutoMode::Hold => AutoModeName::Hold,
+                AutoMode::Land => AutoModeName::Land,
+            }),
+            takeoff_state: snapshot.takeoff_state,
+            land_state: snapshot.land_state,
+            // A takeoff transitions to Hold in AutoFlight::setpoint.
+            command_finished: match snapshot.auto_mode {
+                Some(AutoMode::Hold) => true,
+                Some(AutoMode::Land) => snapshot.land_state.landed,
+                _ => false,
             },
             position_setpoint_m: snapshot.position_setpoint.map(finite),
             velocity_setpoint_mps: snapshot.velocity_setpoint.map(finite),
@@ -311,6 +369,8 @@ pub struct ErrorBody {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum Response {
+    #[serde(skip)]
+    SessionLogLine(String),
     Ok { id: u64, ok: bool, result: Value },
     Err { id: Option<u64>, ok: bool, error: ErrorBody },
 }
@@ -325,8 +385,25 @@ impl Response {
         Response::Err { id, ok: false, error: ErrorBody { code, message: message.into() } }
     }
 
-    pub fn to_line(&self) -> String {
-        serde_json::to_string(self).expect("responses always serialize")
+    /// The entries are complete JSON objects already accepted by the line reader.
+    /// Embed them verbatim so replay receives the original decimal tokens.
+    pub(crate) fn session_log(id: u64, start: &str, steps: &[String]) -> Self {
+        let mut line = format!(r#"{{"id":{id},"ok":true,"result":{{"start":{start},"steps":["#);
+        for (index, step) in steps.iter().enumerate() {
+            if index > 0 {
+                line.push(',');
+            }
+            line.push_str(step);
+        }
+        line.push_str("]}}");
+        Self::SessionLogLine(line)
+    }
+
+    pub fn into_line(self) -> String {
+        match self {
+            Self::SessionLogLine(line) => line,
+            response => serde_json::to_string(&response).expect("responses always serialize"),
+        }
     }
 }
 
@@ -363,6 +440,8 @@ mod tests {
             Command::SimRun {
                 duration_s: 1.5,
                 environment: None,
+                wind: None,
+                ground_effect: None,
                 start_position_m: None,
                 dt_s: None,
                 force_body_n: Some([0.0, 0.0, 9.0]),
@@ -386,7 +465,7 @@ mod tests {
     #[test]
     fn malformed_json_is_invalid_json_without_id() {
         let err = parse_request("{not json").unwrap_err();
-        let v: Value = serde_json::from_str(&err.to_line()).unwrap();
+        let v: Value = serde_json::from_str(&err.into_line()).unwrap();
         assert_eq!(v["ok"], json!(false));
         assert_eq!(v["id"], Value::Null);
         assert_eq!(v["error"]["code"], json!("INVALID_JSON"));
@@ -395,7 +474,7 @@ mod tests {
     #[test]
     fn unknown_command_echoes_id() {
         let err = parse_request(r#"{"id":7,"type":"fly"}"#).unwrap_err();
-        let v: Value = serde_json::from_str(&err.to_line()).unwrap();
+        let v: Value = serde_json::from_str(&err.into_line()).unwrap();
         assert_eq!(v["id"], json!(7));
         assert_eq!(v["error"]["code"], json!("INVALID_REQUEST"));
     }
@@ -403,7 +482,7 @@ mod tests {
     #[test]
     fn missing_id_is_invalid_request() {
         let err = parse_request(r#"{"type":"ping"}"#).unwrap_err();
-        let v: Value = serde_json::from_str(&err.to_line()).unwrap();
+        let v: Value = serde_json::from_str(&err.into_line()).unwrap();
         assert_eq!(v["error"]["code"], json!("INVALID_REQUEST"));
     }
 
@@ -413,7 +492,7 @@ mod tests {
             5,
             HelloResult { engine_version: "0.1.0".into(), protocol_version: 1, threads: 4 },
         );
-        let v: Value = serde_json::from_str(&r.to_line()).unwrap();
+        let v: Value = serde_json::from_str(&r.into_line()).unwrap();
         assert_eq!(
             v,
             json!({"id":5,"ok":true,"result":{"engineVersion":"0.1.0","protocolVersion":1,"threads":4}})

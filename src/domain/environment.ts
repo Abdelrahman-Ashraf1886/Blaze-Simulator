@@ -18,6 +18,7 @@ import type { AssetInfo, EnvironmentDoc, FlightConditionsDoc, ObstacleDoc, Surfa
 import type { MotorSlot } from './propulsion'
 import type { TerrainGrid } from './terrain'
 import { dimensionOf, toSI } from './units'
+import type { SimWind } from './wind'
 
 export type Vec3 = [number, number, number]
 
@@ -166,7 +167,14 @@ export function simEnvironment(env: EnvironmentDoc | null | undefined, assets: E
   return { ok: true, environment }
 }
 
-export type GroundEffectResult = { ok: true; radiiM?: number[] } | { ok: false; missing: MissingValue[] }
+export interface SimFlightEnvironment {
+  /** Output of simWind. Horizontal world-frame wind, or null for calm. */
+  wind?: SimWind
+  /** Output of simGroundEffect. Propeller radii in metres in vehicle motor order. */
+  groundEffect?: number[]
+}
+
+export type GroundEffectResult = { ok: true; radiiM?: SimFlightEnvironment['groundEffect'] } | { ok: false; missing: MissingValue[] }
 
 /** Supply slots in vehicle motor order (engine-core/src/flight.rs:303–315). */
 export function simGroundEffect(

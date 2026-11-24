@@ -435,12 +435,25 @@ pub fn run(
     config: &ScenarioConfig,
     scenario: &Scenario,
 ) -> Result<ScenarioReport, String> {
+    run_with_flight_config(vehicle, propulsion, drag, config, scenario, |_| Ok(()))
+}
+
+/// Configure the actual scenario plant once after density scaling, before stepping.
+pub fn run_with_flight_config(
+    vehicle: &Vehicle,
+    propulsion: Propulsion,
+    drag: Option<BodyDrag>,
+    config: &ScenarioConfig,
+    scenario: &Scenario,
+    configure: impl FnOnce(&mut Flight) -> Result<(), String>,
+) -> Result<ScenarioReport, String> {
     scenario.validate(propulsion.motors.len())?;
     config.gains.validate()?;
     let plant = modified_vehicle(vehicle, scenario)?;
     let yaw_ratio = propulsion.yaw_ratio();
     let mut flight = Flight::new(&plant, propulsion, drag, Some(config.air_density_kg_m3))?;
     flight.scale_to_air_density(config.air_density_kg_m3)?;
+    configure(&mut flight)?;
     if let Some(cutoff) = config.cutoff {
         flight.set_cutoff(cutoff)?;
     }

@@ -1,3 +1,4 @@
+import { GroundEffectSection, WindSection } from '../workshop/environment/FlightEnvironmentSections'
 import { CircleAlert, CircleCheck } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { NumberField, numberParser } from '@/components/number-field'
@@ -78,6 +79,8 @@ export function FlightSetup({ projectId, conditions: c, onChange, blockers, engi
           parse={optional(0.001, 1e6, c.cutoffType === 'voltageV' ? 'V' : 'mAh', 0.001)}
           onCommit={(v) => onChange('Set battery cut-off', { cutoffValue: v })}
         />
+        <WindSection wind={c.wind} onChange={(wind) => onChange('Set wind', { wind })} />
+        <GroundEffectSection value={c.groundEffect} onChange={(groundEffect) => onChange('Set ground effect', { groundEffect })} />
       </div>
       <p className="mt-1 text-[11.5px] leading-relaxed text-fg-subtle">Saved with the project.</p>
       {locked && <p className="mt-1 text-[11.5px] text-fg-subtle">Conditions apply to the next start.</p>}

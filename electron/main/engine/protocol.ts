@@ -10,6 +10,7 @@
  * we do not trust blindly).
  */
 import { z } from 'zod'
+import type { SimFlightEnvironment } from '../../../src/domain/environment'
 
 export const PROTOCOL_VERSION = 2
 
@@ -101,20 +102,83 @@ export type BodyDrag = z.infer<typeof BodyDragSchema>
  */
 const SurfaceSchema = { friction: num.refine((v) => v >= 0, 'cannot be negative'), restitution: num.refine((v) => v >= 0 && v <= 1, 'must be between 0 and 1') }
 
-/** Ground plane z = 0 (or null: free space) and fixed box obstacles, world frame. */
+const obstacle = {
+  id: z.string().min(1),
+  /** World Z-up position in metres and local-to-world quaternion (x, y, z, w). */
+  center: vec3,
+  quaternion: quat.refine((q) => Math.abs(Math.sqrt(q.reduce((sum, value) => sum + value * value, 0)) - 1) <= 1e-9, 'must be a unit quaternion'),
+  ...SurfaceSchema,
+}
+const terrain = z.strictObject({
+  rows: num.int().min(2),
+  columns: num.int().min(2),
+  cellSizeM: positive,
+  /** Southwest outer corner in world XY metres. Heights are world Z metres, north row first. */
+  cornerM: z.tuple([num, num]),
+  heightsM: z.array(num),
+  ...SurfaceSchema,
+}).superRefine((grid, ctx) => {
+  if (grid.heightsM.length !== grid.rows * grid.columns) {
+    ctx.addIssue({ code: 'custom', path: ['heightsM'], message: 'count must equal rows × columns' })
+  }
+  for (const [axis, dimension] of [[0, grid.columns], [1, grid.rows]] as const) {
+    const first = grid.cornerM[axis] + grid.cellSizeM / 2
+    const last = first + (dimension - 1) * grid.cellSizeM
+    if (!Number.isFinite(last) || last <= first) {
+      ctx.addIssue({ code: 'custom', path: ['cornerM', axis], message: 'sample bounds must be finite and distinct' })
+    }
+  }
+})
+
+/** World Z-up ground plane, terrain or free space, with fixed obstacles.
+ * Obstacle dimensions and hull points are local metres. Cylinders use local +Z. */
 export const EnvironmentSchema = z.strictObject({
-  ground: z.strictObject(SurfaceSchema).nullable(),
-  obstacles: z.array(
-    z.strictObject({
-      id: z.string().min(1),
-      center: vec3,
-      halfExtents: z.tuple([num, num, num]).refine((h) => h.every((v) => v > 0), 'must all be positive'),
-      quaternion: quat,
-      ...SurfaceSchema,
-    }),
-  ),
+  ground: z.strictObject(SurfaceSchema).nullable().optional(),
+  terrain: terrain.nullable().optional(),
+  obstacles: z.array(z.union([
+    z.strictObject({ ...obstacle, type: z.literal('box').optional(), halfExtents: z.tuple([positive, positive, positive]) }),
+    z.strictObject({ ...obstacle, type: z.literal('cylinder'), radius: positive, height: positive }),
+    z.strictObject({ ...obstacle, type: z.literal('hull'), points: z.array(vec3).min(4) }),
+  ])),
+}).superRefine(({ ground, terrain, obstacles }, ctx) => {
+  if (terrain != null && ground != null) {
+    ctx.addIssue({ code: 'custom', path: ['terrain'], message: 'cannot be supplied with a ground plane' })
+  }
+  if (terrain == null && ground === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['ground'], message: 'required without terrain (null for free space)' })
+  }
+  const ids = new Set<string>()
+  for (const [index, { id }] of obstacles.entries()) {
+    if (ids.has(id)) ctx.addIssue({ code: 'custom', path: ['obstacles', index, 'id'], message: 'is used by another obstacle' })
+    ids.add(id)
+  }
 })
 export type Environment = z.infer<typeof EnvironmentSchema>
+
+const nonnegative = num.min(0)
+const windRoughness = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('categoryC') }),
+  z.strictObject({ kind: z.literal('otherPhases') }),
+  // wind.rs:134–136 and 156 use 3 ft as the exclusive bound.
+  z.strictObject({ kind: z.literal('custom'), lengthM: positive.refine((v) => v < 3 * 0.3048, 'must be below 3 ft') }),
+])
+export const WindSchema = z.strictObject({
+  /** Direction wind comes from, clockwise degrees from world +X as seen from +Z. */
+  fromDeg: num,
+  /** Speeds in m/s. Shear uses height AGL and a reference speed at 20 ft. */
+  mean: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('constant'), speedMps: nonnegative }),
+    z.strictObject({ kind: z.literal('shear'), speedAt20FtMps: nonnegative, roughness: windRoughness }),
+  ]).nullable(),
+  /** Speed in m/s, distance in metres, and time since the run began in seconds. */
+  gust: z.strictObject({ amplitudeMps: nonnegative, lengthM: positive, startS: nonnegative }).nullable(),
+}).nullable()
+
+const flightEnvironmentShape = {
+  wind: WindSchema.optional(),
+  /** Propeller radii in metres, indexed by the body-frame motor hubs in vehicle order. */
+  groundEffect: z.array(positive).optional(),
+} satisfies { [Field in keyof Required<SimFlightEnvironment>]: z.ZodType<SimFlightEnvironment[Field]> }
 
 /**
  * The PX4 controller's setpoint and gain overrides (`sim.run`'s `controller`, and the live flight's
@@ -141,8 +205,7 @@ const mixerShape = {
   thrustModelFactor: num.min(0).max(1).optional(),
 }
 
-const controllerSetpoint = z.strictObject(controllerSetpointShape)
-type ControllerSetpoint = z.infer<typeof controllerSetpoint>
+type ControllerSetpoint = z.infer<z.ZodObject<typeof controllerSetpointShape>>
 
 function checkControllerSetpoint(c: ControllerSetpoint, ctx: z.RefinementCtx, canInheritMode: boolean) {
   const issue = (field: keyof ControllerSetpoint, message: string) => ctx.addIssue({ code: 'custom', path: [field], message })
@@ -181,6 +244,7 @@ export const ControllerRequestSchema = z.strictObject({
 export const SimRunParamsSchema = z.strictObject({
   durationS: num.refine((v) => v > 0, 'must be positive'),
   environment: EnvironmentSchema,
+  ...flightEnvironmentShape,
   /** Body origin at the start, world frame (default the origin). */
   startPositionM: vec3.optional(),
   dtS: num.refine((v) => v > 0, 'must be positive').optional(),
@@ -211,6 +275,7 @@ export type EngineCommand =
   | ({ type: 'sim.run' } & SimRunParams)
   | ({ type: 'flight.session.start' } & FlightSessionStartParams)
   | ({ type: 'flight.session.step' } & FlightSessionStepParams)
+  | { type: 'flight.session.log' }
   | { type: 'flight.session.end' }
   | ({ type: 'scenario.run' } & ScenarioRunParams)
   | ({ type: 'stepTest.run' } & StepTestRunParams)
@@ -263,6 +328,11 @@ const saturation = z.strictObject({ positive: saturationFlags, negative: saturat
 const nullableVec3 = z.tuple([num.nullable(), num.nullable(), num.nullable()])
 const FlightLoopDiagnosticSchema = z.strictObject({
   mode: flightMode,
+  // Older v2 diagnostics predate the takeoff and land state.
+  autoMode: z.enum(['takeoff', 'hold', 'land']).nullable().optional(),
+  takeoffState: z.enum(['disarmed', 'spoolUp', 'readyForTakeoff', 'rampUp', 'flight']).optional(),
+  landState: z.strictObject({ freefall: z.boolean(), groundContact: z.boolean(), maybeLanded: z.boolean(), landed: z.boolean() }).optional(),
+  commandFinished: z.boolean().optional(),
   positionSetpointM: nullableVec3,
   velocitySetpointMps: nullableVec3,
   accelerationSetpointMps2: nullableVec3,
@@ -320,6 +390,7 @@ export const MAX_SESSION_STEPS = 100
 
 export const FlightSessionStartParamsSchema = z.strictObject({
   environment: EnvironmentSchema,
+  ...flightEnvironmentShape,
   /** Body origin at the start, world frame. */
   startPositionM: vec3.optional(),
   /** ISA density at the user's altitude (src/domain/atmosphere.ts), kg/m³; each motor's thrust and torque scale by it relative to that motor's own reference density (propulsion definition). */
@@ -335,12 +406,27 @@ export const FlightSessionStartParamsSchema = z.strictObject({
 })
 export type FlightSessionStartParams = z.infer<typeof FlightSessionStartParamsSchema>
 
-export const FlightSessionSetpointSchema = controllerSetpoint
+const autoSetpoint = z.discriminatedUnion('type', [
+  /** Height in metres above the starting CoM along world +Z. Absent uses MIS_TAKEOFF_ALT. */
+  z.strictObject({ type: z.literal('takeoff'), altitudeM: positive.optional() }),
+  z.strictObject({ type: z.literal('hold') }),
+  z.strictObject({ type: z.literal('land') }),
+])
+
+export const FlightSessionSetpointSchema = z.strictObject({
+  ...controllerSetpointShape,
+  command: autoSetpoint.optional(),
+})
   .refine(
     (c) => c.attitude === undefined || Math.abs(c.attitude.reduce((n, x) => n + x * x, 0) - 1) < 1e-9,
     'attitude must be a unit quaternion',
   )
-  .superRefine((c, ctx) => checkControllerSetpoint(c, ctx, true))
+  .superRefine((c, ctx) => {
+    if (c.command === undefined) return checkControllerSetpoint(c, ctx, true)
+    if (Object.keys(controllerSetpointShape).some((field) => c[field as keyof ControllerSetpoint] !== undefined)) {
+      ctx.addIssue({ code: 'custom', path: ['command'], message: 'must be the only field in setpoint' })
+    }
+  })
 export type FlightSessionSetpoint = z.infer<typeof FlightSessionSetpointSchema>
 export const FlightSessionStepParamsSchema = z.strictObject({
   steps: num.int().min(1).max(MAX_SESSION_STEPS),
@@ -349,6 +435,14 @@ export const FlightSessionStepParamsSchema = z.strictObject({
 export type FlightSessionStepParams = z.infer<typeof FlightSessionStepParamsSchema>
 
 const cutoffReason = z.enum(['voltageCutoff', 'chargeCutoff'])
+
+const rotorGroundEffect = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('inactive') }),
+  z.strictObject({ type: z.literal('applied'), belowTestedRange: z.boolean() }),
+  z.strictObject({ type: z.literal('invalidInput'), reason: z.enum(['hubHeight', 'radius', 'airspeed', 'thrust', 'airDensity']) }),
+  z.strictObject({ type: z.literal('invalidWind') }),
+  z.strictObject({ type: z.literal('nonFiniteThrust') }),
+])
 
 /** Everything the debug panel shows for one moment of the flight (engine-host `flight_session.rs`). */
 export const FlightDiagnosticSchema = z.strictObject({
@@ -365,6 +459,14 @@ export const FlightDiagnosticSchema = z.strictObject({
     spinUpReactionTorqueNm: vec3,
     rotorGyroTorqueNm: vec3,
     totalTorqueNm: vec3,
+    /** Wind at the CoM at the start of the step, world Z-up, m/s. */
+    windComWorldMps: vec3,
+    /** Sum of thrust increases in N, before projection onto the rotor axes. */
+    groundEffectAddedThrustN: num,
+    /** Vehicle motor order. Empty when ground effect is off. */
+    groundEffectStatus: z.array(rotorGroundEffect),
+    windAboveRange: z.boolean(),
+    windInvalid: z.boolean(),
   }),
   airDensityKgM3: num,
   /** The 4.7 controller's last step; null until it has stepped. */
@@ -401,6 +503,12 @@ export const FlightSessionStepResultSchema = z.strictObject({
 export type FlightSessionStepResult = z.infer<typeof FlightSessionStepResultSchema>
 
 export const FlightSessionEndResultSchema = z.strictObject({ ended: z.boolean() })
+export const FlightSessionLogRequestSchema = z.strictObject({ type: z.literal('flight.session.log') })
+export const FlightSessionLogResultSchema = z.strictObject({
+  start: FlightSessionStartParamsSchema.extend({ id: num.int().nonnegative(), type: z.literal('flight.session.start') }),
+  steps: z.array(FlightSessionStepParamsSchema.extend({ id: num.int().nonnegative(), type: z.literal('flight.session.step') })),
+})
+export type FlightSessionLogResult = z.infer<typeof FlightSessionLogResultSchema>
 export type FlightSessionEndResult = z.infer<typeof FlightSessionEndResultSchema>
 
 // ---------------------------------------------------------------------------
@@ -481,6 +589,7 @@ export const ScenarioConfigSchema = z.strictObject({
   gains: ControllerRequestSchema.shape.gains,
   thrustModelFactor: mixerShape.thrustModelFactor,
   environment: EnvironmentSchema.optional(),
+  ...flightEnvironmentShape,
   /** With an environment: the body origin at the start, world frame. */
   startPositionM: vec3.optional(),
 })
@@ -552,7 +661,7 @@ const stepTestSpec = z.strictObject({
 
 export const StepTestRunParamsSchema = z.strictObject({
   test: stepTestSpec,
-  config: ScenarioConfigSchema.pick({ airDensityKgM3: true, cutoff: true }).extend({ gains, ...mixerShape }),
+  config: ScenarioConfigSchema.pick({ airDensityKgM3: true, cutoff: true }).extend({ gains, ...mixerShape, ...flightEnvironmentShape }),
 })
 export type StepTestRunParams = z.infer<typeof StepTestRunParamsSchema>
 

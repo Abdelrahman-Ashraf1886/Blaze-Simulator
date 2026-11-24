@@ -4,13 +4,22 @@
  * when the build is ready to fly; the IPC boundary validates everything; and a real engine session runs
  * through the same handlers.
  */
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { join } from 'node:path'
+import { createInterface } from 'node:readline'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { FlightStartInput, FlightStepInput, FlightStepResult, IpcResult } from '../../electron/ipc/contract'
 import { flightEnd, flightStart, flightStep, type EngineForFlight } from '../../electron/main/engine/flight-session'
-import { FlightDiagnosticSchema, FlightSessionStartParamsSchema, FlightSessionStepParamsSchema, FlightSessionStepResultSchema, SimRunParamsSchema, SimRunResultSchema } from '../../electron/main/engine/protocol'
+import {
+  FlightDiagnosticSchema, FlightSessionLogRequestSchema, FlightSessionLogResultSchema, FlightSessionStartParamsSchema,
+  FlightSessionStartResultSchema, FlightSessionStepParamsSchema, FlightSessionStepResultSchema, MAX_SESSION_STEPS,
+  ScenarioRunParamsSchema, ScenarioRunResultSchema, SimRunParamsSchema, SimRunResultSchema, StepTestRunParamsSchema,
+  StepTestRunResultSchema, isEngineResponse, type FlightSessionStepParams,
+} from '../../electron/main/engine/protocol'
 import { EngineSupervisor } from '../../electron/main/engine/supervisor'
 import type { ReadyItem } from '../../src/domain/propulsion'
+import { simWind } from '../../src/domain/wind'
 import { EngineFlightSource, idleFrame, MAX_STEP_MS, stepsForElapsed, toEngineSetpoint, toFlightFrame } from '../../src/features/flight/EngineFlightSource'
 import { airDensityFor, conditionBlockers, EMPTY_CONDITIONS, enginePayload, flightGate, type EnginePayload, type FlightConditions } from '../../src/features/flight/readiness'
 import { flightStartWithTuning } from '../../src/features/flight/flight-mode'
@@ -50,6 +59,7 @@ const diagnostic = (overrides: Record<string, unknown> = {}) => ({
   loads: {
     thrustBodyN: v3(0, 0, 6.1), dragBodyN: v3(-0.1, 0, 0), armTorqueNm: v3(0.01, 0.02, 0), dragReactionTorqueNm: v3(0, 0, 0.03),
     spinUpReactionTorqueNm: v3(0, 0, -0.004), rotorGyroTorqueNm: v3(0.001, 0, 0), totalTorqueNm: v3(0.011, 0.02, 0.026),
+    windComWorldMps: v3(0, 0, 0), groundEffectAddedThrustN: 0, groundEffectStatus: [], windAboveRange: false, windInvalid: false,
   },
   airDensityKgM3: 1.2,
   control: { torqueDemand: [0.1, 0.2, 0.3], rateIntegral: [0, 0.1, 0], collectiveThrust: 0.5, saturation: { positive: [true, false, false, false], negative: [false, false, false, true] } },
@@ -106,6 +116,10 @@ describe('the response adapter', () => {
   it('maps actual PX4 mode, inactive axes and hover variance', () => {
     const flightLoop = {
       mode: 'stabilized',
+      autoMode: null,
+      takeoffState: 'flight',
+      landState: { freefall: false, groundContact: false, maybeLanded: false, landed: false },
+      commandFinished: false,
       positionSetpointM: [null, null, null],
       velocitySetpointMps: [null, 0, 1],
       accelerationSetpointMps2: [null, null, 1],
@@ -545,6 +559,318 @@ describe('IPC validation', () => {
 // ---- a real engine session through the same handlers -------------------------------------------------------
 
 const binaryPath = join(__dirname, '../../simulation-engine/target/release', process.platform === 'win32' ? 'drone-engine.exe' : 'drone-engine')
+
+// Direct NDJSON also checks requests that Zod would refuse before the supervisor sends them.
+async function withProtocol(run: (engine: {
+  request: (command: object) => Promise<ReturnType<typeof decodeResponse>>
+  result: (command: object) => Promise<unknown>
+  lineBytes: (command: object) => number
+}) => Promise<void>) {
+  const child = spawn(binaryPath, { stdio: ['pipe', 'pipe', 'ignore'] })
+  await once(child, 'spawn')
+  const closed = once(child, 'close')
+  const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]()
+  let nextId = 0
+  const line = (id: number, command: object) => JSON.stringify({ ...command, id }) + '\n'
+  const request = async (command: object) => {
+    const id = nextId++
+    child.stdin.write(line(id, command))
+    const reply = await replies.next()
+    if (reply.done) throw new Error('The engine closed stdout before replying')
+    const response = decodeResponse(reply.value)
+    expect(response.id).toBe(id)
+    return response
+  }
+  const result = async (command: object) => {
+    const response = await request(command)
+    if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`)
+    return response.result
+  }
+  try {
+    await run({ request, result, lineBytes: (command) => Buffer.byteLength(line(nextId, command)) })
+    await result({ type: 'shutdown' })
+  } finally {
+    child.stdin.end()
+    expect((await closed)[0]).toBe(0)
+  }
+}
+
+function decodeResponse(line: string) {
+  const response: unknown = JSON.parse(line)
+  if (!isEngineResponse(response)) throw new Error('Expected an engine response')
+  return response
+}
+
+describe('6.5 on the real NDJSON engine', () => {
+  const { airDensityKgM3, cutoff } = startInput()
+  const plane = { ground: { friction: 0.5, restitution: 0 }, obstacles: [] } // startInput fixture
+  const startPositionM = v3(0, 0, REST_Z)
+  const load = { type: 'vehicle.load', ...quad }
+  const free = { ground: null, obstacles: [] }
+  const dtS = 0.001 // engine-core/src/sim.rs:28
+  const durationS = MAX_SESSION_STEPS * dtS
+  const sourceWind = simWind({
+    kind: 'wind', fromDeg: 0, mean: { kind: 'constant', speedMps: 8 },
+    // engine-core/src/flight/tests.rs:429–440,615–616
+    gust: { kind: 'discrete', amplitudeMps: 8, lengthM: 4, startS: 1.5 * dtS },
+  })
+  if (!sourceWind.ok || !sourceWind.wind) throw new Error('Invalid wind fixture')
+  const wind = sourceWind.wind
+  // Same radius as the arm in engine-core/src/flight/tests.rs:674.
+  const groundEffect = quad.vehicle.motors.map(() => A)
+  // Flat terrain fixture from engine-core/src/environment/tests.rs:229–239.
+  const cellSizeM = 2
+  const flat = { ...plane.ground, rows: 2, columns: 2, cellSizeM, cornerM: [-cellSizeM, -cellSizeM], heightsM: [0, 0, 0, 0] }
+  const terrainEnvironment = { ground: null, terrain: flat, obstacles: [] }
+  const baseStart = FlightSessionStartParamsSchema.parse({ environment: plane, startPositionM, airDensityKgM3, cutoff, controller: { mode: 'position' } })
+  const start = (params: unknown) => ({ type: 'flight.session.start', ...FlightSessionStartParamsSchema.parse(params) })
+  const step = (steps: number, setpoint: FlightSessionStepParams['setpoint']) => ({
+    type: 'flight.session.step', ...FlightSessionStepParamsSchema.parse({ steps, setpoint }),
+  })
+  const getLog = FlightSessionLogRequestSchema.parse({ type: 'flight.session.log' })
+  const rates = { mode: 'rates', bodyRadps: v3(0, 0, 0), collective: 0.5 } as const
+
+  it('replays logged inputs, commands and mode changes at different chunk sizes', async () => withProtocol(async ({ result, request }) => {
+    await result(load)
+    const initial = start({ ...baseStart, environment: terrainEnvironment, wind, groundEffect })
+    // Recorded analog inputs that exposed a loss of precision when the log
+    // re-encoded its parsed JSON numbers (sin/cos of the fixture's two axes).
+    const sticks = { forward: Math.sin(2), right: Math.cos(2), yawRight: 0.1, throttle: -1 }
+    const inputs = [
+      step(MAX_SESSION_STEPS, rates),
+      step(MAX_SESSION_STEPS, { mode: 'altitude', sticks }),
+      step(MAX_SESSION_STEPS, { command: { type: 'takeoff' } }),
+      step(MAX_SESSION_STEPS, { command: { type: 'hold' } }),
+      step(MAX_SESSION_STEPS, { command: { type: 'land' } }),
+      step(MAX_SESSION_STEPS, { sticks }),
+    ]
+    const started = FlightSessionStartResultSchema.parse(await result(initial))
+    expect(started.diagnostic.loads.groundEffectStatus).toEqual(groundEffect.map(() => ({ type: 'inactive' })))
+    let stateHash = ''
+    const hashes = []
+    const diagnostics = []
+    for (const input of inputs) {
+      const response = FlightSessionStepResultSchema.parse(await result(input))
+      expect(response.stepsRun).toBe(MAX_SESSION_STEPS)
+      stateHash = response.stateHash
+      hashes.push(stateHash)
+      diagnostics.push(response.diagnostic)
+    }
+    const [powered, manual, takeoff, hold, land, resumed] = diagnostics
+    if (!powered || !manual || !takeoff || !hold || !land || !resumed) throw new Error('A step diagnostic is missing')
+    expect(powered.loads.windComWorldMps[0]).toBeLessThan(-8)
+    expect(powered.loads.groundEffectAddedThrustN).toBeGreaterThan(0)
+    expect(powered.loads.groundEffectStatus.every(({ type }) => type === 'applied')).toBe(true)
+    expect(powered.loads.windAboveRange).toBe(false)
+    expect(powered.loads.windInvalid).toBe(false)
+    expect(manual.flightLoop?.mode).toBe('altitude')
+    expect(takeoff.flightLoop).toMatchObject({ mode: 'position', autoMode: 'takeoff', commandFinished: false })
+    expect(hold.flightLoop).toMatchObject({ mode: 'position', autoMode: 'hold', commandFinished: true })
+    expect(land.flightLoop).toMatchObject({ mode: 'position', autoMode: 'land' })
+    expect(resumed.flightLoop).toMatchObject({ mode: 'altitude', autoMode: null, commandFinished: false })
+
+    const log = FlightSessionLogResultSchema.parse(await result(getLog))
+    expect(log).toEqual({ start: { ...initial, id: 1 }, steps: inputs.map((input, index) => ({ ...input, id: index + 2 })) })
+    console.info('Flight log bytes per step request (compact JSON, without LF)', log.steps.map((input) => Buffer.byteLength(JSON.stringify(input))))
+    const replay = async (partition: number, changeGust = false) => {
+      const replayStart = changeGust ? { ...log.start, wind: { ...wind, gust: null } } : log.start
+      await result(replayStart)
+      expect(FlightSessionLogResultSchema.parse(await result(getLog)).steps).toEqual([])
+      const replayed = []
+      for (const input of log.steps) {
+        let last
+        for (let remaining = input.steps; remaining > 0; remaining -= partition) {
+          last = FlightSessionStepResultSchema.parse(await result({ ...input, steps: Math.min(remaining, partition) }))
+        }
+        replayed.push(last?.stateHash)
+      }
+      return replayed
+    }
+    expect(await replay(MAX_SESSION_STEPS)).toEqual(hashes)
+    // Seven steps crosses the estimator interval (flight-live.test.ts mode chunking fixture).
+    expect(await replay(7)).toEqual(hashes)
+    expect((await replay(MAX_SESSION_STEPS, true)).at(-1)).not.toBe(stateHash)
+
+    const takeoffHash = async (altitudeM?: number) => {
+      await result(initial)
+      return FlightSessionStepResultSchema.parse(await result(step(MAX_SESSION_STEPS, {
+        command: { type: 'takeoff', ...(altitudeM === undefined ? {} : { altitudeM }) },
+      }))).stateHash
+    }
+    // auto_modes.rs:12–14,38–43.
+    expect(await takeoffHash()).toBe(await takeoffHash(2.5))
+    expect(await takeoffHash(2 * 2.5)).not.toBe(await takeoffHash())
+    await result({ type: 'flight.session.end' })
+    expect(await request(getLog)).toMatchObject({ ok: false, error: { code: 'NO_SESSION' } })
+  }))
+
+  it('applies terrain and shapes and forwards the environment through batch, session and scenario', async () => withProtocol(async ({ result, request }) => {
+    await result(load)
+    const sim = { airDensityKgM3, durationS, startPositionM, environment: terrainEnvironment, wind, groundEffect,
+      controller: rates }
+    const batch = SimRunResultSchema.parse(await result({ type: 'sim.run', ...SimRunParamsSchema.parse(sim) }))
+    const reset = start({ ...baseStart, environment: terrainEnvironment, wind, groundEffect, controller: { mode: rates.mode } })
+    await result(reset)
+    const live = FlightSessionStepResultSchema.parse(await result(step(MAX_SESSION_STEPS, rates)))
+    expect(live.stateHash).toBe(batch.stateHash)
+    expect(live.contacts.some(({ with: surface }) => surface === 'ground')).toBe(true)
+    const noWind = SimRunResultSchema.parse(await result({ type: 'sim.run', ...sim, wind: null }))
+    const noWindOmitted = SimRunResultSchema.parse(await result({ type: 'sim.run', ...sim, wind: undefined }))
+    const noGroundEffect = SimRunResultSchema.parse(await result({ type: 'sim.run', ...sim, groundEffect: undefined }))
+    expect(noWind.stateHash).toBe(noWindOmitted.stateHash)
+    expect(noWind.stateHash).not.toBe(batch.stateHash)
+    expect(noGroundEffect.stateHash).not.toBe(batch.stateHash)
+
+    // Obstacle geometry follows environment.rs:352–366. Circumscribe the body
+    // fixture with an arm-sized obstacle and approach from its upper face.
+    const pose = { center: v3(0, 0, A), quaternion: [0, 0, 0, 1], ...plane.ground }
+    const shapes = [
+      { type: 'box', halfExtents: v3(A, A, A) },
+      { type: 'cylinder', radius: A, height: 2 * A },
+      { type: 'hull', points: [v3(-A, -A, A), v3(A, -A, A), v3(0, A, A), v3(0, 0, -A)] },
+    ]
+    for (const shape of shapes) {
+      const environment = { ...terrainEnvironment, obstacles: [{ id: shape.type, ...pose, ...shape }] }
+      const command = SimRunParamsSchema.parse({ ...sim, environment, startPositionM: v3(0, 0, 2 * A + REST_Z), controller: undefined })
+      const contact = SimRunResultSchema.parse(await result({ type: 'sim.run', ...command }))
+      const touchesObstacle = ({ with: surface }: { with: string }) => surface === `obstacle:${shape.type}`
+      expect(contact.contacts.some(touchesObstacle)).toBe(true)
+      await result(start({ ...baseStart, wind, groundEffect, environment, startPositionM: command.startPositionM, controller: { mode: rates.mode } }))
+      const session = FlightSessionStepResultSchema.parse(await result(step(MAX_SESSION_STEPS, rates)))
+      expect(session.contacts.some(touchesObstacle)).toBe(true)
+    }
+
+    const config = { environment: terrainEnvironment, startPositionM, airDensityKgM3, cutoff, wind, groundEffect }
+    const scenario = { type: 'custom', scenario: {
+      name: 'hold', durationS, modifications: [], checks: [],
+      script: [{ fromS: 0, attitude: { type: 'euler', roll: 0, pitch: 0, yaw: 0 }, yawRateRadps: 0, zM: null, zVelocityMps: 0 }],
+    } }
+    const scenarioHash = async (overrides: object) => ScenarioRunResultSchema.parse(await result({
+      type: 'scenario.run', ...ScenarioRunParamsSchema.parse({ scenario, config: { ...config, ...overrides } }),
+    })).stateHash
+    const configured = await scenarioHash({})
+    expect(await scenarioHash({ wind: null })).not.toBe(configured)
+    expect(await scenarioHash({ groundEffect: undefined })).not.toBe(configured)
+
+    const invalid = { ...terrainEnvironment, terrain: { ...flat, heightsM: [null] },
+      obstacles: [{ id: 'cylinder', ...pose, type: 'cylinder', height: A, radius: -A }] }
+    for (const raw of [
+      { type: 'sim.run', ...sim, environment: invalid },
+      { ...reset, environment: invalid },
+      { type: 'scenario.run', scenario, config: { ...config, environment: invalid } },
+    ]) {
+      const response = await request(raw)
+      expect(response).toMatchObject({ ok: false, error: { code: 'ENVIRONMENT_INCOMPLETE' } })
+      if (response.ok) throw new Error('Expected environment refusal')
+      for (const path of ['environment.terrain.heightsM[0]', 'environment.obstacles[0].radius']) {
+        expect(response.error.message).toContain(raw.type === 'scenario.run' ? `config.${path}` : path)
+      }
+    }
+  }))
+
+  it('refuses bad values and auto commands outside FlightLoop and accepts optional step-test configuration', async () => withProtocol(async ({ result, request }) => {
+    await result(load)
+    const legacy = start({ ...baseStart, controller: undefined })
+    const off = FlightSessionStartResultSchema.parse(await result(legacy))
+    expect(off.diagnostic.loads.groundEffectStatus).toEqual([])
+    expect(off.diagnostic.loads.windComWorldMps).toEqual([0, 0, 0])
+    const throttleRun = SimRunResultSchema.parse(await result({
+      type: 'sim.run', durationS: 20 * dtS, startPositionM, airDensityKgM3, environment: free,
+      throttle: quad.vehicle.motors.map(() => rates.collective),
+    }))
+    expect(throttleRun.stateHash).toBe('d7f97eadba824407')
+    for (const type of ['takeoff', 'hold', 'land'] as const) {
+      expect(await request(step(1, { command: { type } }))).toMatchObject({
+        ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('requires a FlightLoop session') },
+      })
+    }
+    const badAuto = { steps: 1, setpoint: { mode: 'position', command: { type: 'takeoff', altitudeM: -A } } }
+    expect(FlightSessionStepParamsSchema.safeParse(badAuto).success).toBe(false)
+    await result(start(baseStart))
+    for (const setpoint of [badAuto.setpoint, { command: badAuto.setpoint.command }, { command: { type: 'hold', extra: true } }]) {
+      expect(await request({ type: 'flight.session.step', steps: 1, setpoint })).toMatchObject({
+        ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('setpoint.command') },
+      })
+    }
+    expect(await request({ ...getLog, extra: true })).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
+    expect(FlightSessionLogResultSchema.parse(await result(getLog)).steps).toEqual([])
+    const badWind = { ...wind, gust: { ...wind.gust, lengthM: -A } }
+    const test = { step: { type: 'rate', axis: 'roll', amplitudeRadps: 10 * Math.PI / 180 }, holdS: 2 * dtS, durationS: 8 * dtS, decimationSteps: 2 }
+    const config = { airDensityKgM3, cutoff }
+    const stepTest = { type: 'stepTest.run', test, config }
+    const unconfigured = StepTestRunResultSchema.parse(await result(stepTest))
+    expect(unconfigured.stateHash).toBe('9644d51ae5ff0264')
+    const configured = StepTestRunResultSchema.parse(await result({
+      type: 'stepTest.run', ...StepTestRunParamsSchema.parse({ test, config: { ...config, wind, groundEffect } }),
+    }))
+    expect(configured.stateHash).not.toBe(unconfigured.stateHash)
+    expect(await request({ ...stepTest, config: { ...config, groundEffect: [0] } })).toMatchObject({
+      ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('config.groundEffect[0]') },
+    })
+    expect(await request({ ...legacy, wind: badWind })).toMatchObject({
+      ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('wind.gust.lengthM') },
+    })
+    expect(await request({ ...legacy, groundEffect: [A] })).toMatchObject({
+      ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('groundEffect') },
+    })
+    await result({ type: 'vehicle.load', vehicle: quad.vehicle })
+    for (const [field, value] of [['wind', null], ['groundEffect', groundEffect]] as const) {
+      for (const raw of [
+        { type: 'sim.run', durationS, environment: free, [field]: value },
+        { ...legacy, [field]: value },
+        { type: 'scenario.run', config: { [field]: value } },
+        { ...stepTest, config: { ...config, [field]: value } },
+      ]) {
+        expect(await request(raw)).toMatchObject({ ok: false, error: { message: expect.stringContaining(field) } })
+      }
+    }
+  }))
+
+  it('reports takeoff completion and the landed detector state after descent', async () => withProtocol(async ({ result }) => {
+    await result(load)
+    await result(start(baseStart))
+    const advance = async (type: 'takeoff' | 'land', seconds: number) => {
+      let last
+      for (let remaining = Math.round(seconds / dtS); remaining > 0; remaining -= MAX_SESSION_STEPS) {
+        last = FlightSessionStepResultSchema.parse(await result(step(Math.min(remaining, MAX_SESSION_STEPS), { command: { type } })))
+      }
+      return last?.diagnostic.flightLoop
+    }
+    // TakeoffParams::default (takeoff.rs:23–26) and the settling window in flight_loop/tests.rs:307–316.
+    const settlingS = 10
+    const held = await advance('takeoff', 1 + 3 + settlingS)
+    expect(held).toMatchObject({ takeoffState: 'flight', autoMode: 'hold', commandFinished: true, landState: { landed: false } })
+    const landed = await advance('land', settlingS)
+    expect(landed).toMatchObject({
+      takeoffState: 'readyForTakeoff', autoMode: 'land', commandFinished: true,
+      landState: { freefall: false, groundContact: true, maybeLanded: true, landed: true },
+    })
+  }), 20_000)
+
+  it('reports 100-step latency and passes a large terrain line through stdin', async () => withProtocol(async ({ result, lineBytes }) => {
+    await result(load)
+    const request = step(MAX_SESSION_STEPS, rates)
+    // 512 squared samples make a line larger than 512 KiB, even with flat zero heights.
+    const dimension = 512
+    const large = { ...flat, rows: dimension, columns: dimension, heightsM: Array<number>(dimension ** 2).fill(0) }
+    const enabled = start({ ...baseStart, environment: { ...terrainEnvironment, terrain: large }, wind, groundEffect })
+    let bytes = 0
+    const measure = async (params: ReturnType<typeof start>) => {
+      if (params === enabled) bytes = lineBytes(params)
+      await result(params)
+      const before = performance.now()
+      const response = await result(request)
+      const elapsed = performance.now() - before
+      expect(FlightSessionStepResultSchema.parse(response).stepsRun).toBe(MAX_SESSION_STEPS)
+      return elapsed
+    }
+    const baselineMs = await measure(start({ ...baseStart, environment: free }))
+    const enabledMs = await measure(enabled)
+    console.info(`flight.session.step (100 steps), baseline ${baselineMs.toFixed(3)} ms, wind + ground effect + terrain ${enabledMs.toFixed(3)} ms`)
+    console.info(`Terrain start NDJSON line shape ${dimension} × ${dimension}, ${bytes} bytes including LF`)
+  }), 15_000)
+})
+
 const sup = new EngineSupervisor({ binaryPath })
 afterAll(() => sup.stop())
 
@@ -608,11 +934,11 @@ describe('a real engine session', () => {
   const durationS = steps * 0.001
 
   it.each([
-    { mode: 'rates', bodyRadps: v3(0, 0, 0), collective: 0.5 },
-    { mode: 'stabilized', sticks: centeredSticks },
-    { mode: 'altitude', sticks: centeredSticks },
-    { mode: 'position', sticks: centeredSticks },
-  ] as const)('parses actual $mode diagnostics and hashes the same in chunks and one run', async ({ mode, ...setpoint }) => {
+    { mode: 'rates', bodyRadps: v3(0, 0, 0), collective: 0.5, expectedHash: 'd95d572fc0d2a4f0' },
+    { mode: 'stabilized', sticks: centeredSticks, expectedHash: 'b8a0f3a48d69bce5' },
+    { mode: 'altitude', sticks: centeredSticks, expectedHash: 'e3296f1362f98f46' },
+    { mode: 'position', sticks: centeredSticks, expectedHash: '81c577ddd5cc29e7' },
+  ] as const)('parses actual $mode diagnostics and hashes the same in chunks and one run', async ({ mode, expectedHash, ...setpoint }) => {
     const gains = {
       MC_ROLL_P: 7, MPC_XY_P: 1, MPC_POS_MODE: 0, MPC_THR_HOVER: 0.55, MPC_USE_HTE: 0,
       MC_AIRMODE: 2, THR_MDL_FAC: 0.5, HTE_HT_ERR_INIT: 0.2,
@@ -652,6 +978,7 @@ describe('a real engine session', () => {
     }))
     expect(batch.controller).toBeUndefined()
     expect(batch.flightLoop).toEqual(diag)
+    expect(batch.stateHash).toBe(expectedHash)
     expect(batch.stateHash).toBe(last.data.stateHash)
   })
 

@@ -184,7 +184,12 @@ export interface AssemblyPart {
    * fill and the manufacturer value for this part only. Absent = none.
    */
   overrides?: Record<string, SpecValue>
+  /** User-entered vertical field of view in degrees, used by a camera part in flight. */
+  cameraFovDeg?: number
 }
+
+/** Open interval for perspective projection: tan(vertical FOV / 2) must be positive and finite. */
+export const CAMERA_FOV_DEG = { min: 0, max: 180 } as const
 
 /** A measured or calculated inertia the user entered for one part. */
 export interface PartInertia {

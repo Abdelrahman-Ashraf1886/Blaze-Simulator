@@ -7,7 +7,7 @@ export function selectTerrain(current: TerrainDoc | null | undefined, assetId: s
   return assetId === null ? null : { friction: null, restitution: null, ...current, assetId }
 }
 
-type GridRead =
+export type GridRead =
   | { id: string; grid: TerrainGrid; error?: undefined }
   | { id: string; grid?: undefined; error: string }
 

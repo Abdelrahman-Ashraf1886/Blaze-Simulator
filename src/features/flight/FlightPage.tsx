@@ -4,13 +4,14 @@ import type { AssemblyDocument, Project } from '../../../electron/ipc/contract'
 import { PageHeader } from '@/components/page-header'
 import { EmptyState, Section } from '@/components/section'
 import { Button } from '@/components/ui/button'
-import { effectiveParams, type TuningOverrides } from '@/domain/controller-params'
+import type { TuningOverrides } from '@/domain/controller-params'
 import { thrustFactorReadout } from '@/domain/thrust-curve'
 import { runChecks } from '@/domain/checks'
 import { getApi } from '@/services/api'
 import { useProjects } from '@/stores/projects'
 import { useComponents } from '@/stores/components'
 import { useSystem } from '@/stores/system'
+import { useTerrainGrid } from '../workshop/environment/terrain-preview'
 import { buildFrame, type FrameGeometry } from '@/three/frame-geometry'
 import { useAssembly } from '../workshop/assembly-store'
 import { useAssets } from '../workshop/asset-store'
@@ -92,7 +93,9 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
   const setConditions = (label: string, patch: Partial<FlightConditions>) =>
     useAssembly.getState().edit(label, (d) => ({ ...d, flight: { ...(d.flight ?? EMPTY_CONDITIONS), ...patch } }))
   // The assembly's engine payload (or what is still missing), then the user's flight conditions on top.
-  const payload = useMemo(() => enginePayload(doc, geo, components, assets), [doc, geo, components, assets])
+  const terrainId = doc.environment?.terrain?.assetId
+  const terrain = useTerrainGrid(terrainId)
+  const payload = useMemo(() => enginePayload(doc, geo, components, assets, { terrain }), [doc, geo, components, assets, terrain])
   const gate = useMemo(() => flightGate(payload, conditions), [payload, conditions])
   const engineBlock = engineState === 'connected' ? null : 'The engine is not connected.'
   const idle = useMemo(
@@ -124,7 +127,6 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     return () => { alive = false }
   }, [project.id, tuningAttempt])
   const tuning = saved === null ? null : flightStartWithTuning(mode, saved, gate.ok ? gate.thrustFit : null)
-  const linearThrottle = saved !== null && effectiveParams(saved).MPC_THR_CURVE === 1
   const [running, setRunning] = useState(false)
   const [engineError, setEngineError] = useState<string | null>(null)
   const source = useRef<EngineFlightSource | null>(null)
@@ -268,7 +270,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
         <Link className="ml-auto text-accent" to={`/workshop/${project.id}`}>Workshop</Link>
       </div>
       <div className="shrink-0 space-y-1 border-b border-line px-3 py-2 text-[12px] text-fg-muted">
-        <FlightModeStatus frame={frame} linearThrottle={linearThrottle} />
+        <FlightModeStatus frame={frame} />
         {tuningError ? <p role="alert" className="text-fault">Saved tuning: {tuningError}{' '}
           <button className="text-accent" type="button" onClick={() => { setTuningError(null); setTuningAttempt(tuningAttempt + 1) }}>Retry</button>
         </p> : tuning === null ? <p role="status">Loading saved tuning…</p> : null}
@@ -296,7 +298,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
             <FlightViewport frame={frame} doc={display} geo={geo} projectId={project.id} running={running} />
           </div>
           <div className="shrink-0 space-y-1 border-t border-line px-3 py-2 text-[12px] text-fg-muted">
-            <p>Live engine: this build&apos;s mass, motors, battery and drag, flown by the PX4-style controller. It starts on the ground; ground and obstacles are the project environment.</p>
+            <p>Live engine: this build&apos;s mass, motors, battery and drag, flown by the PX4-style controller. The start and contacts use the project’s ground surface and obstacles.</p>
             <p>Focus the view while running. W / S: throttle up / down. A / D: yaw left / right. ↑ / ↓: forward / back. ← / →: left / right. Release to centre. Focus loss clears keys.</p>
             {mode === 'attitudeHold' ? <>
               <p>Limits: ±2 m/s climb, ±90 deg/s yaw, 30° combined tilt. Centred throttle targets zero vertical speed. Attitude hold uses fixed MPC_THR_HOVER.</p>
@@ -310,7 +312,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
         </div>
         <aside aria-label="Physics debug panel" className="w-full shrink-0 overflow-y-auto border-t border-line bg-chrome px-4 py-3 @min-[1000px]:w-[400px] @min-[1000px]:border-l @min-[1000px]:border-t-0">
           <div className="mb-5">
-            <FlightSetup projectId={project.id} conditions={conditions} onChange={setConditions} blockers={blockers} engineBlock={engineBlock} locked={running} />
+            <FlightSetup projectId={project.id} conditions={conditions} onChange={setConditions} blockers={blockers} environment={payload.ok ? payload.payload : undefined} terrainId={terrainId} engineBlock={engineBlock} locked={running} />
           </div>
           <DebugPanel frame={frame} mass={mass.mp} indicators={indicators} source="live" />
         </aside>

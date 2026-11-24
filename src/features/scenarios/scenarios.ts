@@ -83,18 +83,36 @@ export function missingEntry(info: BuiltinInfo, entries: ScenarioEntries): strin
  * The baseline uses the PX4 gains with the build's effective thrust factor.
  */
 export function scenarioRunInput(gate: FlightGate, info: BuiltinInfo, entries: ScenarioEntries, saved?: TuningOverrides): ScenarioRunInput | null {
-  if (!gate.ok || missingEntry(info, entries)) return null
-  const { vehicle, propulsion, aero, airDensityKgM3, cutoff } = gate.input
+  if (missingEntry(info, entries)) return null
+  // The existing built-ins start in free space (engine-host/src/scenario_run.rs:90).
+  return scenarioRequest(gate, {
+    type: 'builtin',
+    name: info.name,
+    ...(info.entry === 'payloadMassKg' ? { massKg: entries.payloadMassKg! } : {}),
+    ...(info.entry === 'comOffsetM' ? { offsetM: entries.comOffsetM! } : {}),
+  }, 'free-space', saved)
+}
+
+/** Keep a scenario's existing start type. The host needs both the environment and start for surface runs. */
+export function scenarioRequest(
+  gate: FlightGate, scenario: ScenarioRunInput['scenario'], start: 'free-space' | 'saved-environment', saved?: TuningOverrides,
+): ScenarioRunInput | null {
+  if (!gate.ok) return null
+  const { vehicle, propulsion, aero, airDensityKgM3, cutoff, wind, groundEffect, environment, startPositionM } = gate.input
+  const { terrain, ...surface } = environment
+  const geometry: ScenarioRunInput['config']['environment'] = start === 'saved-environment'
+    ? { ...surface, ...(terrain && { terrain: { ...terrain, cornerM: [...terrain.cornerM] } }) }
+    : undefined
   return {
     vehicle,
     propulsion,
     aero,
-    scenario: {
-      type: 'builtin',
-      name: info.name,
-      ...(info.entry === 'payloadMassKg' ? { massKg: entries.payloadMassKg! } : {}),
-      ...(info.entry === 'comOffsetM' ? { offsetM: entries.comOffsetM! } : {}),
+    scenario,
+    config: {
+      airDensityKgM3, cutoff, thrustModelFactor: thrustFactor(gate.thrustFit, saved),
+      ...(wind === undefined ? {} : { wind }),
+      ...(groundEffect === undefined ? {} : { groundEffect }),
+      ...(geometry ? { environment: geometry, startPositionM } : {}),
     },
-    config: { airDensityKgM3, cutoff, thrustModelFactor: thrustFactor(gate.thrustFit, saved) },
   }
 }

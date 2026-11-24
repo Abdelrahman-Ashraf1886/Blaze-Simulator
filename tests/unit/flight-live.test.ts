@@ -94,6 +94,9 @@ describe('the response adapter', () => {
       totalThrustN: 6.1,
       thrustBodyN: { x: 0, y: 0, z: 6.1 },
       dragBodyN: { x: -0.1, y: 0, z: 0 },
+      environmentLoads: {
+        windComWorldMps: [0, 0, 0], groundEffectAddedThrustN: 0, groundEffectStatus: [], windAboveRange: false, windInvalid: false,
+      },
       armTorqueNm: { x: 0.01, y: 0.02, z: 0 },
       dragReactionTorqueNm: { x: 0, y: 0, z: 0.03 },
       spinUpReactionTorqueNm: { x: 0, y: 0, z: -0.004 },
@@ -129,7 +132,7 @@ describe('the response adapter', () => {
     }
     const frame = toFlightFrame(FlightDiagnosticSchema.parse(diagnostic({ control: null, flightLoop })), null, [], 'position')
     expect(frame.flightLoop).toMatchObject({
-      mode: 'stabilized', requestedMode: 'position',
+      mode: 'stabilized', requestedMode: 'position', takeoffState: 'flight', landState: flightLoop.landState,
       positionSetpointM: [null, null, null], velocitySetpointMps: [null, 0, 1],
       accelerationSetpointMps2: [null, null, 1], velocityIntegral: [0, 0, 1],
       hoverThrust: { estimate: 0.5, standardDeviation: 0.1, valid: false },

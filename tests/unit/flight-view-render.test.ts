@@ -7,7 +7,7 @@ import { createServer } from 'vite'
 import { expect, it } from 'vitest'
 import { massProperties, type MassProperties } from '../../src/domain/mass'
 import { demoFrame } from '../../src/features/flight/FakeFlightSource'
-import type { FlightFrame } from '../../src/features/flight/frame'
+import { windArrow, type FlightFrame } from '../../src/features/flight/frame'
 import type { Indicator } from '../../src/features/flight/indicators'
 
 // The repo's unit runner is Node-only, with no DOM/testing-library setup and no JSX
@@ -40,13 +40,15 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
     expect(render()).toContain('Unavailable')
 
     const { FlightModeStatus } = await server.ssrLoadModule('/src/features/flight/FlightModeStatus.tsx') as {
-      FlightModeStatus: ComponentType<{ frame: FlightFrame; linearThrottle: boolean }>
+      FlightModeStatus: ComponentType<{ frame: FlightFrame }>
     }
-    const renderMode = (linearThrottle: boolean) => renderToStaticMarkup(createElement(FlightModeStatus, { frame, linearThrottle }))
-    expect(renderMode(false)).toContain('Awaiting diagnostics')
+    const renderMode = () => renderToStaticMarkup(createElement(FlightModeStatus, { frame }))
+    expect(renderMode()).toContain('Awaiting diagnostics')
     frame.flightLoop = {
       mode: 'stabilized',
       requestedMode: 'position',
+      takeoffState: 'rampUp',
+      landState: { freefall: false, groundContact: true, maybeLanded: true, landed: false },
       positionSetpointM: [null, null, null],
       velocitySetpointMps: [0, null, 1],
       accelerationSetpointMps2: [null, null, 0],
@@ -58,13 +60,54 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
     for (const label of ['Position setpoint', 'Velocity setpoint', 'Acceleration setpoint', 'Velocity integral', 'Hover thrust estimate', 'Hover thrust standard deviation', 'Invalid', '0.000 / — / 1.000']) {
       expect(loop).toContain(label)
     }
-    expect(renderMode(false)).toContain('Position fell back to Stabilized on ground contact.')
-    expect(renderMode(false)).toContain('Centred throttle commands hover thrust with no altitude or position hold.')
-    expect(renderMode(true)).toContain('mid-range thrust (linear throttle curve)')
+    for (const label of ['Ramping up', 'Freefall no', 'Ground contact yes', 'Maybe landed yes', 'Landed no']) {
+      expect(renderMode()).toContain(label)
+    }
     frame.flightLoop.mode = 'position'
-    expect(renderMode(false)).toContain('>Position</span>')
-    expect(renderMode(false)).not.toContain('fell back')
+    expect(renderMode()).toContain('>Position</span>')
+    expect(renderMode()).not.toContain('fell back')
+
+    frame.environmentLoads = {
+      windComWorldMps: [-3, 4, 0], groundEffectAddedThrustN: 0.25,
+      windAboveRange: true, windInvalid: true,
+      groundEffectStatus: [
+        { type: 'applied', belowTestedRange: true }, { type: 'inactive' },
+        { type: 'invalidInput', reason: 'hubHeight' }, { type: 'invalidWind' }, { type: 'nonFiniteThrust' },
+      ],
+    }
+    const loads = render()
+    for (const text of [
+      'Wind at CoM', '-3.000 / 4.000 / 0.000', 'Ground-effect added thrust', '0.250',
+      '1 applied / 1 inactive / 1 invalid inputs / 1 invalid wind / 1 non-finite thrust',
+      'held wind at the top of the profile', 'A wind calculation failed', 'skipped ground-effect thrust', 'below the tested height range on 1 motor',
+    ]) expect(loads).toContain(text)
+    frame.environmentLoads = { ...frame.environmentLoads, windAboveRange: false, windInvalid: false, groundEffectStatus: [] }
+    expect(render()).not.toContain('skipped ground-effect thrust')
+
+    const { FlightEnvironmentSummary } = await server.ssrLoadModule('/src/features/flight/FlightSetup.tsx') as {
+      FlightEnvironmentSummary: ComponentType<{
+        environment: Pick<import('../../src/features/flight/readiness').EnginePayload, 'environment' | 'wind' | 'groundEffect'>
+        terrainId?: string
+      }>
+    }
+    const summary = (props: React.ComponentProps<typeof FlightEnvironmentSummary>) =>
+      renderToStaticMarkup(createElement(FlightEnvironmentSummary, props))
+    expect(summary({ environment: { environment: { ground: { friction: 0, restitution: 0 }, obstacles: [] } } })).toContain('Ground plane · Wind off · Ground effect off')
+    expect(summary({ environment: { environment: { ground: null, obstacles: [] } } })).toContain('Free space')
+    expect(summary({ terrainId: 'slope.asc', environment: {
+      environment: {
+        ground: null, obstacles: [],
+        terrain: { rows: 2, columns: 2, cellSizeM: 1, heightsM: [2, 3, 0, 1], cornerM: [-1, -1], friction: 0, restitution: 0 },
+      },
+      wind: { fromDeg: 90, mean: { kind: 'constant', speedMps: 4 }, gust: null },
+      groundEffect: [0.1],
+    } })).toContain('Terrain (slope.asc) · Wind on · Ground effect on')
   } finally {
     await server.close()
   }
+})
+
+it('uses world XYZ for the wind arrow and hides it at zero speed', () => {
+  expect(windArrow([-3, 0, 4])).toEqual({ direction: [-0.6, 0, 0.8], speedMps: 5 })
+  expect(windArrow([0, 0, 0])).toBeNull()
 })

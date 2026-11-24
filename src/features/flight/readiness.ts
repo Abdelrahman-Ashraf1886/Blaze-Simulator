@@ -10,16 +10,19 @@ import type { AssemblyDocument, FlightConditionsDoc, FlightStartInput } from '..
 import physics from '../../../database/reference/physics.v1.json'
 import { airDensity, isaConstants } from '../../domain/atmosphere'
 import { lowestPoint } from '../../domain/collisions'
-import { simEnvironment, type SimEnvironment } from '../../domain/environment'
+import { simGroundEffect, type MissingValue, type SimEnvironment, type SimFlightEnvironment } from '../../domain/environment'
 import { vehicleDefinition, type VehicleDefinition } from '../../domain/mass'
 import { propulsionDefinition, type PropulsionDefinition, type ReadyLink } from '../../domain/propulsion'
 import { fitBuildThrustCurve, type BuildThrustCurveFit } from '../../domain/thrust-curve'
+import { simWind } from '../../domain/wind'
 import type { FrameGeometry } from '../../three/frame-geometry'
 import { bodyAreas } from '../workshop/aero-input'
 import type { AssetBounds } from '../workshop/assembly-ops'
 import { linkedComponent, type ComponentIndex } from '../workshop/links'
 import { massState } from '../workshop/mass-input'
-import { propulsionState } from '../workshop/propulsion-input'
+import { motorSlots, propulsionState } from '../workshop/propulsion-input'
+import { startEnvironment } from '../workshop/environment/start-environment'
+import type { GridRead } from '../workshop/environment/terrain-preview'
 
 // ---- The user's flight conditions ----------------------------------------------------------------------
 
@@ -71,38 +74,82 @@ export function conditionBlockers(c: FlightConditions): FlightBlocker[] {
 // ---- The engine payload --------------------------------------------------------------------------------
 
 /** What the assembly gives the engine; the user's flight conditions are added by `flightGate`. */
-export interface EnginePayload {
+export interface EnginePayload extends SimFlightEnvironment {
   vehicle: VehicleDefinition
   propulsion: PropulsionDefinition
   thrustFit: BuildThrustCurveFit | null
   aero: { cdBody: [number, number, number]; areaM2: [number, number, number] }
   environment: SimEnvironment
-  /** The vehicle resting on the ground: its lowest point at z = 0. */
+  /** The lowest point of the vehicle starts at the surface height under the start XY. */
   startPositionM: [number, number, number]
 }
 
 export type PayloadResult = { ok: true; payload: EnginePayload } | { ok: false; blockers: FlightBlocker[] }
 
-/**
- * The vehicle, propulsion, drag and environment payloads, built from the assembly the way the workshop's
- * drop test and its Ready-to-fly checklist read it (`massState`, `propulsionState`, `simEnvironment`), or
- * the checklist items that are still open.
- */
-export function enginePayload(doc: AssemblyDocument, geo: FrameGeometry, components: ComponentIndex, assets: AssetBounds): PayloadResult {
+function surfaceBlocker({ field, message }: MissingValue): FlightBlocker {
+  const obstacle = field.match(/^obstacles\[(\d+)\]\.(\w+)$/)
+  const id = obstacle ? `obstacle-${Number(obstacle[1]) + 1}-${obstacle[2]}` : field === 'terrain.assetId' ? 'terrain-grid' : field.replace('.', '-')
+  const surface = obstacle ? `Obstacle ${Number(obstacle[1]) + 1}` : field.startsWith('terrain.') ? 'Terrain' : 'Ground'
+  const coefficient = field.match(/\.(friction|restitution)$/)?.[1]
+  const label = coefficient ? `${surface} ${coefficient} coefficient` : surface
+  return { id, label, detail: message, link: { to: 'environment', elementId: id } }
+}
+
+const environmentControls: Record<string, string> = {
+  wind: 'wind-setting',
+  'wind.fromDeg': 'wind-from',
+  'wind.mean': 'wind-mean',
+  'wind.mean.speedMps': 'wind-speed',
+  'wind.mean.speedAt20FtMps': 'wind-speed-20ft',
+  'wind.mean.roughness': 'wind-roughness',
+  'wind.mean.roughness.lengthM': 'wind-roughness-length',
+  'wind.gust': 'wind-gust',
+  'wind.gust.amplitudeMps': 'wind-gust-amplitude',
+  'wind.gust.lengthM': 'wind-gust-length',
+  'wind.gust.startS': 'wind-gust-start',
+  groundEffect: 'ground-effect',
+}
+
+/** Flight and scenarios supply the loaded terrain state. The step-test caller keeps its existing readiness. */
+export function enginePayload(
+  doc: AssemblyDocument, geo: FrameGeometry, components: ComponentIndex, assets: AssetBounds,
+  environmentInput?: { terrain?: GridRead },
+): PayloadResult {
   const { mp, motors } = massState(doc, geo, components, assets)
   const propulsion = propulsionState(doc, geo, components)
-  if (propulsion.ready.length > 0) return { ok: false, blockers: propulsion.ready }
+  const blockers: FlightBlocker[] = environmentInput
+    ? propulsion.ready.filter(({ link }) => link?.to !== 'environment')
+    : propulsion.ready
+  const env = startEnvironment(doc.environment, environmentInput && assets, environmentInput?.terrain)
+  if (environmentInput && !env.ok) blockers.push(...env.missing.map(surfaceBlocker))
+
+  const wind = simWind(environmentInput ? doc.flight?.wind : undefined)
+  const setting = environmentInput ? doc.flight?.groundEffect : undefined
+  const groundEffect = simGroundEffect(setting, setting === true ? motorSlots(doc, geo, components) : [])
+  for (const missing of [wind, groundEffect]) {
+    if (missing.ok) continue
+    for (const { field, message } of missing.missing) {
+      const elementId = environmentControls[field]
+      blockers.push({
+        id: elementId ?? field,
+        label: field.startsWith('wind') ? 'Wind' : 'Ground effect',
+        detail: message,
+        link: elementId ? { to: 'flight-field', elementId } : null,
+      })
+    }
+  }
+  if (blockers.length || !wind.ok || !groundEffect.ok) return { ok: false, blockers }
   const battery = doc.parts.find((p) => p.kind === 'battery')
   const vehicle = vehicleDefinition(mp, motors)
   const definition = propulsionDefinition(propulsion.motors, battery ? linkedComponent(battery, components) : null)
   const cd = doc.bodyDrag?.cd
-  const env = simEnvironment(doc.environment)
   const area = bodyAreas(doc, geo, components, assets).area
   if (!vehicle || !definition || !cd || cd.some((v) => v === null) || !env.ok || area.some((a) => !(a > 0))) {
     // `readyToFly` is empty, so this cannot happen for a consistent assembly; refuse rather than guess.
     return { ok: false, blockers: [{ id: 'incomplete', label: 'The build is not complete', detail: 'The engine payload could not be built from this assembly.', link: null }] }
   }
   const low = lowestPoint(vehicle.parts.map((p) => ({ shape: p.shape, ...p.pose })))
+  const { surfaceHeightM } = env
   return {
     ok: true,
     payload: {
@@ -112,12 +159,14 @@ export function enginePayload(doc: AssemblyDocument, geo: FrameGeometry, compone
       thrustFit: fitBuildThrustCurve(propulsion.motors, definition.battery, airDensityFor(0, null)),
       aero: { cdBody: cd as [number, number, number], areaM2: area },
       environment: env.environment,
-      startPositionM: [0, 0, -low],
+      ...(wind.wind === undefined ? {} : { wind: wind.wind }),
+      ...(groundEffect.radiiM === undefined ? {} : { groundEffect: groundEffect.radiiM }),
+      startPositionM: [0, 0, surfaceHeightM === 0 ? -low : surfaceHeightM - low],
     },
   }
 }
 
-export type FlightGate = { ok: true; input: FlightStartInput; thrustFit: BuildThrustCurveFit | null } | { ok: false; blockers: FlightBlocker[] }
+export type FlightGate = { ok: true; input: FlightStartInput & Pick<EnginePayload, 'environment'>; thrustFit: BuildThrustCurveFit | null } | { ok: false; blockers: FlightBlocker[] }
 
 /** Ready to fly: the build is complete and the conditions are entered. Otherwise everything still open. */
 export function flightGate(result: PayloadResult, c: FlightConditions): FlightGate {
@@ -133,6 +182,8 @@ export function flightGate(result: PayloadResult, c: FlightConditions): FlightGa
       propulsion: payload.propulsion,
       aero: payload.aero,
       environment: payload.environment,
+      ...(payload.wind === undefined ? {} : { wind: payload.wind }),
+      ...(payload.groundEffect === undefined ? {} : { groundEffect: payload.groundEffect }),
       airDensityKgM3: airDensityFor(c.ambientAltitudeM, c.temperatureC),
       cutoff: { type: c.cutoffType, value: c.cutoffValue },
       startPositionM: payload.startPositionM,

@@ -425,8 +425,10 @@ export interface FlightStartInput {
   propulsion: unknown
   /** Body drag: per-axis C_d (entered) and projected areas (derived, src/domain/aero.ts). */
   aero: unknown
-  /** The engine's ground and obstacles (src/domain/environment.ts `simEnvironment`). */
+  /** The engine's ground, terrain and obstacles (src/domain/environment.ts `simEnvironment`). */
   environment: unknown
+  wind?: FlightSessionStartParams['wind']
+  groundEffect?: FlightSessionStartParams['groundEffect']
   /** ISA density at the user's altitude and temperature (src/domain/atmosphere.ts), kg/m³. */
   airDensityKgM3: number
   /** The user's battery cut-off: no default. */

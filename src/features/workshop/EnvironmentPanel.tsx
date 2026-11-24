@@ -4,7 +4,7 @@ import { MAX_OBSTACLES, type AssemblyDocument, type AssetInfo, type DropTestResu
 import { NumberField, numberParser } from '@/components/number-field'
 import { Button } from '@/components/ui/button'
 import { lowestPoint } from '@/domain/collisions'
-import { EMPTY_ENVIRONMENT, simEnvironment } from '@/domain/environment'
+import { EMPTY_ENVIRONMENT } from '@/domain/environment'
 import { vehicleDefinition } from '@/domain/mass'
 import { getApi } from '@/services/api'
 import { useSystem } from '@/stores/system'
@@ -17,6 +17,7 @@ import { ChoiceField } from './environment/fields'
 import { ObstacleFields } from './environment/ObstacleFields'
 import { newObstacle } from './environment/obstacles'
 import { TerrainSection } from './environment/TerrainSection'
+import { startEnvironment, type StartEnvironment } from './environment/start-environment'
 import { selectTerrain, useTerrainGrid } from './environment/terrain-preview'
 
 const edit = (label: string, recipe: (d: AssemblyDocument) => AssemblyDocument) => useAssembly.getState().edit(label, recipe)
@@ -43,7 +44,7 @@ export function EnvironmentPanel({ doc, geo }: { doc: AssemblyDocument; geo: Fra
   const terrainId = env.terrain?.assetId
   const terrain = useTerrainGrid(terrainId)
   const grid = terrain?.grid
-  const ready = useMemo(() => simEnvironment(env, { models: assets, grids: grid && terrainId ? { [terrainId]: grid } : undefined }), [env, assets, grid, terrainId])
+  const ready = useMemo(() => startEnvironment(env, assets, terrain), [env, assets, terrain])
   return (
     <div data-testid="environment-panel">
       {!env.terrain && <>
@@ -92,7 +93,7 @@ export function EnvironmentPanel({ doc, geo }: { doc: AssemblyDocument; geo: Fra
           ))}
         </ul>
       )}
-      <DropTest doc={doc} geo={geo} />
+      <DropTest doc={doc} geo={geo} env={ready} />
     </div>
   )
 }
@@ -191,7 +192,7 @@ function LegacyBoxFields({ id, o, update }: {
 }
 
 /** Release from rest, the lowest point `clearance` above the ground, and simulate in the engine. */
-function DropTest({ doc, geo }: { doc: AssemblyDocument; geo: FrameGeometry }) {
+function DropTest({ doc, geo, env }: { doc: AssemblyDocument; geo: FrameGeometry; env: StartEnvironment }) {
   const components = useComponentIndex()
   const assets = useAssets((s) => s.assets)
   const engine = useSystem((s) => s.engine)
@@ -200,28 +201,22 @@ function DropTest({ doc, geo }: { doc: AssemblyDocument; geo: FrameGeometry }) {
   const [durationS, setDuration] = useState(2)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<{ ok: true; r: DropTestResult; startZ: number; low: number } | { ok: false; message: string } | null>(null)
-  const env = simEnvironment(doc.environment)
   const { mp, motors } = massState(doc, geo, components, assets)
   const vehicle = vehicleDefinition(mp, motors)
-  // The current drop-test wire schema only accepts a plane and legacy boxes.
-  // electron/main/engine/protocol.ts:104–116.
-  const pendingEngineSupport = !!doc.environment?.terrain || doc.environment?.obstacles.some((obstacle) => obstacle.type !== undefined)
-  const blocked = pendingEngineSupport
-    ? 'Drop testing this terrain or obstacle shape requires engine support.'
-    : !env.ok
-      ? 'Enter the missing environment values first.'
-      : !vehicle
-        ? 'Every part needs a mass first (see Mass).'
-        : engine?.state !== 'connected'
-          ? 'The engine is not connected.'
-          : null
+  const blocked = !env.ok
+    ? 'Resolve the environment checklist first.'
+    : !vehicle
+      ? 'Every part needs a mass first (see Mass).'
+      : engine?.state !== 'connected'
+        ? 'The engine is not connected.'
+        : null
   const names = new Map(doc.parts.map((p) => [p.id, p.name]))
   const nameOf = (id: string) => names.get(id) ?? (id === 'frame:plate' ? 'Frame plate' : id.startsWith('frame:arm-') ? `Frame arm ${id.slice(10)}` : id)
 
   const run = async () => {
     if (blocked || !env.ok || !vehicle) return
     const low = lowestPoint(vehicle.parts.map((p) => ({ shape: p.shape, ...p.pose })))
-    const startZ = clearanceM - low
+    const startZ = env.surfaceHeightM + (clearanceM - low)
     setRunning(true)
     try {
       const res = await getApi().engine.dropTest({ vehicle, environment: env.environment, startPositionM: [0, 0, startZ], durationS })
@@ -237,6 +232,7 @@ function DropTest({ doc, geo }: { doc: AssemblyDocument; geo: FrameGeometry }) {
   return (
     <div className="mt-3" data-testid="drop-test">
       <h3 className="mb-1 text-[12px] font-medium text-fg-muted">Drop test (engine)</h3>
+      {doc.flight?.wind?.kind === 'wind' && <p className="text-[12px] text-fg-subtle">The drop test runs without wind or propulsion.</p>}
       <NumberField key={`clear:${clearanceM}`} id="drop-clearance" label="Release height (lowest point)" unit="mm" initial={mm(clearanceM)} parse={numberParser(0, 10_000, 'mm')} onCommit={(v) => setClearance(v / 1000)} />
       <NumberField key={`dur:${durationS}`} id="drop-duration" label="Duration" unit="s" initial={String(durationS)} parse={numberParser(0.1, 10, 's')} onCommit={setDuration} />
       <div className="mt-2 flex items-center gap-2">

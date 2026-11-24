@@ -12,6 +12,7 @@ import { getApi } from '@/services/api'
 import { useComponents } from '@/stores/components'
 import { useProjects } from '@/stores/projects'
 import { useSystem } from '@/stores/system'
+import { useTerrainGrid } from '../workshop/environment/terrain-preview'
 import { buildFrame } from '@/three/frame-geometry'
 import { useAssembly } from '../workshop/assembly-store'
 import { useAssets } from '../workshop/asset-store'
@@ -99,7 +100,9 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
   const follow = useFollow(project.id)
   const geo = useMemo(() => buildFrame(project.frameType, doc.frame, doc.motors), [doc, project.frameType])
   const conditions = conditionsOf(doc)
-  const payload = useMemo(() => enginePayload(doc, geo, components, assets), [doc, geo, components, assets])
+  const terrainId = doc.environment?.terrain?.assetId
+  const terrain = useTerrainGrid(terrainId)
+  const payload = useMemo(() => enginePayload(doc, geo, components, assets, { terrain }), [doc, geo, components, assets, terrain])
   const gate = useMemo(() => flightGate(payload, conditions), [payload, conditions])
   const engineBlock = engineState === 'connected' ? null : 'The engine is not connected.'
   const [entries, setEntries] = useState<ScenarioEntries>(NO_ENTRIES)
@@ -165,9 +168,9 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
       />
       <div className="mx-auto w-full max-w-[1100px] space-y-6 px-6 pb-10 pt-5">
         <p className="text-[12.5px] leading-relaxed text-fg-muted">
-          Scripted runs of this build on the flight engine: the PX4-style controller (default settings, as in the flight test) flies the build’s own motors, battery and drag, in free space. Each scenario states what it checks; the measured values and limits come from the engine.
+          Scripted runs of this build on the flight engine: the PX4-style controller (default settings, as in the flight test) flies the build’s own motors, battery and drag in free space with the saved wind. Ground effect needs a surface below a rotor, so it adds no thrust in these runs. Each scenario states what it checks; the measured values and limits come from the engine.
         </p>
-        <Conditions conditions={conditions} gateOk={gate.ok} payload={payload} blockers={blockers} engineBlock={engineBlock} follow={follow} projectId={project.id} />
+        <Conditions conditions={conditions} gateOk={gate.ok} blockers={blockers} engineBlock={engineBlock} follow={follow} projectId={project.id} />
         <Section title="Built-in scenarios" count={BUILTINS.length}>
           <ul className="border-t border-line" data-testid="scenario-list">
             {BUILTINS.map((info) => (
@@ -192,10 +195,9 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
 }
 
 /** The flight conditions in use (read-only here), and until the build can fly, the checklist of what is missing. */
-function Conditions({ conditions: c, gateOk, payload, blockers, engineBlock, follow, projectId }: {
+function Conditions({ conditions: c, gateOk, blockers, engineBlock, follow, projectId }: {
   conditions: FlightConditions
   gateOk: boolean
-  payload: PayloadResult
   blockers: readonly FlightBlocker[]
   engineBlock: string | null
   follow: (link: FlightLink) => void
@@ -219,7 +221,7 @@ function Conditions({ conditions: c, gateOk, payload, blockers, engineBlock, fol
       ) : (
         <div data-testid="scenarios-blockers">
           <p className="border-t border-line pt-2 text-[12px] leading-relaxed text-fg-subtle">
-            No source states these for this build. A scenario will not run until each is entered{payload.ok ? '' : ' (the build is not complete)'}.
+            Resolve these items before running a scenario.
           </p>
           <ul className="mt-1 border-t border-line">
             {blockers.map((item) => {

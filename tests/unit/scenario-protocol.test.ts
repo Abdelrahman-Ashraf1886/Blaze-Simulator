@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import seed from '../../database/seed/components.v1.json'
 import type { Component } from '../../electron/ipc/component-fields'
-import type { AssemblyDocument, IpcResult } from '../../electron/ipc/contract'
+import type { AssemblyDocument, IpcResult, ObstacleDoc } from '../../electron/ipc/contract'
 import { STARTING_FRAME } from '../../electron/main/db/repositories'
 import {
   BUILTIN_SCENARIO_NAMES,
@@ -17,13 +17,15 @@ import {
   type Scenario,
   type ScenarioRunResult,
 } from '../../electron/main/engine/protocol'
+import { dropTest } from '../../electron/main/engine/drop-test'
+import { flightStartSchema } from '../../electron/main/engine/flight-session'
 import { scenarioRun, scenarioRunSchema, type EngineForScenario } from '../../electron/main/engine/scenario-run'
 import { stepTest } from '../../electron/main/engine/step-test'
 import { EngineSupervisor } from '../../electron/main/engine/supervisor'
 import { RECOMMENDED_STEP_METRICS_OPTIONS, stepMetrics } from '../../src/domain/step-response'
 import { thrustFactor, thrustFactorReadout } from '../../src/domain/thrust-curve'
 import { enginePayload, flightGate } from '../../src/features/flight/readiness'
-import { BUILTINS, scenarioRunInput } from '../../src/features/scenarios/scenarios'
+import { BUILTINS, scenarioRequest, scenarioRunInput } from '../../src/features/scenarios/scenarios'
 import { measuredSamples, stepTestInput } from '../../src/features/tuning/step-test-input'
 import { addPart, updatePart, type AttachTarget } from '../../src/features/workshop/assembly-ops'
 import { effectiveShape } from '../../src/features/workshop/links'
@@ -53,7 +55,7 @@ const request = (over: Record<string, unknown> = {}) => ({ ...quad, scenario: ho
 
 // Headless copy of the 4.9 catalogue quad and its user entries in
 // tests/e2e/scenarios.spec.ts:33–65,104,115,142,164.
-function catalogueQuad() {
+function catalogueAssembly() {
   const named = (name: string) => (seed.components as unknown as Component[]).find((c) => c.name === name)!
   const motor = named('MN3110 KV470')
   const prop = named('P13*4.4 CF propeller')
@@ -89,12 +91,101 @@ function catalogueQuad() {
     attach('propeller', { kind: 'part', id: mount.id }, `prop-${mount.number}`, prop.id)
   }
   attach('battery', { kind: 'none' }, 'battery', battery.id)
-  const gate = flightGate(enginePayload(doc, geo, components, {}), {
-    ambientAltitudeM: 0, temperatureC: null, cutoffType: 'voltageV', cutoffValue: 12,
-  })
+  return { doc, geo, components, prop }
+}
+
+const conditions = { ambientAltitudeM: 0, temperatureC: null, cutoffType: 'voltageV', cutoffValue: 12 } as const
+
+function catalogueQuad() {
+  const { doc, geo, components } = catalogueAssembly()
+  const gate = flightGate(enginePayload(doc, geo, components, {}), conditions)
   if (!gate.ok) throw new Error(gate.blockers.map(({ id }) => id).join(', '))
   return gate
 }
+
+const grid = { rows: 2, columns: 2, cellSizeM: 2, cornerM: [-2, -2] as [number, number], heightsM: new Float64Array([3, 5, 1, 3]) }
+const terrain = { assetId: 'slope', friction: 0.4, restitution: 0.2 }
+const cylinder = {
+  id: 'column', name: 'Column', type: 'cylinder',
+  center: [2, 3, 4], yaw: 0, friction: 0.2, restitution: 0.3, radius: 0.25, height: 0.5,
+} satisfies ObstacleDoc
+
+describe('saved environment payloads', () => {
+  it('preserves legacy flight and free-space built-in payloads', () => {
+    const { doc, geo, components } = catalogueAssembly()
+    const old = catalogueQuad()
+    const next = flightGate(enginePayload(doc, geo, components, {}, {}), conditions)
+    expect(next).toStrictEqual(old)
+    expect(scenarioRunInput(next, BUILTINS[0]!, { payloadMassKg: null, comOffsetM: null })).toStrictEqual({
+      vehicle: old.input.vehicle, propulsion: old.input.propulsion, aero: old.input.aero, scenario: hover,
+      config: { airDensityKgM3: old.input.airDensityKgM3, cutoff: old.input.cutoff, thrustModelFactor: thrustFactor(old.thrustFit) },
+    })
+  })
+
+  it('builds wind, slot radii, terrain and shapes and raises the start on the slope', () => {
+    const { doc, geo, components } = catalogueAssembly()
+    const saved: AssemblyDocument = {
+      ...doc,
+      environment: { ground: { friction: null, restitution: null }, terrain, obstacles: [cylinder] },
+      flight: { ...conditions, wind: { kind: 'wind', fromDeg: 90, mean: { kind: 'constant', speedMps: 3.5 }, gust: { kind: 'none' } }, groundEffect: true },
+    }
+    const gate = flightGate(enginePayload(saved, geo, components, {}, { terrain: { id: terrain.assetId, grid } }), conditions)
+    if (!gate.ok) throw new Error(JSON.stringify(gate.blockers))
+    const wind = { fromDeg: 90, mean: { kind: 'constant', speedMps: 3.5 }, gust: null }
+    // The T-Motor P13*4.4 catalogue entry states 13 in diameter.
+    const radii = geo.motors.map(() => 13 * 0.0254 / 2)
+    expect(gate.input).toMatchObject({
+      wind, groundEffect: radii,
+      environment: { ground: null, terrain: { heightsM: [3, 5, 1, 3], friction: 0.4, restitution: 0.2 }, obstacles: [{ type: 'cylinder', radius: 0.25, height: 0.5 }] },
+    })
+    expect(flightStartSchema.parse(gate.input)).toStrictEqual(gate.input)
+    expect(gate.input.startPositionM[2]).toBeCloseTo(catalogueQuad().input.startPositionM[2] + 3)
+    const free = scenarioRunInput(gate, BUILTINS[0]!, { payloadMassKg: null, comOffsetM: null })
+    expect(free?.config).toMatchObject({ wind, groundEffect: radii })
+    expect(free?.config).not.toHaveProperty('environment')
+    expect(free?.config).not.toHaveProperty('startPositionM')
+
+    saved.flight = { ...conditions, wind: { kind: 'none' }, groundEffect: false }
+    const calm = flightGate(enginePayload(saved, geo, components, {}, { terrain: { id: terrain.assetId, grid } }), conditions)
+    expect(calm).toMatchObject({ ok: true, input: { wind: null } })
+    if (calm.ok) expect(calm.input).not.toHaveProperty('groundEffect')
+  })
+
+  it('passes terrain and shapes through the drop-test handler', async () => {
+    const { doc, geo, components } = catalogueAssembly()
+    doc.environment = { ground: { friction: null, restitution: null }, terrain, obstacles: [cylinder] }
+    const result = enginePayload(doc, geo, components, {}, { terrain: { id: terrain.assetId, grid } })
+    if (!result.ok) throw new Error(JSON.stringify(result.blockers))
+    const { environment, startPositionM: [x, y, z] } = result.payload
+    const startPositionM: [number, number, number] = [x, y, z + 0.2]
+    const runSim = vi.fn(async () => { throw new Error('End of stub run') })
+    await dropTest({ loadVehicle: async () => ({
+      valid: true, partCount: 1, motorCount: 4, totals: { massKg: 1, com: [0, 0, 0], inertia: [1, 1, 1, 0, 0, 0] }, missingMass: [],
+    }), runSim }, { vehicle: quad.vehicle, environment, startPositionM, durationS: 2 })
+    expect(runSim).toHaveBeenCalledExactlyOnceWith({ environment, startPositionM, durationS: 2 })
+  })
+
+  it('lists unset values, a missing radius, a pending or failed load, and a start outside the grid', () => {
+    const { doc, geo, components, prop } = catalogueAssembly()
+    doc.environment = { ground: { friction: null, restitution: null }, terrain, obstacles: [] }
+    doc.flight = { ...conditions, groundEffect: null, wind: null }
+    const waiting = enginePayload(doc, geo, components, {}, {})
+    expect(waiting).toMatchObject({ ok: false, blockers: expect.arrayContaining([
+      expect.objectContaining({ id: 'terrain-grid', detail: expect.stringContaining('Loading') }),
+      expect.objectContaining({ id: 'wind-setting' }), expect.objectContaining({ id: 'ground-effect' }),
+    ]) })
+    doc.flight = { ...conditions, groundEffect: true }
+    const specs = { ...prop.specs }
+    delete specs.diameter
+    const failed = enginePayload(doc, geo, { ...components, [prop.id]: { ...prop, specs } }, {}, { terrain: { id: terrain.assetId, error: 'File missing' } })
+    expect(failed).toMatchObject({ ok: false, blockers: expect.arrayContaining([
+      expect.objectContaining({ id: 'terrain-grid', detail: expect.stringContaining('File missing') }),
+      expect.objectContaining({ label: 'Ground effect', detail: expect.stringContaining('Diameter') }),
+    ]) })
+    const outside = enginePayload(doc, geo, components, {}, { terrain: { id: terrain.assetId, grid: { ...grid, cornerM: [0, 0] } } })
+    expect(outside).toMatchObject({ ok: false, blockers: [expect.objectContaining({ id: 'terrain-grid', detail: expect.stringContaining('outside') })] })
+  })
+})
 
 const holdLevel: Scenario = {
   name: 'hold', durationS: 1, modifications: [{ type: 'payload', partId: 'p', massKg: 0.1, positionM: [0, 0, 0], boxSizeM: null }, { type: 'shiftPart', partId: 'body', deltaM: [0, 0, 0] }],
@@ -191,6 +282,24 @@ describe('the scenario IPC handler', () => {
     expect(engine.loadVehicle).toHaveBeenCalledWith(quad.vehicle, { propulsion: quad.propulsion, aero: quad.aero })
     expect(engine.runScenario).toHaveBeenCalledWith({ scenario: hover, config })
   })
+  it('forwards grounded scripted scenarios with all environment fields', async () => {
+    const engine = fake()
+    const { doc, geo, components } = catalogueAssembly()
+    doc.environment = { ground: { friction: null, restitution: null }, terrain, obstacles: [cylinder] }
+    doc.flight = { ...conditions, wind: { kind: 'wind', fromDeg: 90, mean: { kind: 'constant', speedMps: 3.5 }, gust: { kind: 'none' } }, groundEffect: true }
+    const gate = flightGate(enginePayload(doc, geo, components, {}, { terrain: { id: terrain.assetId, grid } }), conditions)
+    if (!gate.ok) throw new Error(JSON.stringify(gate.blockers))
+    const scenario = { type: 'custom', scenario: holdLevel } as const
+    const sent = scenarioRequest(gate, scenario, 'saved-environment')
+    expect(sent?.config).toStrictEqual({
+      airDensityKgM3: gate.input.airDensityKgM3, cutoff: gate.input.cutoff, thrustModelFactor: thrustFactor(gate.thrustFit),
+      wind: gate.input.wind, groundEffect: gate.input.groundEffect,
+      environment: gate.input.environment, startPositionM: gate.input.startPositionM,
+    })
+    expect((await scenarioRun(engine, sent)).ok).toBe(true)
+    expect(engine.runScenario).toHaveBeenCalledWith({ scenario, config: sent?.config })
+  })
+
   it('refuses a bad request before the engine, naming the field; nothing is filled in', async () => {
     const engine = fake()
     for (const [bad, mentions] of [

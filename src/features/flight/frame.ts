@@ -20,6 +20,8 @@ export interface FlightFrame {
   totalThrustN: number
   thrustBodyN: AxisVector
   dragBodyN: AxisVector
+  environmentLoads: Pick<FlightStepResult['diagnostic']['loads'],
+    'windComWorldMps' | 'groundEffectAddedThrustN' | 'groundEffectStatus' | 'windAboveRange' | 'windInvalid'> | null
   armTorqueNm: AxisVector
   /** The rotors' drag torque on the body, −s·Q·a per motor. */
   dragReactionTorqueNm: AxisVector
@@ -61,6 +63,12 @@ export interface FlightSource {
   start(setpoint: SetpointProvider): void
   stop(): void
   subscribe(listener: (frame: FlightFrame) => void): () => void
+}
+
+/** FlightViewport is Z-up, so world vectors use the same XYZ ordering as the pose. */
+export function windArrow(wind: Vec3): { direction: Vec3; speedMps: number } | null {
+  const speedMps = Math.hypot(...wind)
+  return speedMps === 0 ? null : { direction: [wind[0] / speedMps, wind[1] / speedMps, wind[2] / speedMps], speedMps }
 }
 
 /** Direct three.js props. comM belongs outside the posed assembly group. */

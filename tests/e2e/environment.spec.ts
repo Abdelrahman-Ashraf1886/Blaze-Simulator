@@ -61,3 +61,66 @@ test('wind, ground effect and an imported ASCII terrain survive reload', async (
     rmSync(userData, { recursive: true, force: true })
   }
 })
+
+// Same catalogue build and user entries as flight-live.spec.ts:38–67.
+async function buildWindQuad(page: Page, name: string) {
+  await page.evaluate(async () => {
+    const api = (window as unknown as { api: DesktopApi }).api
+    const listed = await api.components.list()
+    if (!listed.ok) throw new Error(listed.error.message)
+    const all = listed.data
+    const byName = (n: string) => all.find((c) => c.name === n)!
+    await api.components.setFill(byName('MN3110 KV470').id, 'rotorInertia', { value: 150, unit: 'g·cm²', source: 'measured', condition: 'bifilar pendulum, bell and shaft' })
+    // The air density of T-Motor's bench table: no source states it, so it is the user's entry for that data.
+    await api.components.setFill(byName('MN3110 KV470').id, 'referenceDensity', { value: 1.225, unit: 'kg/m³', source: 'user', condition: 'bench air, as stated by the user' })
+    await api.components.setFill(byName('Tattu G-Tech 5200mAh 4S 35C').id, 'internalResistance', { value: 12, unit: 'mΩ', source: 'measured', condition: '4-wire AC, 1 kHz, 25 °C' })
+  })
+  await createProject(page, name)
+  await page.getByTestId('recent-projects').getByRole('link', { name }).click()
+  await expect(page.getByTestId('viewport-3d').locator('canvas')).toBeVisible()
+  await commit(page, 'frame-motorDiagonal', '550')
+  for (let n = 1; n <= 4; n++) {
+    await page.getByTestId(`mount-motor-${n}`).click()
+    await page.getByTestId('part-library').getByRole('button', { name: 'Motor' }).click()
+    await page.getByTestId('part-component').selectOption({ label: 'T-Motor MN3110 KV470' })
+    await page.getByTestId('part-library').getByRole('button', { name: 'Propeller' }).click()
+    await page.getByTestId('part-component').selectOption({ label: 'T-Motor P13*4.4 CF propeller' })
+  }
+  await page.getByTestId('viewport-3d').click({ position: { x: 5, y: 5 } }) // deselect: the battery goes on the frame
+  await page.getByTestId('part-library').getByRole('button', { name: 'Battery' }).click()
+  await page.getByTestId('part-component').selectOption({ label: 'Tattu Tattu G-Tech 5200mAh 4S 35C' })
+  await commit(page, 'frame-mass', '300')
+  await commit(page, 'body-cd-x', '1.1')
+  await commit(page, 'ground-friction', '0.6')
+  await commit(page, 'ground-restitution', '0.1')
+  await expect(page.getByTestId('environment-ready')).toBeVisible()
+}
+
+test('live flight shows the engine’s nonzero wind speed beside the arrow', async () => {
+  test.setTimeout(180_000)
+  const userData = mkdtempSync(join(tmpdir(), 'blaze-wind-flight-'))
+  const { app, page } = await launchApp(userData)
+  try {
+    await buildWindQuad(page, 'Wind quad')
+    const id = await page.evaluate(() => location.hash.split('/').at(-1)!)
+    await expect.poll(() => page.evaluate(async (projectId) => {
+      const loaded = await (window as unknown as { api: DesktopApi }).api.assembly.load(projectId)
+      return loaded.ok ? loaded.data?.environment?.ground.restitution : null
+    }, id)).toBe(0.1)
+    await page.evaluate((projectId) => { location.hash = `#/flight/${projectId}` }, id)
+    await commit(page, 'flight-altitude', '0')
+    await commit(page, 'flight-cutoff-value', '12')
+    await page.getByTestId('wind-setting').selectOption('wind')
+    await commit(page, 'wind-from', '90')
+    await page.getByTestId('wind-mean').selectOption('constant')
+    await commit(page, 'wind-speed', '3.5')
+    await page.getByTestId('wind-gust').selectOption('none')
+    await expect(page.getByTestId('flight-environment-summary')).toContainText('Ground plane · Wind on · Ground effect off')
+    await expect(page.getByTestId('flight-wind-speed')).toHaveCount(0)
+    await page.getByTestId('flight-start').click()
+    await expect(page.getByTestId('flight-wind-speed')).toHaveText('Wind 3.50 m/s')
+  } finally {
+    await app.close()
+    rmSync(userData, { recursive: true, force: true })
+  }
+})

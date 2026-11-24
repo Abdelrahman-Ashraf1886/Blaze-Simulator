@@ -113,12 +113,14 @@ impl Simulation {
     }
 
     /// Starts from rest with identity attitude and the body origin at
-    /// `start_m` (world frame), in `env` (ground and obstacles, see
-    /// `environment.rs`). Fails if a part starts inside the ground or an
-    /// obstacle, naming it.
+    /// `start_m` (world frame), in `env` (ground plane or terrain, and
+    /// obstacles). Fails if a part starts inside the environment, naming it.
     pub fn with_environment(vehicle: &Vehicle, config: SimConfig, env: &Environment, start_m: [f64; 3]) -> Result<Simulation, String> {
         if !start_m.iter().all(|x| x.is_finite()) {
             return Err("the start position must be finite".into());
+        }
+        if env.ground.is_some() && env.terrain.is_some() {
+            return Err("environment.terrain cannot be supplied with a ground plane".into());
         }
         let mut sim = Simulation::new(vehicle, config)?;
         sim.world.integration_parameters.normalized_allowed_linear_error = ALLOWED_LINEAR_ERROR_M;
@@ -130,7 +132,7 @@ impl Simulation {
         let placed = Placed::insert(env, &mut sim.world, sim.body, ids);
         // Colliders follow their body only after a step; place them now for the start check.
         sim.world.bodies.propagate_modified_body_positions_to_colliders(&mut sim.world.colliders);
-        let inside = placed.initial_penetrations(&sim.world, sim.body, START_PENETRATION_TOLERANCE_M);
+        let inside = placed.initial_penetrations(&sim.world, sim.body, env.terrain.as_ref(), START_PENETRATION_TOLERANCE_M);
         if !inside.is_empty() {
             let list: Vec<String> =
                 inside.iter().map(|(p, o, d)| format!("{p} is {:.3} mm inside the {}", d * 1000.0, o.replace(':', " "))).collect();

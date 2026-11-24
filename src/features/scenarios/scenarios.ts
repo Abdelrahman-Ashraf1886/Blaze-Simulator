@@ -25,7 +25,7 @@ export interface BuiltinInfo {
   entry: 'payloadMassKg' | 'comOffsetM' | null
   /** True when the scenario passes by showing the failure it predicts (so a pass is not a flight that holds). */
   expectsFailure: boolean
-  projectInput?: 'meanWind' | 'gust' | 'terrain'
+  projectInput?: 'meanWind' | 'gust' | 'groundPlane' | 'terrain'
 }
 
 export const BUILTINS: readonly BuiltinInfo[] = [
@@ -78,8 +78,8 @@ export const BUILTINS: readonly BuiltinInfo[] = [
     tests: 'Centred Position sticks hold in free space for 10 s, then the saved gust clock starts. The report shows peak displacement and the time to recover after the gust reaches full strength.',
   },
   {
-    name: 'takeoff_hold_land', title: 'Takeoff, hold and land', entry: null, expectsFailure: false,
-    tests: 'The PX4 modes take off from a ground plane, hold, and land. The engine checks state order, hold error and pre-contact vertical speed.',
+    name: 'takeoff_hold_land', title: 'Takeoff, hold and land', entry: null, expectsFailure: false, projectInput: 'groundPlane',
+    tests: 'The PX4 modes take off from the project’s ground plane, hold, and land. The engine checks state order, hold error and pre-contact vertical speed.',
   },
   {
     name: 'terrain', title: 'Takeoff and land on terrain', entry: null, expectsFailure: false, projectInput: 'terrain',
@@ -90,6 +90,7 @@ export const BUILTINS: readonly BuiltinInfo[] = [
 export const PROJECT_INPUTS = {
   meanWind: { label: 'Mean wind', link: { to: 'flight-field', elementId: 'wind-setting' } },
   gust: { label: 'Gust', link: { to: 'flight-field', elementId: 'wind-gust' } },
+  groundPlane: { label: 'Ground plane', link: { to: 'environment', elementId: 'ground-friction' } },
   terrain: { label: 'Terrain grid', link: { to: 'environment', elementId: 'terrain-grid' } },
 } satisfies Record<NonNullable<BuiltinInfo['projectInput']>, { label: string; link: FlightLink }>
 
@@ -97,6 +98,7 @@ function hasProjectInput(info: BuiltinInfo, input: Pick<Extract<PayloadResult, {
   switch (info.projectInput) {
     case 'meanWind': return !!input.wind?.mean
     case 'gust': return !!input.wind?.gust
+    case 'groundPlane': return !!input.environment.ground
     case 'terrain': return !!input.environment.terrain
     default: return true
   }
@@ -126,7 +128,7 @@ export function scenarioRunInput(gate: FlightGate, info: BuiltinInfo, entries: S
     name: info.name,
     ...(info.entry === 'payloadMassKg' ? { massKg: entries.payloadMassKg! } : {}),
     ...(info.entry === 'comOffsetM' ? { offsetM: entries.comOffsetM! } : {}),
-  }, info.name === 'terrain' ? 'saved-environment' : 'free-space', saved)
+  }, info.projectInput === 'terrain' || info.projectInput === 'groundPlane' ? 'saved-environment' : 'free-space', saved)
 }
 
 /** Keep a scenario's existing start type. The host needs both the environment and start for surface runs. */

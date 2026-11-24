@@ -168,7 +168,7 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
       />
       <div className="mx-auto w-full max-w-[1100px] space-y-6 px-6 pb-10 pt-5">
         <p className="text-[12.5px] leading-relaxed text-fg-muted">
-          Scripted runs use the build’s motors, battery and body drag with PX4 controller settings. Hover, payload, offset and wind scenarios start in free space. Takeoff and landing use a ground plane or the saved terrain, where enabled ground effect can act.
+          Scripted runs use the build’s motors, battery and body drag with PX4 controller settings. Hover, payload, offset and wind scenarios start in free space. Takeoff and landing use the project’s ground plane or terrain, where enabled ground effect can act.
         </p>
         <Conditions conditions={conditions} gateOk={gate.ok} blockers={blockers} engineBlock={engineBlock} follow={follow} projectId={project.id} />
         <Section title="Built-in scenarios" count={BUILTINS.length}>

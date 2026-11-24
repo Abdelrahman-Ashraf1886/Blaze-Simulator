@@ -18,7 +18,7 @@ use crate::engine::{closed_loop_gains, loaded_vehicle, manual_flight_with_gains}
 use crate::flight_environment;
 use crate::protocol::{present, ErrorCode, Response};
 use engine_core::aero::BodyDrag;
-use engine_core::environment::{Environment, Surface};
+use engine_core::environment::Environment;
 use engine_core::flight::{Cutoff, Flight, ScaleToAirDensityError};
 use engine_core::propulsion::Propulsion;
 use engine_core::scenario::{
@@ -272,6 +272,8 @@ struct FlightRun<'a> {
     rho: f64,
 }
 
+const NEEDS_PLANE: &str = "Enter the ground plane's friction and restitution in Workshop > Environment (and select no terrain) to run this scenario";
+
 impl FlightRun<'_> {
     fn run(
         self, config: &ConfigRequest, cutoff: Cutoff, mut flight: Flight,
@@ -331,16 +333,13 @@ impl FlightRun<'_> {
         config: &ConfigRequest, plant: &Vehicle, duration: f64, builtin: Option<Builtin>,
     ) -> Result<Simulation, String> {
         let sim = SimConfig::default();
-        if matches!(builtin, Some(Builtin::TakeoffHoldLand)) {
-            // The 6.7 ground fixture (engine-core/src/flight_loop/tests.rs:218-232).
-            let environment = Environment { ground: Some(Surface { friction: 0.5, restitution: 0.0 }), terrain: None, obstacles: vec![] };
-            return Simulation::with_start_clearance(plant, sim, &environment, [0.0; 3], Some(0.0));
-        }
+        let plane = matches!(builtin, Some(Builtin::TakeoffHoldLand));
         let terrain = matches!(builtin, Some(Builtin::Terrain));
         let free = matches!(builtin, Some(Builtin::WindHold | Builtin::Gust));
-        let limit = if config.environment.is_some() && !terrain { MAX_SCENARIO_WITH_GROUND_S } else { MAX_SCENARIO_S };
+        let limit = if config.environment.is_some() && !terrain && !plane { MAX_SCENARIO_WITH_GROUND_S } else { MAX_SCENARIO_S };
         if duration > limit { return Err(format!("the scenario runs {duration} s; the limit is {limit} s")); }
         match (&config.environment, config.start_position_m, config.start_clearance_m) {
+            (None, _, _) if plane => Err(NEEDS_PLANE.into()),
             (None, None, None) if !terrain => Simulation::new(plant, sim),
             (None, _, _) if terrain => Err("Save a terrain grid in Workshop > Environment to run this scenario".into()),
             (None, _, _) => Err("config.startPositionM and config.startClearanceM require config.environment".into()),
@@ -351,6 +350,9 @@ impl FlightRun<'_> {
                 })?;
                 if terrain && environment.terrain.is_none() {
                     return Err("Save a terrain grid in Workshop > Environment to run this scenario".into());
+                }
+                if plane && environment.ground.is_none() {
+                    return Err(NEEDS_PLANE.into());
                 }
                 if terrain && clearance.is_none() {
                     return Err("Terrain requires config.startClearanceM".into());

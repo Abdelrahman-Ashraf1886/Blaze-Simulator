@@ -452,15 +452,19 @@ describe('a real engine', () => {
     // Same project grid and 45-degree plane used by the placement test above.
     doc.environment = { ground: { friction: null, restitution: null }, terrain, obstacles: [] }
     const heightsM = new Float64Array([0, Math.SQRT2, -Math.SQRT2, 0])
-    const gate = flightGate(enginePayload(doc, geo, components, {}, {
-      terrain: { id: terrain.assetId, grid: { ...grid, heightsM } },
+    const onGrid = (heights: Float64Array) => flightGate(enginePayload(doc, geo, components, {}, {
+      terrain: { id: terrain.assetId, grid: { ...grid, heightsM: heights } },
     }), conditions)
-    if (!gate.ok) throw new Error(JSON.stringify(gate.blockers))
+    const steep = onGrid(heightsM)
+    const plane = flightGate(enginePayload({ ...doc, environment: { ground: { friction: 0.5, restitution: 0 }, obstacles: [] } }, geo, components, {}, {}), conditions)
     for (const info of BUILTINS.filter(({ name }) => !(name in legacyHashes))) {
+      const gate = info.name === 'takeoff_hold_land' ? plane : steep
       const input = scenarioRunInput(gate, info, { payloadMassKg: null, comOffsetM: null })
       if (!input) throw new Error(`Catalogue fixture is missing input for ${info.name}`)
+      const started = performance.now()
       const result = await scenarioRun(sup, input)
       if (!result.ok) throw new Error(`${info.name}: ${result.error.message}`)
+      recordAcceptance(`TIME ${info.name} ${Math.round(performance.now() - started)} ms`)
       const { report, scenario } = result.data
       expect(report.name).toBe(info.name)
       expect(report.endReason).toBe('duration')
@@ -475,12 +479,19 @@ describe('a real engine', () => {
       expect(report.finalStateHash).toBe(result.data.stateHash)
       recordAcceptance('ACCEPTANCE ' + JSON.stringify({ name: info.name, passed: report.passed, elapsedS: report.elapsedS, flight: report.flight }))
     }
+    // A 5 degree slope (rise over the 2 m between sample centres), well inside the 0.4 friction cone.
+    const rise = 2 * Math.tan(5 * Math.PI / 180)
+    const gentle = scenarioRunInput(onGrid(new Float64Array([0, rise, 0, rise])), BUILTINS.find(({ name }) => name === 'terrain')!, { payloadMassKg: null, comOffsetM: null })
+    const landed = await scenarioRun(sup, gentle!)
+    if (!landed.ok) throw new Error(landed.error.message)
+    expect(landed.data.report.passed).toBe(true)
+    recordAcceptance('GENTLE ' + JSON.stringify({ passed: landed.data.report.passed, flight: landed.data.report.flight }))
   }, 20_000)
 
   it('refuses FlightLoop built-ins with missing project inputs', async () => {
     const gate = catalogueQuad()
     const original = scenarioRunInput(gate, BUILTINS[0]!, { payloadMassKg: null, comOffsetM: null })!
-    for (const [name, input] of [['wind_hold', 'wind'], ['gust', 'gust'], ['terrain', 'terrain grid']] as const) {
+    for (const [name, input] of [['wind_hold', 'wind'], ['gust', 'gust'], ['takeoff_hold_land', 'ground plane'], ['terrain', 'terrain grid']] as const) {
       const result = await scenarioRun(sup, { ...original, scenario: { type: 'builtin', name },
         config: name === 'gust' ? { ...original.config, wind: { fromDeg: 90, mean: null, gust: null } } : original.config,
       })

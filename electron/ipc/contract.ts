@@ -669,6 +669,7 @@ export const Channels = {
   recordingVerifyCancel: 'recording:verifyCancel',
   recordingVerifyProgress: 'recording:verifyProgress',
   recordingTotalSize: 'recording:totalSize',
+  recordingPrintReportPdf: 'recording:printReportPdf',
   systemStatus: 'system:status',
   assemblyLoad: 'assembly:load',
   assemblySave: 'assembly:save',
@@ -725,6 +726,7 @@ interface RecordingApi {
   cancelVerify(requestId: string): Promise<IpcResult<null>>
   onVerifyProgress(listener: (progress: RecordingVerifyProgress) => void): () => void
   totalSize(): Promise<IpcResult<number>>
+  printReportPdf(): Promise<IpcResult<{ path: string } | null>>
 }
 
 export type DesktopApiWithRecordings = DesktopApi & { runs: RunRecordingApi; recording: RecordingApi }

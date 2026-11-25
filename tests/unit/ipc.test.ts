@@ -91,6 +91,7 @@ describe('IPC handlers', () => {
       Channels.assetsImport,
       Channels.terrainImport,
       Channels.viewportSavePng,
+      Channels.recordingPrintReportPdf,
       Channels.componentsExportPack,
       Channels.componentsImportPack,
     ]

@@ -3,8 +3,9 @@ import { existsSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
-import { createHandlers, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, importTerrain } from '../ipc/handlers'
+import { createHandlers, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
 import { RecordingStore } from './telemetry/store'
+import { printCurrentReportPdf } from './telemetry/report-pdf'
 import { SessionRecorder } from './telemetry/session-recorder'
 import { backfillHullsAsync, importAssetFileAsync, removeAssetFiles, resolveAssetUrl } from './assets/store'
 import { shutdownHullWorkers } from './assets/hull-async'
@@ -337,6 +338,22 @@ async function start(): Promise<void> {
   for (const [channel, handler] of Object.entries(createRecordingVerifyHandlers(recordings, binaryPath))) {
     ipcMain.handle(channel, (event, payload: unknown) => handler(event.sender, payload))
   }
+  ipcMain.handle(Channels.recordingPrintReportPdf, (event, payload: unknown) => handlePrintReportPdf(payload, async () => {
+    const win = mainWindow
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
+      throw new Error('Printing is available from the main window.')
+    }
+    return printCurrentReportPdf(event.sender, async (id) => {
+      const run = await recordings.get(id)
+      return run.title ?? undefined
+    }, async (fileName) => {
+      const picked = await dialog.showSaveDialog(win, {
+        title: 'Save report as PDF', defaultPath: join(app.getPath('documents'), fileName),
+        filters: [{ name: 'PDF document', extensions: ['pdf'] }],
+      })
+      return picked.canceled ? undefined : picked.filePath
+    })
+  }))
   // Same validation and storage as the async save; used only while a window unloads.
   ipcMain.on(Channels.assemblySaveSync, (event, payload: unknown) => {
     event.returnValue = handlers[Channels.assemblySave]!(payload)

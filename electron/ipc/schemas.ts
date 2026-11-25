@@ -36,6 +36,8 @@ export const recordingOptionsSchema = z.strictObject({
   live: z.boolean().optional(),
 }).optional()
 
+// The active report and its suggested file name are resolved in main.
+export const printReportPdfSchema = z.undefined()
 export const recordingIdSchema = z.object({ id: z.uuid() })
 export const recordingVerifyCancelSchema = z.strictObject({ requestId: z.uuid() })
 export const recordingVerifySchema = recordingVerifyCancelSchema.extend({ id: z.uuid() })

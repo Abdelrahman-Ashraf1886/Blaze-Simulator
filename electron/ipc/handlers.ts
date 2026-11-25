@@ -8,6 +8,7 @@ import {
   flightLiveViewSchema,
   listRunsSchema,
   projectIdSchema,
+  printReportPdfSchema,
   recordingIdSchema,
   recordingSampleSchema,
   recordingVerifyCancelSchema,
@@ -105,6 +106,17 @@ export async function flightStartForView(engine: EngineForFlight, payload: unkno
     delete result.data.samples
   }
   return result
+}
+
+export async function handlePrintReportPdf(payload: unknown, print: () => Promise<{ path: string } | null>): Promise<IpcResult<{ path: string } | null>> {
+  const parsed = printReportPdfSchema.safeParse(payload)
+  if (!parsed.success) return { ok: false, error: { code: 'VALIDATION', message: 'Printing takes no arguments.' } }
+  try {
+    return { ok: true, data: await print() }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { ok: false, error: { code: 'INTERNAL', message: 'Could not save the report PDF. ' + message } }
+  }
 }
 
 export function createTerrainHandlers(repos: Repositories, dir: string) {

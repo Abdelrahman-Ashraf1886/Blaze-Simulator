@@ -28,6 +28,7 @@ const api: DesktopApiWithRecordings = {
       return () => ipcRenderer.removeListener('recording:verifyProgress', receive)
     },
     totalSize: () => ipcRenderer.invoke('recording:totalSize'),
+    printReportPdf: () => ipcRenderer.invoke('recording:printReportPdf'),
   },
   tuning: {
     get: (projectId) => ipcRenderer.invoke('tuning:get', { id: projectId }),

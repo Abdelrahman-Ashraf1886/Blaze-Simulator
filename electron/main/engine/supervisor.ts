@@ -208,6 +208,9 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
     }
     this.child = child
 
+    // A write after the engine has gone fails its own request (the write callback) and also raises 'error' on the
+    // pipe. Unhandled, that would end the main process; the 'exit' handler below does the recovery.
+    child.stdin.on('error', (e) => this.opts.log(`[engine] stdin: ${e.message}`))
     createInterface({ input: child.stdout }).on('line', (line) => this.onLine(line))
     createInterface({ input: child.stderr }).on('line', (line) => this.opts.log(`[engine] ${line}`))
     // Node may emit 'error' without 'exit' (e.g. ENOENT), so both paths funnel here once.
@@ -283,6 +286,7 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
   private request(command: EngineCommand, timeoutMs = this.opts.requestTimeoutMs): Promise<unknown> {
     const child = this.child
     if (!child) return Promise.reject(new Error('engine not running'))
+    if (this.stopping && command.type !== 'shutdown') return Promise.reject(new Error('engine is stopping'))
     const id = this.nextId++
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

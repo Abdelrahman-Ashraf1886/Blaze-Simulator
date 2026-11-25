@@ -1,9 +1,9 @@
 # Phase 6 plan: flight environment
 
-Status (2026-11-24): **Built through 6.12**. 6.0b is open.
+Status (2026-11-24): **Done.** 6.0a to 6.12 are built and 6.0b passed.
 
 - **Built** — 6.0a (sources), 6.1 (wind), 6.2 (ground effect), 6.3 (flight loads), 6.4 (terrain and obstacles), 6.5 (host, storage and replay), 6.6 (input devices), 6.7 (takeoff and landing), 6.8 (cameras), 6.9 (UI), 6.10 (acceptance and docs).
-- **6.0b pending** — user pass limits in D2. No stream measurement ran.
+- **6.0b passed** on 2026-11-25 against the limits in D2, three runs. The lockstep stays. [Measurements](../DEVLOG.md#2026-11-25--phase-6-milestone-60b-live-flight-measurement-engine-pipe-crash)
 - **6.11 (turbulence) and 6.12 (return to start) chosen** by the user on 2026-11-24 and built on 2026-11-25. The return parameters can be overridden per session by PX4 name; the tuning editor does not list them.
 - **Added on 2026-11-24** — PlayStation controller support on 6.6's Input page and 6.9's device flying.
 - **6.10 catalogue result** — wind hold, gust recovery and the ground-plane sequence passed. The 45° terrain run failed horizontal hold and landing-state checks; a 5° slope passes. [Measured results](../DEVLOG.md#2026-11-24--phase-6-flight-environment)

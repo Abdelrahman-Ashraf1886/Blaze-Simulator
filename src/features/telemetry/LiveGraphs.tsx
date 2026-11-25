@@ -7,10 +7,11 @@ export const LIVE_WINDOW_S = 10
 // D11 (phase-7-telemetry.md:47) records at 250 Hz; one more row for the window's far end.
 export const LIVE_CAPACITY = 250 * LIVE_WINDOW_S + 1
 
-const channels = telemetryChannels(0, 'attitudeHold')
-const altitude = channels.filter(({ name }) => name === 'state.position.z')
-const bodyRates = channels.filter(({ name }) => /^(state\.bodyRates|setpoint\.rates)\./.test(name))
-const battery = channels.filter(({ name }) => name === 'pack.voltage' || name === 'pack.current')
+// Labels and units for the fixed plots. The live source indexes rows by the engine's channel list.
+const descriptors = telemetryChannels(0, 'attitudeHold')
+const altitude = descriptors.filter(({ name }) => name === 'state.position.z')
+const bodyRates = descriptors.filter(({ name }) => /^(state\.bodyRates|setpoint\.rates)\./.test(name))
+const battery = descriptors.filter(({ name }) => name === 'pack.voltage' || name === 'pack.current')
 
 export function LiveGraphs({ source, needsNewFlight }: { source: LiveGraphSource; needsNewFlight: boolean }) {
   const [cursor] = useState(createGraphCursor)

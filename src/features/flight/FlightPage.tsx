@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Link, useParams } from 'react-router'
-import type { AssemblyDocument, Project } from '../../../electron/ipc/contract'
+import { Vector3 } from 'three'
+import type { AssemblyDocument, FlightSensorsDoc, Project } from '../../../electron/ipc/contract'
 import { PageHeader } from '@/components/page-header'
 import { EmptyState, Section } from '@/components/section'
 import { Button } from '@/components/ui/button'
@@ -17,6 +18,7 @@ import { useSystem } from '@/stores/system'
 import { useTerrainGrid } from '../workshop/environment/terrain-preview'
 import { buildFrame, type FrameGeometry } from '@/three/frame-geometry'
 import { useAssembly } from '../workshop/assembly-store'
+import { worldMatrix } from '../workshop/assembly-ops'
 import { useAssets } from '../workshop/asset-store'
 import { useComponentIndex } from '../workshop/component-index'
 import { checkInput } from '../workshop/check-input'
@@ -39,6 +41,8 @@ import { FLIGHT_MODE_LABELS, flightStartWithTuning } from './flight-mode'
 import { FlightModeStatus } from './FlightModeStatus'
 import { assemblyThrust, collisionIndicator, instabilityIndicator, layoutIndicator, massIndicator } from './indicators'
 import { conditionsOf, EMPTY_CONDITIONS, enginePayload, flightGate, type FlightConditions } from './readiness'
+import { rateLoopLabel, sensorSources } from './sensors/settings'
+import { SensorNotice } from './sensors/SensorSection'
 import { mapPx4Sticks, mapSticks, STICK_KEYS, updateHeadingHold, type HeadingHold } from './sticks'
 
 export default function FlightPage() {
@@ -108,6 +112,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
   const assets = useAssets((s) => s.assets)
   const engineState = useSystem((s) => s.engine?.state)
   const conditions = conditionsOf(doc)
+  const sources = useMemo(() => sensorSources(doc.parts, components), [doc.parts, components])
   const setConditions = (label: string, patch: Partial<FlightConditions>) =>
     useAssembly.getState().edit(label, (d) => ({ ...d, flight: { ...(d.flight ?? EMPTY_CONDITIONS), ...patch } }))
   // The assembly's engine payload (or what is still missing), then the user's flight conditions on top.
@@ -130,6 +135,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
   const [showLive, setShowLive] = useState(() => readPref<unknown>('flight.liveTelemetry', false) === true)
   const liveOpen = useRef(showLive)
   const [samplesEnabled, setSamplesEnabled] = useState(false)
+  const [runSensorMode, setRunSensorMode] = useState<FlightSensorsDoc['mode']>()
   const liveTelemetry = useLiveTelemetry(LIVE_WINDOW_S, LIVE_CAPACITY)
   const [recordingId, setRecordingId] = useState<string>()
   const [recordingError, setRecordingError] = useState<string>()
@@ -282,6 +288,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     setRecordingError(undefined)
     setRunBytes(undefined)
     setSamplesEnabled(recordRuns || liveOpen.current)
+    setRunSensorMode(conditions.sensors?.mode)
     liveTelemetry.reset()
     const next = new EngineFlightSource(getApi().engine, {
       ...gate.input, ...tuning.session,
@@ -424,6 +431,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
         <Button size="sm" data-testid="flight-stop" disabled={!running} onClick={() => { stopSource(); setRunning(false); clearKeys() }}>Stop</Button>
         <Button size="sm" data-testid="flight-reset" onClick={() => {
           stopSource(); setRunning(false); clearKeys(); historyRef.current = []; setHistory([]); setFrame(idle); latest.current = idle; setEngineError(null)
+          setRunSensorMode(undefined)
           headingHold.current = updateHeadingHold(null, keys.current, heading(idle))
           setHeldHeading(headingHold.current.headingRad)
         }}>Reset</Button>
@@ -501,9 +509,14 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
         <aside aria-label="Physics debug panel" className="w-full shrink-0 overflow-y-auto border-t border-line bg-chrome px-4 py-3 @min-[1000px]:w-[400px] @min-[1000px]:border-l @min-[1000px]:border-t-0">
           {showLive && <div className="mb-5"><LiveGraphs source={liveTelemetry.source} needsNewFlight={running && !samplesEnabled} /></div>}
           <div className="mb-5">
-            <FlightSetup projectId={project.id} conditions={conditions} onChange={setConditions} blockers={blockers} environment={payload.ok ? payload.payload : undefined} terrainId={terrainId} engineBlock={engineBlock} locked={running} />
+            <FlightSetup projectId={project.id} conditions={conditions} onChange={setConditions} blockers={blockers}
+              environment={payload.ok ? payload.payload : undefined} terrainId={terrainId} engineBlock={engineBlock} locked={running}
+              sensorSources={sources} sensorMountOf={(partId) =>
+                // Use the same pose relative to the airframe origin as mass-input.ts:111–121.
+                new Vector3().setFromMatrixPosition(worldMatrix(doc, geo, partId)).toArray()} />
           </div>
-          <DebugPanel frame={frame} mass={mass.mp} indicators={indicators} source="live" />
+          {running && runSensorMode !== conditions.sensors?.mode && <SensorNotice mode={runSensorMode} />}
+          <DebugPanel frame={frame} mass={mass.mp} indicators={indicators} source="live" rateLoop={rateLoopLabel(runSensorMode)} />
         </aside>
       </div>
     </div>

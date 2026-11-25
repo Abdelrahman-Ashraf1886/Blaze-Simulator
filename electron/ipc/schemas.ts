@@ -269,6 +269,40 @@ export const windDocSchema = z.discriminatedUnion('kind', [
 const optionalNumber = (min: number, max: number, what: string) =>
   z.number().refine(Number.isFinite, `${what} must be a number`).min(min, `${what} must be at least ${min}`).max(max, `${what} must be at most ${max}`).nullable()
 
+// Partial groups store unfinished entries. Limits match src/domain/sensors.ts and the engine sensor schema.
+const sensorVector = z.tuple([finite, finite, finite])
+const sensorSigma = finite.nonnegative().nullish()
+const sensorDelay = z.int().nonnegative().nullish()
+const sensorPeriod = z.int().positive().optional()
+const sensorImu = z.strictObject({
+  noiseSigma: sensorSigma,
+  vibrationSigma: sensorSigma,
+  bias: sensorVector.nullish(),
+  randomWalk: sensorSigma,
+  delayMs: sensorDelay,
+  range: finite.positive().nullish(),
+})
+const filterFrequency = finite.nonnegative().refine((hz) => Number.isFinite(Math.fround(hz))).optional()
+const sensorNotch = z.strictObject({ frequencyHz: filterFrequency, bandwidthHz: filterFrequency }).nullish()
+const flightSensorsDocSchema = z.strictObject({
+  mode: z.enum(['off', 'recorded', 'flyOnGyro']),
+  seed: z.int().optional(),
+  flightControllerPartId: z.string().min(1).optional(),
+  gpsPartId: z.string().min(1).optional(),
+  gyro: sensorImu.nullish(),
+  gyroFilters: z.strictObject({
+    gyroCutoffHz: filterFrequency, dgyroCutoffHz: filterFrequency, notch0: sensorNotch, notch1: sensorNotch,
+  }).optional(),
+  accelerometer: sensorImu.extend({ mountPositionM: sensorVector.optional() }).nullish(),
+  barometer: z.strictObject({
+    sigmaPa: sensorSigma, biasPa: finite.nullish(), periodMs: sensorPeriod, delayMs: sensorDelay,
+  }).nullish(),
+  gps: z.strictObject({
+    positionSigmaHorizontalM: sensorSigma, positionSigmaVerticalM: sensorSigma, velocitySigmaMps: sensorSigma,
+    periodMs: sensorPeriod, delayMs: sensorDelay,
+  }).nullish(),
+})
+
 /** The flight conditions: the user's entries, null = not entered. Bounds are sanity limits, not defaults. */
 export const flightConditionsDocSchema = z
   .object({
@@ -278,6 +312,7 @@ export const flightConditionsDocSchema = z
     cutoffValue: optionalNumber(0.001, 1e6, 'The battery cut-off'),
     wind: windDocSchema.nullable().optional(),
     groundEffect: z.boolean().nullable().optional(),
+    sensors: flightSensorsDocSchema.nullish(),
   })
   .strict()
 /** One axis of the body drag coefficient; null = not entered. */

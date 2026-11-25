@@ -76,6 +76,13 @@ describe('recorded flight metrics', () => {
     for (const [id, value] of Object.entries(expected)) {
       expect(results[id]).toEqual({ value: expect.closeTo(value) })
     }
+    const presentation = new Map(calculator.results().map((metric) => [metric.id, metric]))
+    expect(presentation.get('duration')?.group).toBe('Flight')
+    expect(presentation.get('rate-x')?.group).toBe('Tracking')
+    expect(presentation.get('motor.0.throttle-0')).toMatchObject({ group: 'Motors', motor: { label: 'Motor 1', column: '0' } })
+    expect(presentation.get('energy')?.group).toBe('Power')
+    expect(presentation.get('wind-max')?.group).toBe('Air')
+    expect(presentation.get('touchdown')?.group).toBe('Landing')
   })
 
   it('gives a reason for every empty metric and tolerates a single sample', () => {

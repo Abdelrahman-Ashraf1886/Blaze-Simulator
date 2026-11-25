@@ -11,7 +11,7 @@ import { Quaternion, Vector3 } from 'three'
 import physics from '../../database/reference/physics.v1.json'
 import seed from '../../database/seed/components.v1.json'
 import type { Component } from '../../electron/ipc/component-fields'
-import type { AssemblyDocument, IpcResult, ObstacleDoc } from '../../electron/ipc/contract'
+import type { AssemblyDocument, FlightSensorsDoc, IpcResult, ObstacleDoc, StepTestInput } from '../../electron/ipc/contract'
 import { STARTING_FRAME } from '../../electron/main/db/repositories'
 import {
   BodyDragSchema,
@@ -35,11 +35,12 @@ import { stepTest } from '../../electron/main/engine/step-test'
 import { EngineSupervisor } from '../../electron/main/engine/supervisor'
 import { lowestPoint } from '../../src/domain/collisions'
 import { RECOMMENDED_STEP_METRICS_OPTIONS, stepMetrics } from '../../src/domain/step-response'
-import { noiseDensityToSampleSigma } from '../../src/domain/sensor-specs'
-import type { SensorPayload } from '../../src/domain/sensors'
+import { noiseDensityToSampleSigma, resolveSensorSpecs } from '../../src/domain/sensor-specs'
+import { buildSensorPayload, type SensorPayload } from '../../src/domain/sensors'
 import { toSI } from '../../src/domain/units'
 import { thrustFactor, thrustFactorReadout } from '../../src/domain/thrust-curve'
 import { enginePayload, flightGate } from '../../src/features/flight/readiness'
+import { px4GyroDefaults } from '../../src/features/flight/sensors/settings'
 import { BUILTINS, scenarioRequest, scenarioRunInput } from '../../src/features/scenarios/scenarios'
 import { measuredSamples, stepTestInput } from '../../src/features/tuning/step-test-input'
 import { addPart, updatePart, type AttachTarget } from '../../src/features/workshop/assembly-ops'
@@ -110,6 +111,65 @@ function catalogueAssembly() {
 }
 
 const conditions = { ambientAltitudeM: 0, temperatureC: null, cutoffType: 'voltageV', cutoffValue: 12 } as const
+
+describe('saved sensor payloads', () => {
+  // The headless catalogue quad above and the step fixture from engine-core/src/step_test/tests.rs:40–47.
+  const test: StepTestInput['test'] = {
+    step: { type: 'rate', axis: 'roll', amplitudeRadps: Math.PI / 18 }, holdS: 1, durationS: 10, decimationSteps: 10,
+  }
+  const entries = { payloadMassKg: null, comOffsetM: null }
+  const library = (seed.components as unknown as Component[]).find(({ name }) => name === 'Pixhawk 6C')!
+  const { doc, geo, components } = catalogueAssembly()
+  const part = addPart(doc, 'flight-controller', { kind: 'none' }, geo.plates.find(({ id }) => id === 'plate-top')!.position[2], 'fc').part
+  const linked = { ...part, componentId: library.id }
+  const build = { ...doc, parts: [...doc.parts, linked] }
+  const catalog = { ...components, [library.id]: library }
+  const settings = {
+    seed: 1, gyro: { bias: null, randomWalk: null, range: null, delayMs: null, vibrationSigma: null },
+    accelerometer: null, gps: null, barometer: null, gyroFilters: px4GyroDefaults(),
+  } as const
+
+  it.each([null, 'off', 'recorded', 'flyOnGyro'] as const)('uses the same %s sensor payload for every entry point', (mode) => {
+    const sensors = mode === null ? null : { ...settings, mode }
+    const active = mode === 'recorded' || mode === 'flyOnGyro'
+    const flight = { ...conditions, sensors }
+    const saved = { ...build, flight }
+    const expected = buildSensorPayload(resolveSensorSpecs(build, catalog), active
+      ? { ...settings, flightControllerPartId: linked.id, flyOnGyro: mode === 'flyOnGyro' } : null, flight)
+    expect(expected.missing).toEqual([])
+
+    const liveAndScenario = flightGate(enginePayload(saved, geo, catalog, {}, {}), flight)
+    const tuning = flightGate(enginePayload(saved, geo, catalog, {}), flight)
+    if (!liveAndScenario.ok || !tuning.ok) throw new Error('Fixture should be ready')
+    const scenario = scenarioRunInput(liveAndScenario, BUILTINS[0]!, entries)!
+    const step = stepTestInput(tuning, test, {})!
+    for (const request of [liveAndScenario.input, scenario.config, step.config]) {
+      if (active) expect(request.sensors).toEqual(expected.payload)
+      else expect(request).not.toHaveProperty('sensors')
+    }
+    if (!active) expect(liveAndScenario).toStrictEqual(flightGate(enginePayload(build, geo, catalog, {}, {}), conditions))
+  })
+
+  it('blocks each run at the specific fields and asks which controller when several exist', () => {
+    const flight = { ...conditions, sensors: {
+      mode: 'flyOnGyro', gyro: { range: null }, accelerometer: {}, gps: null, barometer: null,
+    } satisfies FlightSensorsDoc }
+    const saved = { ...build, parts: [...build.parts, { ...linked, id: 'second-fc' }], flight }
+    const ids = [
+      'flightControllerPartId', 'seed', 'gyro-noiseSigma', 'gyro-vibrationSigma', 'gyro-bias', 'gyro-randomWalk', 'gyro-delayMs',
+      'flyOnGyro-gyroCutoffHz', 'flyOnGyro-dgyroCutoffHz', 'flyOnGyro-notch0-frequencyHz', 'flyOnGyro-notch1-frequencyHz',
+      'accelerometer-noiseSigma', 'accelerometer-vibrationSigma', 'accelerometer-bias', 'accelerometer-randomWalk',
+      'accelerometer-delayMs', 'accelerometer-range', 'accelerometer-mountPositionM',
+    ].map((id) => `flight-sensor-${id}`)
+    for (const environment of [undefined, {}]) {
+      const gate = flightGate(enginePayload(saved, geo, catalog, {}, environment), flight)
+      if (gate.ok) throw new Error('Missing sensor entries should block the run')
+      expect(gate.blockers.map(({ link }) => link)).toEqual(ids.map((elementId) => ({ to: 'flight-field', elementId })))
+      expect(scenarioRunInput(gate, BUILTINS[0]!, entries)).toBeNull()
+      expect(stepTestInput(gate, test, {})).toBeNull()
+    }
+  })
+})
 
 function catalogueQuad() {
   const { doc, geo, components } = catalogueAssembly()

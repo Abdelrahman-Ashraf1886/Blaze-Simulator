@@ -61,11 +61,6 @@ sending, and the engine validates it again in full (ADR 0006).
 A malformed line never terminates the engine. Rust source of truth:
 `engine-host/src/protocol.rs`; TS mirror: `electron/main/engine/protocol.ts`.
 
-**Planned evolution:** simulation control commands (Phase 4–6) are added to the
-same channel. High-rate state/telemetry streaming will use a dedicated
-binary-framed stream forwarded to the renderer through a `MessagePort`, so the
-renderer receives frames without going through `ipcMain` per message.
-
 ### Recorded sensors
 
 `sensors` takes a signed JSON safe-integer `seed` and four required keys named `gyro`,
@@ -122,6 +117,38 @@ rows append `sensor.gyroFiltered.{x,y,z}` in rad/s,
 during the initial hold and otherwise show the feedback that produced that
 row's step. The raw gyro columns retain their post-step acquisition timing.
 
+
+At each tick the controller reads true attitude, position and velocity. The plant advances after control. Sensor acquisition and delivery then use the resulting plant state. The accelerometer models specific force at the mount, including tangential and centripetal terms. Barometer and GPS remain recorded signals, as does the accelerometer. With gyro feedback on, the controller uses filtered rate for rate error and filtered angular acceleration for the D term. The next tick consumes that feedback. There is no estimator. [Live step](../simulation-engine/engine-host/src/flight_session.rs#L390-L420) · [Sensor order](../simulation-engine/engine-host/src/telemetry.rs#L196-L260) · [Sensor models](../simulation-engine/engine-core/src/sensors.rs#L207-L257) · [Mount force](../simulation-engine/engine-core/src/sensors.rs#L347-L359) · [Rate controller](../simulation-engine/engine-core/src/controller.rs#L347)
+
+## Telemetry
+
+### Sampling and recording
+
+The renderer drives the live session in lockstep. The engine host samples diagnostics at the schedule described in [Engine protocol](#engine-protocol-v2). Samples travel in the JSON response on the existing engine pipe. Main requests every fourth 1 ms step for recorded flights and scenarios (250 Hz). Step tests keep their own trace and decimation. [Engine sampler](../simulation-engine/engine-host/src/telemetry.rs#L196-L260) · [Flight handler](../electron/main/engine/flight-session.ts#L52-L73) · [Scenario handler](../electron/main/engine/scenario-run.ts#L48-L60) · [Trace conversion](../electron/main/telemetry/session-recorder.ts#L9-L60)
+
+Main captures the serialised vehicle load, start request and live step requests. It queues the sample rows and closes the run with its end status, elapsed time and last state hash. A bounded writer drains the queue in order. Stop waits for finalisation. Window close and app quit also settle outstanding recordings. SQLite stores the run metadata for the dashboard and Telemetry history. [Recorder](../electron/main/telemetry/session-recorder.ts#L83-L224) · [Writer](../electron/main/telemetry/writer.ts#L104-L176) · [Stop](../electron/main/engine/flight-session.ts#L82-L116) · [Shutdown](../electron/main/index.ts#L399-L417) · [Migration 0016](../database/migrations/0016_recordings.sql#L1)
+
+### Recording format and recovery
+
+Each run file is `userData/recordings/<run UUID>.blzr`. The preamble is ASCII `BLZR` followed by a little-endian uint32 version (1). A frame contains a type byte, uint32 payload length, CRC-32 of those five bytes, CRC-32 of the payload, then the payload. Frames are appended in order. Type 0 is the UTF-8 JSON header with run and build identity, app, engine and protocol versions, load and start request text, sample clock and ordered channel metadata. Type 1 starts with the uint32 row count, then interleaves little-endian float64 channel values by row in header order. NaN represents a missing value. Type 2 stores one UTF-8 request line. Type 3 ends the file with UTF-8 JSON end metadata. The time of row `i` is `(firstSampleStep + i * samplePeriodSteps) * stepLengthS`. [Format](../electron/main/telemetry/format.ts#L1-L64)
+
+A short tail is ignored. A missing end frame means incomplete. After a valid header, a CRC failure exposes the intact prefix and an integrity error. The reader rejects an unsupported version, invalid frame layout or extra bytes after the end. Startup scans rows left open, closes them as aborted and recovers counts and time from the valid prefix or end metadata. It leaves the bytes on disk and reports orphan files. History shows missing files. Explicit deletion unlinks the file before deleting its row. [Reader](../electron/main/telemetry/reader.ts#L58-L149) · [Startup recovery](../electron/main/telemetry/store.ts#L115-L144) · [Missing files](../electron/main/telemetry/store.ts#L43-L81) · [Deletion](../electron/main/db/repositories.ts#L267-L283)
+
+### Reading, replay and export
+
+The reader scans frame CRCs and indexes sample and request offsets. Main keeps the two most recently used indexes, keyed by path and matched on size, modification time, change time and inode. A range query binary-searches the sample clock and chunk offsets, then reads the requested columns over the overlapping rows. When a point budget applies, each channel is reduced with time-ordered min/max buckets and missing-value markers within the budget. [Reader index and queries](../electron/main/telemetry/reader.ts#L119-L280) · [Decimation](../electron/main/telemetry/decimation.ts#L1-L68)
+
+Replay uses saved pose and holds each sample until the next. Play, scrub and sample navigation share a time cursor with the graphs. The viewport reconstructs the build and environment from saved requests. History graphs can overlay a second recording, aligned at the start or at selected times. They provide channel selection and save the layout as a view preference. [Replay](../src/features/telemetry/ReplayPanel.tsx#L13-L114) · [Replay scene](../src/features/telemetry/ReplayScene.tsx#L42) · [History graphs](../src/features/telemetry/RunGraphs.tsx#L140-L249)
+
+Verify runs the saved load, start and step requests in a separate engine process. It checks engine and protocol versions, compares saved sample steps and values exactly, and checks the final step count and state hash. The result is Same, Different, Cannot verify, or Cancelled. Incomplete or corrupt files and version mismatches yield Cannot verify. [Verification](../electron/main/telemetry/verify.ts#L15-L166)
+
+CSV streams full-resolution rows for the selected time range and channels. Headers include units. Numeric columns use decimal strings that round-trip to float64, and missing values are blank. Mode codes can be exported as names. Main writes through a temporary file and renames it into place after success. The report page reads saved build and conditions, overrides, graphs, metrics and model limits with provenance. Main prints the active report with Electron `printToPDF`, A4 print styles and a page footer. [CSV formatting](../src/domain/telemetry-csv.ts#L32) · [CSV writer](../electron/main/telemetry/csv.ts#L40-L102) · [Report](../src/features/telemetry/report/ReportPage.tsx#L41-L151) · [PDF](../electron/main/telemetry/report-pdf.ts#L23-L47)
+
+### Live graphs and IPC
+
+Live graphs use the same engine samples. Open the panel before start to request samples without recording. A recorded flight can send samples to the panel when it is opened during flight. `EngineFlightSource` forwards rows to a renderer ring buffer for the latest 10 simulated seconds. The live uPlot panels show altitude, body rates and battery. [IPC forwarding](../electron/ipc/handlers.ts#L91-L114) · [Flight source](../src/features/flight/EngineFlightSource.ts#L244-L301) · [Live buffer](../src/features/telemetry/live-buffer.ts#L8) · [Live graphs](../src/features/telemetry/LiveGraphs.tsx#L6-L25)
+
+Run IPC uses `runs:list`, `runs:get`, `runs:delete` and the existing `runs:listRecent`. Recording IPC uses `recording:summary`, `recording:readSamples`, `recording:readRequests`, `recording:totalSize`, `recording:verify`, `recording:verifyCancel`, the `recording:verifyProgress` event, `recording:exportCsv` and `recording:printReportPdf`. Existing engine IPC accepts recording options on flight, scenario and step-test starts. Flight start and step also carry the live-view flag. Recording replies may include `recordingId` or `recordingError`. [IPC payloads](../electron/ipc/contract.ts#L539-L600) · [Channel names](../electron/ipc/contract.ts#L675-L687)
 
 ## Flight environment
 

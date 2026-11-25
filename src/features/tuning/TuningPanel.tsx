@@ -8,6 +8,8 @@ import { documentedRange, readOverrides, tuningInputClass } from './tuning-value
 
 export interface TuningPanelProps {
   projectId: string
+  /** The step test then shows the sensor disclosure, and signals are no longer exact. */
+  sensorsOn?: boolean
   gainsAffectFlights: boolean
   renderStepTest?: (tuning: { saved: TuningOverrides | null; dirty: boolean; pending: boolean }) => ReactNode
 }
@@ -16,7 +18,7 @@ export function TuningPanel(props: TuningPanelProps) {
   return <ProjectTuning key={props.projectId} {...props} />
 }
 
-function ProjectTuning({ projectId, gainsAffectFlights, renderStepTest }: TuningPanelProps) {
+function ProjectTuning({ projectId, sensorsOn, gainsAffectFlights, renderStepTest }: TuningPanelProps) {
   const id = useId()
   const [saved, setSaved] = useState<TuningOverrides | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -80,7 +82,7 @@ function ProjectTuning({ projectId, gainsAffectFlights, renderStepTest }: Tuning
   const editor = (
     <div className="space-y-3">
       <Section title="Controller tuning">
-        <ExactSignalsNotice />
+        {!sensorsOn && <ExactSignalsNotice />}
         {!gainsAffectFlights && <p className="pb-2 text-[12.5px] text-warn">Saved gains do not affect flights yet.</p>}
         {ipcError && <p role="alert" className="py-2 text-[12.5px] text-fault">{ipcError.message}</p>}
         {saved === null ? (

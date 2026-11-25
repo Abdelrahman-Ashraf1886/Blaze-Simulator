@@ -71,12 +71,14 @@ function ProjectTuning({ project, doc }: { project: Project; doc: AssemblyDocume
   const engineReady = useSystem((s) => s.engine?.state === 'connected')
   const geo = useMemo(() => buildFrame(project.frameType, doc.frame, doc.motors), [doc, project.frameType])
   const payload = useMemo(() => enginePayload(doc, geo, components, assets), [doc, geo, components, assets])
-  const gate = useMemo(() => flightGate(payload, conditionsOf(doc)), [payload, doc])
+  const conditions = conditionsOf(doc)
+  const gate = useMemo(() => flightGate(payload, conditions), [payload, conditions])
+  const sensorsOn = conditions.sensors != null && conditions.sensors.mode !== 'off'
 
   return <>
     <PageHeader title={`${project.name} · Tuning`} />
     <div className="mx-auto w-full max-w-[1600px] px-6 pb-10 pt-5">
-      <TuningPanel projectId={project.id} gainsAffectFlights renderStepTest={(tuning) => (
+      <TuningPanel projectId={project.id} gainsAffectFlights sensorsOn={sensorsOn} renderStepTest={(tuning) => (
         <div className="space-y-3">
           <Section title="Step test readiness">
             {tuning.saved && <div className="pb-2 text-[12.5px] text-fg-muted">
@@ -102,7 +104,7 @@ function ProjectTuning({ project, doc }: { project: Project; doc: AssemblyDocume
             )}
             {!engineReady && <p className="pt-2 text-[12.5px] text-warn">The engine is not connected.</p>}
           </Section>
-          <StepTestPanel projectId={project.id} gate={gate} engineReady={engineReady} {...tuning} />
+          <StepTestPanel projectId={project.id} gate={gate} engineReady={engineReady} sensorMode={conditions.sensors?.mode} {...tuning} />
         </div>
       )} />
     </div>

@@ -244,11 +244,14 @@ const ok = <T,>(data: T): IpcResult<T> => ({ ok: true, data })
 const flush = () => new Promise<void>((r) => setTimeout(r, 0))
 
 function harness(step: (input: FlightStepInput) => IpcResult<FlightStepResult> | Promise<IpcResult<FlightStepResult>> = () => ok(stepResult()),
-  liveTelemetry?: EngineFlightSourceOptions['liveTelemetry']) {
+  liveTelemetry?: EngineFlightSourceOptions['liveTelemetry'], channels?: string[]) {
   let clock = 1000
   let pending: (() => void) | null = null
   const api = {
-    flightStart: vi.fn(async () => ok({ dtS: 0.001, maxStepsPerRequest: 100, diagnostic: FlightDiagnosticSchema.parse(diagnostic({ state: { ...diagnostic().state, steps: 0, timeS: 0 }, control: null })) })),
+    flightStart: vi.fn(async () => ok({
+      dtS: 0.001, maxStepsPerRequest: 100, diagnostic: FlightDiagnosticSchema.parse(diagnostic({ state: { ...diagnostic().state, steps: 0, timeS: 0 }, control: null })),
+      ...(channels ? { channels } : {}),
+    })),
     flightStep: vi.fn(async (input: FlightStepInput) => step(input)),
     flightEnd: vi.fn(async () => ok({ ended: true })),
   }
@@ -272,14 +275,15 @@ function harness(step: (input: FlightStepInput) => IpcResult<FlightStepResult> |
 }
 
 describe('EngineFlightSource', () => {
-  it('streams live batches into the buffer only while open and preserves closed renderer requests', async () => {
-    const table = telemetryChannels(diagnostic().motors.length, 'attitudeHold')
+  it('opens a sampled flight mid-run using the engine column order, including sensors', async () => {
+    // Deliberately shorten and reorder the columns to catch any reconstruction in the renderer.
+    const channels = ['time', 'sensor.gyro.x', 'pack.voltage']
     const buffer = createLiveBuffer(RECORD_EVERY_STEPS * 0.001, 2)
     let open = false
-    const row = table.map(({ name }) => name === 'time' ? 0.004 : name === 'pack.voltage' ? 12 : null)
+    const row = [0.004, 0.25, 12]
     const h = harness((input) => ok({
       ...stepResult(), ...(input.live ? { samples: { steps: [RECORD_EVERY_STEPS], rows: [row] } } : {}),
-    }), { ...buffer, isOpen: () => open })
+    }), { ...buffer, isOpen: () => open }, channels)
     h.source.start(() => mapSticks(new Set()))
     await flush()
     expect(h.api.flightStart).toHaveBeenCalledWith(startInput())
@@ -290,7 +294,10 @@ describe('EngineFlightSource', () => {
     open = true
     await h.frame(RECORD_EVERY_STEPS)
     expect(h.api.flightStep.mock.calls[1]![0]).toEqual({ ...closed, live: true })
-    expect(buffer.read(['pack.voltage'], 0)).toEqual([{ channel: 'pack.voltage', points: [{ timeS: 0.004, value: 12 }] }])
+    expect(buffer.read(['pack.voltage', 'sensor.gyro.x'], 0)).toEqual([
+      { channel: 'pack.voltage', points: [{ timeS: 0.004, value: 12 }] },
+      { channel: 'sensor.gyro.x', points: [{ timeS: 0.004, value: 0.25 }] },
+    ])
     open = false
     await h.frame(RECORD_EVERY_STEPS)
     expect(JSON.stringify(h.api.flightStep.mock.calls[2]![0])).toBe(JSON.stringify(closed))
@@ -1771,7 +1778,7 @@ describe('main recording with a fake engine transport', () => {
     expect(await fly(true)).toEqual(await fly(false))
   })
 
-  it('returns live samples through the same engine path without writing a file and strips replies when closed', async () => {
+  it('returns sampled channel names for reopening the panel and hides rows while closed', async () => {
     await testFlight(async ({ engine, wire }, { recorder, store, recording }) => {
       const started = unwrap(await flightStartForView(engine, { ...startInput(), live: true }, recorder))
       expect(started.samples?.steps).toEqual([0])
@@ -1784,6 +1791,7 @@ describe('main recording with a fake engine transport', () => {
 
       const recorded = unwrap(await flightStartForView(engine, { ...startInput(), recording }, recorder))
       expect(recorded).not.toHaveProperty('samples')
+      expect(recorded.channels).toEqual(started.channels)
       expect(unwrap(await flightStepForView(engine, { ...recordStep(), live: true }, recorder)).samples?.steps).toEqual([RECORD_EVERY_STEPS])
       unwrap(await flightEnd(engine, recorder))
       const saved = await getRecording(store, recorded.recordingId!)
@@ -1998,14 +2006,18 @@ describe('a real engine session', () => {
   it('records the sensor channels of flights and scenarios, and none when every sensor is off', async () => withRecordingStore(sup, async ({ store, recorder, recording }) => {
     const { airDensityKgM3, cutoff } = startInput()
     const record = async (model: SensorPayload) => {
-      const flight = unwrap(await flightStart(sup, { ...startInput(), recording, sensors: model }, recorder))
-      const step = unwrap(await flightStep(sup, recordStep(), recorder))
+      const flight = unwrap(await flightStartForView(sup, { ...startInput(), recording, sensors: model }, recorder))
+      expect(flight).not.toHaveProperty('samples')
+      const step = unwrap(await flightStepForView(sup, { ...recordStep(), live: true }, recorder))
+      expect(step.samples?.rows[0]).toHaveLength(flight.channels!.length)
       expect([flight, step]).not.toContainEqual(expect.objectContaining({ recordingError: expect.anything() }))
       unwrap(await flightEnd(sup, recorder))
       const scenario = unwrap(await scenarioRun(sup, { ...quad, recording, config: { airDensityKgM3, cutoff, sensors: model },
         scenario: { type: 'builtin', name: 'balanced_hover' },
       }, recorder))
-      return Promise.all([flight, scenario].map(async ({ recordingId }) => (await getRecording(store, recordingId!)).summary))
+      const summaries = await Promise.all([flight, scenario].map(async ({ recordingId }) => (await getRecording(store, recordingId!)).summary))
+      expect(flight.channels).toEqual(summaries[0]?.header?.channels.map(({ name }) => name))
+      return summaries
     }
     const named = (summary: Awaited<ReturnType<typeof record>>[number]) => summary.header!.channels.filter(({ name }) => name.startsWith('sensor.')).length
     const recordedOnly = await record(sensors)

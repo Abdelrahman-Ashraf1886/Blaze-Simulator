@@ -11,7 +11,7 @@ builds and its acceptance tests pass. Status is updated in `DEVLOG.md` entries.
 | 4 Physics engine | 6-DOF rigid body, inertia tensor, motor/prop/battery models, drag, wind, ground effect; analytical validation | **Done** (2026-11-23), 4.1–4.9 ([plan](plans/phase-4-physics.md)). Wind and ground effect shipped in [Phase 6](plans/phase-6-flight-environment.md). Awaiting user review |
 | 5 Flight control | PID cascade (rate/angle/alt/pos), mixing/allocation, tuning tools, step-response metrics | **Done** (2026-11-24), [plan](plans/phase-5-flight-control.md), [ADR 0009](adr/0009-px4-controller-perfect-state.md) |
 | 6 Flight environment | Wind, ground effect, terrain and obstacles, input devices, auto flight modes, cameras and acceptance scenarios | **Done** (2026-11-25), [plan](plans/phase-6-flight-environment.md), [ADR 0010](adr/0010-flight-environment.md). 6.0b passed (2026-11-25). 6.11 (turbulence) and 6.12 (return) are included. Awaiting user review. |
-| 7 Telemetry | Sensor models (noise/bias/delay), live and historical graphs, recording/replay, CSV, reports | **In progress** (plan approved 2026-11-25, [plan](plans/phase-7-telemetry.md)). |
+| 7 Telemetry | Sensor models (noise/bias/delay), live and historical graphs, recording/replay, CSV, reports | **In progress** (2026-11-25). 7.0–7.9 built and merged. 7.12 acceptance and docs in progress. 7.10 attitude estimator and 7.11 ULog not chosen. [Plan](plans/phase-7-telemetry.md#milestones). |
 | 8 Quality & distribution | Profiling, regression suite, validation report, signed installer, upgrade test, docs | Not started |
 
 ## Phase 2 acceptance criteria (carried in from the Phase 1 design review)

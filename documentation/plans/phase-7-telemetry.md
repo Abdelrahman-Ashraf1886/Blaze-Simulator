@@ -1,8 +1,8 @@
 # Phase 7 plan: telemetry
 
-Status (2026-11-25): **Approved: D1–D20 decided, every recommendation accepted. 7.10 (attitude
-estimator) and 7.11 (ULog) stay optional, not chosen yet.** Written against `blaze-sim` at d6f79ca
-(Phase 6 done). Earlier phases' decisions are written "P5-D6", "P6-D18".
+Status (2026-11-25): **7.0–7.9 built and merged. 7.12 in progress. 7.10 (attitude estimator) and
+7.11 (ULog) not chosen.** This plan was approved against `blaze-sim` at d6f79ca (Phase 6 done).
+Earlier phases' decisions are written "P5-D6", "P6-D18".
 
 ## Goal
 
@@ -44,7 +44,7 @@ Decided on 2026-11-25: every recommendation accepted.
 | D8 | Which sensors | (a) gyro, accelerometer; (b) (a) + barometer and GPS as recorded channels; (c) (b) + magnetometer | **(b)**. A magnetometer needs the Earth's field at a place; it comes with 7.10, with the field as your entry |
 | D9 | What a recording keeps | (a) the input log only; (b) samples only; (c) both, with the build payload, engine version and final hash | **(c)**. Samples open at once and survive an engine change; the log proves the run and can resample it at any rate |
 | D10 | When to record | (a) every live flight, scenario and step test, saved when it ends; (b) only when you press Save | **(a)**, as a flight controller logs while armed. A switch turns it off; an aborted run is saved and marked |
-| D11 | Sample rate of the saved channels | 100 Hz, 250 Hz or 1 kHz | **250 Hz** (every fourth step). About 80 channels × 8 bytes: 9.6 MB per minute. 100 Hz is 3.8 MB, 1 kHz is 38 MB. The log allows 1 kHz later without storing it |
+| D11 | Sample rate of the saved channels | 100 Hz, 250 Hz or 1 kHz | **Corrected 2026-11-25.** Flights and scenarios save at 250 Hz (every fourth step), about 15 MB per minute for the measured file. Step tests use the requested trace decimation. [Recorder](../../electron/main/telemetry/session-recorder.ts#L9-L52) |
 | D12 | Where it is stored | (a) SQLite blobs; (b) one file per run beside the database, described by the row; our own format (a JSON header, then chunks of little-endian float64 columns); (c) an Arrow/Parquet dependency | **(b)**. Append-only chunks survive a crash; the format is documented and has a version. Main writes it in chunks (ADR 0002) |
 | D13 | Retention | (a) keep everything, show sizes, you delete; (b) a size limit with automatic deletion | **(a)**. Nothing is deleted without you |
 | D14 | Replay | (a) play the saved samples in the 3D view; (b) (a) + "Verify", which re-runs the log in the engine and compares the hash | **(b)**. A different engine version is reported as "cannot verify", not as a failure |
@@ -103,21 +103,21 @@ unless the range is entered, misalignment and scale errors, sensor failure.
 
 File fences are for parallel work; one milestone per worktree.
 
-| Milestone | Delivers | Files it may touch | After |
-|---|---|---|---|
-| 7.0 Sources and data | Datasheet values for the catalogue's IMUs, barometer and GPS; PX4 filter parameters and lines; spec fields for sensors on flight controllers and GPS parts | `database/reference/*`, `database/seed/components.v1.json`, `electron/ipc/component-fields.ts`, tests | – |
-| 7.1 Engine sampling | Optional `sampleEverySteps` on sessions and scenarios; columns in the response; channel table; default off = today's response | `engine-host/*`, `electron/main/engine/protocol.ts`, `src/domain/telemetry-channels.ts` | – |
-| 7.2 Recording store | File format with version and crash-safe chunks, writer, reader, run rows, deletion, migration 0016, IPC | `electron/main/telemetry/*`, `database/migrations/0016_*.sql`, `electron/ipc/*` | 7.1 (format only: none) |
-| 7.3 Recording in use | Live flights, scenarios and step tests recorded (D10); dashboard list filled; perf gate with recording on (D18) | `EngineFlightSource.ts`, `FlightPage.tsx`, scenario and tuning pages, `DashboardPage.tsx` | 7.1, 7.2 |
-| 7.4 Graphs | uPlot component, channel picker, live graphs beside the flight view, saved layouts as a view preference | `src/features/telemetry/*`, `package.json` | 7.1 |
-| 7.5 History and replay | Run list, open, overlay two runs (D19), scrub with the 3D view, Verify (D14) | `src/features/telemetry/*`, `src/features/flight/FlightViewport.tsx` (read-only use) | 7.2, 7.4 |
-| 7.6 CSV | Channel and time-range choice, units in the header, exact decimal round trip | `src/domain/telemetry-csv.ts`, `electron/main/telemetry/*` | 7.2 |
-| 7.7 Reports | Flight, scenario and step-test report: build, conditions, parameters and overrides, graphs, metrics, model limits, provenance; print to PDF | `src/domain/flight-metrics.ts`, `src/features/telemetry/report/*` | 7.3, 7.4 |
-| 7.8 Sensor models | Gyro, accelerometer, barometer, GPS: noise, bias, random walk, delay, rate; recorded channels; seeded; off = bit for bit | `engine-core/src/sensors.rs`, host and protocol fields, sensor form | 7.0, 7.1 |
-| 7.9 Flying on the gyro | PX4 filters in front of the rate loop, D term on filtered acceleration; switch; tuning page says which signal is used; step tests with sensors | `engine-core/src/gyro_filters.rs`, `controller.rs`, `flight_loop.rs`, `step_test.rs` | 7.8 |
-| 7.10 (optional) Attitude estimator | `attitude_estimator_q` with the modelled IMU and a magnetometer (your field) | `engine-core/src/attitude_estimator.rs` | 7.9, D1 |
-| 7.11 (optional) ULog export | ULog file of a recording | `src/domain/ulog.ts` | 7.2, D16 |
-| 7.12 Acceptance and docs | Record, verify, export and report a flight end to end; the same step test on perfect and modelled gyro with both results in the DEVLOG; ROADMAP, ARCHITECTURE, ADR for the sensor boundary and the recording format | docs, e2e | All above |
+| Milestone | Delivers | Files it may touch | After | Status (2026-11-25) |
+|---|---|---|---|---|
+| 7.0 Sources and data | Datasheet values for the catalogue's IMUs, barometer and GPS; PX4 filter parameters and lines; spec fields for sensors on flight controllers and GPS parts | `database/reference/*`, `database/seed/components.v1.json`, `electron/ipc/component-fields.ts`, tests | – | Built / merged |
+| 7.1 Engine sampling | Optional `sampleEverySteps` on sessions and scenarios; columns in the response; channel table; default off = today's response | `engine-host/*`, `electron/main/engine/protocol.ts`, `src/domain/telemetry-channels.ts` | – | Built / merged |
+| 7.2 Recording store | File format with version and crash-safe chunks, writer, reader, run rows, deletion, migration 0016, IPC | `electron/main/telemetry/*`, `database/migrations/0016_*.sql`, `electron/ipc/*` | 7.1 (format only: none) | Built / merged |
+| 7.3 Recording in use | Live flights, scenarios and step tests recorded (D10); dashboard list filled; perf gate with recording on (D18) | `EngineFlightSource.ts`, `FlightPage.tsx`, scenario and tuning pages, `DashboardPage.tsx` | 7.1, 7.2 | Built / merged |
+| 7.4 Graphs | uPlot component, channel picker, live graphs beside the flight view, saved layouts as a view preference | `src/features/telemetry/*`, `package.json` | 7.1 | Built / merged |
+| 7.5 History and replay | Run list, open, overlay two runs (D19), scrub with the 3D view, Verify (D14) | `src/features/telemetry/*`, `src/features/flight/FlightViewport.tsx` (read-only use) | 7.2, 7.4 | Built / merged |
+| 7.6 CSV | Channel and time-range choice, units in the header, exact decimal round trip | `src/domain/telemetry-csv.ts`, `electron/main/telemetry/*` | 7.2 | Built / merged |
+| 7.7 Reports | Flight, scenario and step-test report: build, conditions, parameters and overrides, graphs, metrics, model limits, provenance; print to PDF | `src/domain/flight-metrics.ts`, `src/features/telemetry/report/*` | 7.3, 7.4 | Built / merged |
+| 7.8 Sensor models | Gyro, accelerometer, barometer, GPS: noise, bias, random walk, delay, rate; recorded channels; seeded; off = bit for bit | `engine-core/src/sensors.rs`, host and protocol fields, sensor form | 7.0, 7.1 | Built / merged |
+| 7.9 Flying on the gyro | PX4 filters in front of the rate loop, D term on filtered acceleration; switch; tuning page says which signal is used; step tests with sensors | `engine-core/src/gyro_filters.rs`, `controller.rs`, `flight_loop.rs`, `step_test.rs` | 7.8 | Built / merged |
+| 7.10 (optional) Attitude estimator | `attitude_estimator_q` with the modelled IMU and a magnetometer (your field) | `engine-core/src/attitude_estimator.rs` | 7.9, D1 | Not chosen |
+| 7.11 (optional) ULog export | ULog file of a recording | `src/domain/ulog.ts` | 7.2, D16 | Not chosen |
+| 7.12 Acceptance and docs | Record, verify, export and report a flight end to end; the same step test on perfect and modelled gyro with both results in the DEVLOG; ROADMAP, ARCHITECTURE, ADR for the sensor boundary and the recording format | docs, e2e | All above | In progress |
 
 **Waves.** 1: 7.0, 7.1 and 7.2 in parallel. 2: 7.3, 7.4, 7.6 and 7.8. 3: 7.5, 7.7 and 7.9 (7.9 alone
 in `controller.rs` and `flight_loop.rs`). 4: 7.10 and 7.11 if chosen, then 7.12.
@@ -147,6 +147,23 @@ in `controller.rs` and `flight_loop.rs`). 4: 7.10 and 7.11 if chosen, then 7.12.
 12. **e2e:** fly, stop, find the run, replay, verify, export, print the report; restart the app and
     open it again.
 
+**Status correction (2026-11-25), D9.** Verify uses the sampling schedule in the saved
+request. The saved-run workflow provides replay, Verify and CSV export at the recorded cadence. [Verify](../../electron/main/telemetry/verify.ts#L112-L147) · [CSV export](../../electron/main/telemetry/csv.ts#L55-L102)
+
+**Status correction (2026-11-25), 7.4 and 7.5.** Live graphs show altitude, body rates and
+battery. Saved-run graphs provide the channel picker and persist the graph layout. [Live graphs](../../src/features/telemetry/LiveGraphs.tsx#L16-L25) · [Saved layouts](../../src/features/telemetry/RunGraphs.tsx#L140-L208)
+
+**Status correction (2026-11-25), D7, sensor model notes and test 8.** The simulator samples at
+1 kHz without PX4's publication throttling (800 Hz for multicopters, `rc.mc_defaults` L13–16).
+The accelerometer records modelled specific force without the PX4 accelerometer low-pass. Fractional-millisecond sensor
+delays are refused. [Gyro timing](../../simulation-engine/engine-core/src/gyro_filters.rs#L1-L8) · [Sensor acquisition](../../simulation-engine/engine-core/src/sensors.rs#L207-L257) · [Input validation](../../src/domain/sensors.ts#L174-L225)
+
+**Status correction (2026-11-25), tests 10–12 and 7.12 dependencies.** Both rate-step runs exceeded
+the original overshoot limit. The user chose to report overshoot without judging it. D18
+PERF-GATE: to be measured. Test 12 covers a restart with the same user data, verifies again,
+then deletes the run and checks the file is gone. It passes. Acceptance
+depends on the merged core milestones. [Results](../DEVLOG.md#catalogue-acceptance-and-performance) · [Test 12](../../tests/e2e/phase7-acceptance.spec.ts#L27)
+
 ## Risks
 
 - **Noise without vibration looks too good.** The datasheet figure is the sensor at rest. A real
@@ -154,9 +171,9 @@ in `controller.rs` and `flight_loop.rs`). 4: 7.10 and 7.11 if chosen, then 7.12.
   still fail on the real machine. The page must say it wherever sensors are on.
 - **Two D terms.** PX4 differentiates the filtered rate; our loop differences the measured rate. 7.9
   must keep the perfect-state path bit for bit and not merge them.
-- **Disk use.** 9.6 MB per minute adds up; sizes are shown and nothing is deleted silently.
-- **JSON samples cost time.** 250 Hz × 80 channels is about 4 rows per frame; if the perf gate fails,
-  the first step is fewer channels per response, then D18(b).
+- **Disk use (corrected 2026-11-25).** About 15 MB per minute for the measured 250 Hz recording. History shows sizes. [DEVLOG](../DEVLOG.md#catalogue-acceptance-and-performance)
+- **JSON samples cost time.** At 250 Hz the row width varies by build and signals (corrected 2026-11-25). If the perf gate fails,
+  the first step is fewer channels per response, then D18(b). [Channel table](../../simulation-engine/engine-host/src/telemetry.rs#L349)
 - **Verification ages.** A recording verifies only on the engine that made it; samples stay readable.
 - **The 2–5 hitches per 20 s found in 6.0b** are untraced. Recording may make them worse; test 11
   compares.

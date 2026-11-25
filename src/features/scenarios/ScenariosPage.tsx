@@ -20,6 +20,7 @@ import { useAssets } from '../workshop/asset-store'
 import { useComponentIndex } from '../workshop/component-index'
 import { useWorkshopView } from '../workshop/view-store'
 import { airDensityFor, conditionsOf, enginePayload, flightGate, type FlightBlocker, type FlightConditions, type FlightGate, type FlightLink, type PayloadResult } from '../flight/readiness'
+import { SensorNotice } from '../flight/sensors/SensorSection'
 import { checkRows, fmt, modificationRows, summaryRows } from './report'
 import { BUILTINS, missingEntry, missingProjectInput, NO_ENTRIES, PROJECT_INPUTS, scenarioRunInput, type BuiltinInfo, type ScenarioEntries } from './scenarios'
 
@@ -209,6 +210,7 @@ function Conditions({ conditions: c, gateOk, blockers, engineBlock, follow, proj
 }) {
   return (
     <Section title="Conditions" count={blockers.length}>
+      <SensorNotice mode={c.sensors?.mode} />
       {c.ambientAltitudeM !== null && (
         <p className="border-t border-line py-2 text-[12.5px] text-fg-muted" data-testid="scenarios-conditions">
           Air density {airDensityFor(c.ambientAltitudeM, c.temperatureC).toFixed(3)} kg/m³ at {c.ambientAltitudeM} m

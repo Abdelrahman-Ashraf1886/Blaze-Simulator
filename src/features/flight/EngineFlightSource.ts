@@ -8,7 +8,7 @@
  * the 1 kHz step stream.
  */
 import type { DesktopApi, FlightStartInput, FlightStepInput, FlightStepResult, RecordingProgress } from '../../../electron/ipc/contract'
-import { telemetryChannels } from '../../domain/telemetry-channels'
+import type { FlightSessionStartParams } from '../../../electron/main/engine/protocol'
 import { flightTiming } from './flight-timing'
 import type { AxisVector, FlightFrame, FlightSource, SetpointProvider, Vec3 } from './frame'
 
@@ -174,7 +174,7 @@ export class EngineFlightSource implements FlightSource {
 
   constructor(
     private readonly api: EngineApi,
-    private readonly input: FlightStartInput,
+    private readonly input: FlightStartInput & Pick<FlightSessionStartParams, 'sensors'>,
     private readonly options: EngineFlightSourceOptions = {},
   ) {
     this.now = options.now ?? (() => performance.now())
@@ -257,16 +257,14 @@ export class EngineFlightSource implements FlightSource {
       if (!started.ok) return this.fail(generation, started.error.message)
       this.sessionOpen = true
       this.reportRecording(started.data)
-      const channels = started.data.channels ?? (live ? telemetryChannels(
-        started.data.diagnostic.motors.length, this.input.controller ? 'flightLoop' : 'attitudeHold',
-      ).map(({ name }) => name) : [])
+      const channels = started.data.channels
       let forwarding = false
       function reportSamples(samples?: FlightStepResult['samples']) {
         if (!live?.isOpen()) {
           forwarding = false
           return
         }
-        if (!samples?.rows.length) return
+        if (!channels?.length || !samples?.rows.length) return
         if (!forwarding) {
           live.begin(channels)
           forwarding = true

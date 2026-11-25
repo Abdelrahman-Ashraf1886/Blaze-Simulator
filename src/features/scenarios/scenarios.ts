@@ -136,7 +136,7 @@ export function scenarioRequest(
   gate: FlightGate, scenario: ScenarioRunInput['scenario'], start: 'free-space' | 'saved-environment', saved?: TuningOverrides,
 ): ScenarioRunInput | null {
   if (!gate.ok) return null
-  const { vehicle, propulsion, aero, airDensityKgM3, cutoff, wind, groundEffect, environment, startPositionM, startClearanceM } = gate.input
+  const { vehicle, propulsion, aero, airDensityKgM3, cutoff, wind, groundEffect, sensors, environment, startPositionM, startClearanceM } = gate.input
   const { terrain, ...surface } = environment
   const geometry: ScenarioRunInput['config']['environment'] = start === 'saved-environment'
     ? { ...surface, ...(terrain && { terrain: { ...terrain, cornerM: [...terrain.cornerM] } }) }
@@ -148,6 +148,7 @@ export function scenarioRequest(
     scenario,
     config: {
       airDensityKgM3, cutoff, thrustModelFactor: thrustFactor(gate.thrustFit, saved),
+      ...(sensors === undefined ? {} : { sensors }),
       ...(wind === undefined ? {} : { wind }),
       ...(groundEffect === undefined ? {} : { groundEffect }),
       ...(geometry ? { environment: geometry, startPositionM, ...(startClearanceM === undefined ? {} : { startClearanceM }) } : {}),

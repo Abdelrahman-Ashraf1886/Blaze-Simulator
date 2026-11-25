@@ -37,13 +37,17 @@ function EnvironmentLoads({ loads }: { loads: NonNullable<FlightFrame['environme
   </Section>
 }
 
-export function DebugPanel({ frame, mass, indicators, source = 'demo' }: { frame: FlightFrame; mass: MassProperties; indicators: Record<string, Indicator>; source?: 'demo' | 'live' }) {
+export function DebugPanel({ frame, mass, indicators, source = 'demo', rateLoop = 'true rates' }: {
+  frame: FlightFrame; mass: MassProperties; indicators: Record<string, Indicator>; source?: 'demo' | 'live'
+  rateLoop?: 'true rates' | 'modelled gyro'
+}) {
   const loop = frame.flightLoop
   const saturation = loop?.saturation ?? frame.control?.saturation
   return (
     <div className="space-y-5 text-[12.5px] [&_dd]:break-words [&_dd]:!overflow-visible [&_dd]:!whitespace-normal" data-testid="flight-debug">
       <Section title="Physics debug">
         {source === 'demo' && <p className="mb-2 text-warn">Demo telemetry — scripted, not a flight prediction.</p>}
+        <p data-testid="flight-rate-loop">Rate loop: {rateLoop}</p>
         <Readouts>
           <Readout label="Time" value={value(frame.timeS, 's')} unit="s" />
           <Readout label="End reason" value={endReason(frame.ended) ?? 'None'} mono={false} />

@@ -59,8 +59,11 @@ export function readStepTest(draft: StepTestDraft): { test: Test | null; errors:
 // Same vehicle, ISA air density and project cut-off as scenarios.ts:83–97.
 export function stepTestInput(gate: FlightGate, test: Test | null, saved: TuningOverrides | null): StepTestInput | null {
   if (!gate.ok || !test || saved === null) return null
-  const { vehicle, propulsion, aero, airDensityKgM3, cutoff } = gate.input
-  return { vehicle, propulsion, aero, test, config: { airDensityKgM3, cutoff, gains: { ...saved, THR_MDL_FAC: thrustFactor(gate.thrustFit, saved) } } }
+  const { vehicle, propulsion, aero, airDensityKgM3, cutoff, sensors } = gate.input
+  return { vehicle, propulsion, aero, test, config: {
+    airDensityKgM3, cutoff, gains: { ...saved, THR_MDL_FAC: thrustFactor(gate.thrustFit, saved) },
+    ...(sensors === undefined ? {} : { sensors }),
+  } }
 }
 
 export function measuredSamples(trace: StepTestOutput['trace']): StepSample[] {
@@ -70,4 +73,12 @@ export function measuredSamples(trace: StepTestOutput['trace']): StepSample[] {
     if (y !== null) samples.push({ t: timeS, y })
   }
   return samples
+}
+
+/** The engine aligns filtered rate feedback with the true-state trace (protocol.ts:803–821). */
+export function gyroRateSamples(result: StepTestOutput, step: Test['step']): StepSample[] {
+  if (step.type !== 'rate' || !result.rateLoopFeedback) return []
+  const axis = { roll: 0, pitch: 1, yaw: 2 } as const
+  return result.rateLoopFeedback.flatMap(({ fromGyro, rateUsedRadps }, i) =>
+    fromGyro ? [{ t: result.trace.samples[i]!.timeS, y: rateUsedRadps[axis[step.axis]] }] : [])
 }

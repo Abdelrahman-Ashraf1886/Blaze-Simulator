@@ -9,6 +9,8 @@ import { ISA_MAX_ALTITUDE_M, ISA_MIN_ALTITUDE_M } from '@/domain/atmosphere'
 import { cn } from '@/lib/utils'
 import { useWorkshopView } from '../workshop/view-store'
 import type { CutoffType, EnginePayload, FlightBlocker, FlightConditions, FlightLink } from './readiness'
+import { SensorSection } from './sensors/SensorSection'
+import type { SensorSources } from './sensors/settings'
 
 /** Empty text clears the value (not set); otherwise a number in [min, max]. */
 const optional = (min: number, max: number, unit: string, step: number) => (text: string) => {
@@ -21,6 +23,8 @@ const show = (v: number | null) => (v === null ? '' : String(v))
 export function focusWhenPresent(id: string, tries = 60) {
   const el = document.getElementById(id)
   if (el) {
+    const details = el.closest('details')
+    if (details) details.open = true
     el.scrollIntoView({ block: 'center' })
     el.focus()
   } else if (tries > 0) requestAnimationFrame(() => focusWhenPresent(id, tries - 1))
@@ -43,7 +47,7 @@ export function useFollow(projectId: string) {
  * The flight conditions the user enters (no defaults) and, until the build can fly, the checklist of everything
  * still missing, each item linked to its field.
  */
-export function FlightSetup({ projectId, conditions: c, onChange, blockers, environment, terrainId, engineBlock, locked }: {
+export function FlightSetup({ projectId, conditions: c, onChange, blockers, environment, terrainId, engineBlock, locked, sensorSources, sensorMountOf }: {
   projectId: string
   conditions: FlightConditions
   /** Saves the change with the project (an undo step, like the environment's values). */
@@ -53,6 +57,8 @@ export function FlightSetup({ projectId, conditions: c, onChange, blockers, envi
   terrainId?: string | null
   engineBlock: string | null
   locked: boolean
+  sensorSources: SensorSources
+  sensorMountOf: (partId: string) => [number, number, number] | undefined
 }) {
   const follow = useFollow(projectId)
   return (
@@ -85,6 +91,8 @@ export function FlightSetup({ projectId, conditions: c, onChange, blockers, envi
         />
         <WindSection wind={c.wind} onChange={(wind) => onChange('Set wind', { wind })} />
         <GroundEffectSection value={c.groundEffect} onChange={(groundEffect) => onChange('Set ground effect', { groundEffect })} />
+        <SensorSection settings={c.sensors} sources={sensorSources} mountOf={sensorMountOf}
+          onChange={(sensors) => onChange('Set sensors', { sensors })} />
       </div>
       <FlightEnvironmentSummary environment={environment} terrainId={terrainId} />
       {locked && <p className="mt-1 text-[11.5px] text-fg-subtle">Conditions apply to the next start.</p>}

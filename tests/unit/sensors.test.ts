@@ -140,5 +140,8 @@ describe('gyro rate feedback settings', () => {
     expect(noGyro.missing.map(({ path }) => path)).toEqual(['flyOnGyro'])
     const missingNotch = build({ gyroFilters: { ...gyroFilters, notch0: { frequencyHz: 40 } } })
     expect(missingNotch.missing.map(({ path }) => path)).toEqual(['flyOnGyro.notch0.bandwidthHz'])
+    const disabled = build({ gyroFilters: { ...gyroFilters, notch0: { frequencyHz: 0 } } })
+    expect(disabled.missing).toEqual([])
+    expect(disabled.payload?.flyOnGyro?.notch0).toBeNull()
   })
 })

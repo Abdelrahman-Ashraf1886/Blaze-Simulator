@@ -164,6 +164,10 @@ export function controllerParams(ref: RefFile): ControllerParam[] {
 /** The table from the bundled reference data. */
 export const CONTROLLER_PARAMS: readonly ControllerParam[] = controllerParams(physics as unknown as RefFile)
 
+/** PX4 v1.13.3 sensor references, separate from the controller tuning table. */
+export const SENSOR_FILTERS_PX4: readonly RefEntry[] =
+  (physics as unknown as RefFile).sets.find(({ id }) => id === 'sensorFiltersPx4')!.values
+
 const BY_NAME: ReadonlyMap<string, ControllerParam> = new Map(CONTROLLER_PARAMS.map((p) => [p.name, p]))
 
 export const controllerParam = (name: string): ControllerParam | undefined => BY_NAME.get(name)

@@ -202,6 +202,8 @@ export function buildSensorPayload(
     const message = 'Enter a nonnegative finite frequency in Hz.'
     const frequency = (key: string, value: number | undefined) => read(key, 'Hz', value, validGyroFilterHz, message)
     const notch = (key: 'notch0' | 'notch1') => group(`flyOnGyro.${key}`, filters?.[key], (v) => {
+      // PX4 imu_gyro_parameters.c:51,85: a zero centre frequency disables the notch.
+      if (v.frequencyHz === 0 && v.bandwidthHz === undefined) return null
       const fields = {
         frequencyHz: frequency(`flyOnGyro.${key}.frequencyHz`, v.frequencyHz),
         bandwidthHz: frequency(`flyOnGyro.${key}.bandwidthHz`, v.bandwidthHz),

@@ -9,6 +9,7 @@
 
 import type { Component, ComponentCategory, ComponentInput, SpecValue } from './component-fields'
 import type { ControllerParam, ParamError, TuningOverrides } from '../../src/domain/controller-params'
+import type { SensorSettings } from '../../src/domain/sensors'
 export type * from './component-fields'
 import type { FlightSessionEndResult, FlightSessionStartParams, FlightSessionStartResult, FlightSessionStepParams, FlightSessionStepResult, ScenarioConfigParams, ScenarioRequest, ScenarioRunResult, StepTestRunParams, StepTestRunResult } from '../main/engine/protocol'
 
@@ -418,6 +419,11 @@ export interface FlightConditionsDoc {
   cutoffValue: number | null
   wind?: WindDoc | null
   groundEffect?: boolean | null
+  sensors?: FlightSensorsDoc | null
+}
+
+export type FlightSensorsDoc = Omit<SensorSettings, 'flyOnGyro'> & {
+  mode: 'off' | 'recorded' | 'flyOnGyro'
 }
 
 export type WindRoughnessDoc =

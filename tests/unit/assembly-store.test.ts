@@ -7,6 +7,7 @@ import type {
   SaveAssemblyResult,
 } from '../../electron/ipc/contract'
 import { createAssemblyStore } from '../../src/features/workshop/assembly-store'
+import { EMPTY_CONDITIONS } from '../../src/features/flight/readiness'
 import { parseFrameValue, toMm } from '../../src/features/workshop/frame-values'
 
 const FRAME = { motorDiagonal: 0.45, armWidth: 0.02, armThickness: 0.004, plateSize: 0.12 }
@@ -40,6 +41,19 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('assembly store', () => {
+  it('undoes and redoes a sensor conditions edit, using the same document history', async () => {
+    const { api, saves } = fakeBackend()
+    const store = createAssemblyStore(() => api)
+    await store.getState().load('p')
+    store.getState().edit('Set sensors', (doc) => ({ ...doc, flight: { ...EMPTY_CONDITIONS, sensors: { mode: 'recorded', gyro: {} } } }))
+    expect(store.getState().past.at(-1)?.label).toBe('Set sensors')
+    store.getState().undo()
+    expect(store.getState().doc).not.toHaveProperty('flight')
+    store.getState().redo()
+    await store.getState().flush()
+    expect(saves.at(-1)?.flight?.sensors).toEqual({ mode: 'recorded', gyro: {} })
+  })
+
   it('records undo history with labels and supports redo', async () => {
     const { api } = fakeBackend()
     const store = createAssemblyStore(() => api)

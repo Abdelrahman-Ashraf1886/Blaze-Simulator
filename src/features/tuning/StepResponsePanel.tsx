@@ -7,6 +7,8 @@ import { readNumber, tuningInputClass } from './tuning-values'
 
 export interface StepResponsePanelProps {
   samples: readonly StepSample[]
+  gyroSamples?: readonly StepSample[]
+  sensorsOn?: boolean
   step: ResponseStep
   gainsUsed: Readonly<Record<string, number>>
   unit?: string
@@ -30,7 +32,26 @@ const unavailableMessages = {
   'numeric-overflow': 'The response exceeds the numeric range for these metrics.',
 } satisfies Record<Exclude<StepMetricsResult['status'], 'ok'>, string>
 
-export function StepResponsePanel({ samples, step, gainsUsed, unit }: StepResponsePanelProps) {
+/** Fit the true response and the gyro overlay on the same rate axis. */
+function gyroOverlay(plot: NonNullable<ReturnType<typeof responsePlot>>, samples?: readonly StepSample[]) {
+  if (!samples?.length) return null
+  let { low, high } = plot
+  for (const { y } of samples) {
+    low = Math.min(low, y)
+    high = Math.max(high, y)
+  }
+  const span = high - low
+  if (!Number.isFinite(span)) return null
+  const y = (value: number) => span === 0 ? 50 : (high - value) / span * 100
+  const x = (t: number) => plot.end === plot.start ? 50 : (t - plot.start) / (plot.end - plot.start) * 100
+  const oldSpan = plot.high - plot.low
+  const transform = span === 0 ? undefined : oldSpan === 0
+    ? `translate(0 ${y(plot.high) - 50})`
+    : `translate(0 ${y(plot.high)}) scale(1 ${oldSpan / span})`
+  return { low, high, transform, points: samples.map((sample) => `${x(sample.t)},${y(sample.y)}`).join(' ') }
+}
+
+export function StepResponsePanel({ samples, gyroSamples, sensorsOn, step, gainsUsed, unit }: StepResponsePanelProps) {
   const thresholdErrorId = useId()
   const [edits, setEdits] = useState<Partial<Record<keyof StepMetricsOptions, string>>>({})
   const options: Record<keyof StepMetricsOptions, number> = { ...RECOMMENDED_STEP_METRICS_OPTIONS }
@@ -39,36 +60,43 @@ export function StepResponsePanel({ samples, step, gainsUsed, unit }: StepRespon
     if (edit !== undefined) options[key] = readNumber(edit)
   }
   const plot = responsePlot(samples, step)
+  const gyro = plot && gyroOverlay(plot, gyroSamples)
+  const bounds = gyro ?? plot
   const metrics = stepMetrics(samples, step, options)
   const invalidThresholds = thresholdKeys.some((key) => !Number.isFinite(options[key])) || metrics.status === 'invalid-options'
 
   return (
     <div className="space-y-3">
       <Section title="Step response">
-        <ExactSignalsNotice />
-        {samples.length === 0 ? <EmptyState>No step-response samples.</EmptyState> : plot && (
+        {!sensorsOn && <ExactSignalsNotice />}
+        {samples.length === 0 ? <EmptyState>No step-response samples.</EmptyState> : plot && bounds && (
           <figure className="border-t border-line py-2">
-            <figcaption className="mb-2 flex gap-4 text-[12.5px]">
+            <figcaption className="mb-2 flex flex-wrap gap-4 text-[12.5px]">
               <span className="text-setpoint">Setpoint</span><span>State{unit && ` (${unit})`}</span>
+              {gyro && <span className="text-accent">Filtered gyro used by rate loop</span>}
             </figcaption>
             <div className="flex items-stretch gap-2">
               <div aria-hidden className="num flex flex-col justify-between text-right text-fg-subtle">
-                <span>{plot.high}</span>{plot.low !== plot.high && <span>{plot.low}</span>}
+                <span>{bounds.high}</span>{bounds.low !== bounds.high && <span>{bounds.low}</span>}
               </div>
               <svg viewBox="0 0 100 100" preserveAspectRatio="none" overflow="visible"
                 className="h-40 min-w-0 flex-1 border-b border-l border-line-strong" role="img"
-                aria-label={`Setpoint and state from time ${plot.start} to ${plot.end}, signal extent ${plot.low} to ${plot.high}`}>
-                {samples.length === 1 ? (
-                  <>
-                    <circle cx={plot.firstPoint.x} cy={plot.firstPoint.targetY} r="1" fill="var(--color-setpoint)" />
-                    <circle cx={plot.firstPoint.x} cy={plot.firstPoint.y} r="1" fill="currentColor" />
-                  </>
-                ) : (
-                  <>
-                    <polyline points={plot.setpoint} fill="none" stroke="var(--color-setpoint)" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
-                    <polyline points={plot.state} fill="none" stroke="currentColor" vectorEffect="non-scaling-stroke" />
-                  </>
-                )}
+                aria-label={`${gyro ? 'Setpoint, state, and filtered gyro' : 'Setpoint and state'} from time ${plot.start} to ${plot.end}, signal extent ${bounds.low} to ${bounds.high}`}>
+                <g transform={gyro?.transform}>
+                  {samples.length === 1 ? (
+                    <>
+                      <circle cx={plot.firstPoint.x} cy={plot.firstPoint.targetY} r="1" fill="var(--color-setpoint)" />
+                      <circle cx={plot.firstPoint.x} cy={plot.firstPoint.y} r="1" fill="currentColor" />
+                    </>
+                  ) : (
+                    <>
+                      <polyline points={plot.setpoint} fill="none" stroke="var(--color-setpoint)" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
+                      <polyline points={plot.state} fill="none" stroke="currentColor" vectorEffect="non-scaling-stroke" />
+                    </>
+                  )}
+                </g>
+                {gyro && <polyline data-testid="step-gyro-trace" points={gyro.points} fill="none" stroke="var(--color-accent)"
+                  strokeWidth={0.6} vectorEffect="non-scaling-stroke" />}
               </svg>
             </div>
             <div className="num flex justify-between gap-2 text-fg-subtle">

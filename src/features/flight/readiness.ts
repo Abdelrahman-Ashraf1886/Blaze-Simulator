@@ -13,6 +13,7 @@ import { lowestPoint } from '../../domain/collisions'
 import { simGroundEffect, type MissingValue, type SimEnvironment, type SimFlightEnvironment } from '../../domain/environment'
 import { vehicleDefinition, type VehicleDefinition } from '../../domain/mass'
 import { propulsionDefinition, type PropulsionDefinition, type ReadyLink } from '../../domain/propulsion'
+import type { FlightSessionStartParams } from '../../../electron/main/engine/protocol'
 import { fitBuildThrustCurve, type BuildThrustCurveFit } from '../../domain/thrust-curve'
 import { simWind } from '../../domain/wind'
 import type { FrameGeometry } from '../../three/frame-geometry'
@@ -22,6 +23,7 @@ import { linkedComponent, type ComponentIndex } from '../workshop/links'
 import { massState } from '../workshop/mass-input'
 import { motorSlots, propulsionState } from '../workshop/propulsion-input'
 import { startEnvironment } from '../workshop/environment/start-environment'
+import { flightSensors, sensorBlockerLabel, sensorFieldId, sensorId, sensorSources } from './sensors/settings'
 import type { GridRead } from '../workshop/environment/terrain-preview'
 
 // ---- The user's flight conditions ----------------------------------------------------------------------
@@ -83,6 +85,7 @@ export interface EnginePayload extends SimFlightEnvironment {
   /** On terrain, the engine resolves Z using startClearanceM. */
   startPositionM: [number, number, number]
   startClearanceM?: number
+  sensors?: FlightSessionStartParams['sensors']
 }
 
 export type PayloadResult = { ok: true; payload: EnginePayload } | { ok: false; blockers: FlightBlocker[] }
@@ -139,6 +142,18 @@ export function enginePayload(
       })
     }
   }
+  const conditions = conditionsOf(doc)
+  const sensors = conditions.sensors && conditions.sensors.mode !== 'off'
+    ? flightSensors(conditions, sensorSources(doc.parts, components))
+    : undefined
+  for (const { path, message } of sensors?.missing ?? []) {
+    // The regular altitude blocker already links to this field when it is empty.
+    if (path === 'conditions.ambientAltitudeM' && conditions.ambientAltitudeM === null) continue
+    blockers.push({
+      id: sensorId(path), label: sensorBlockerLabel(path), detail: message,
+      link: { to: 'flight-field', elementId: sensorFieldId(path) },
+    })
+  }
   if (blockers.length || !wind.ok || !groundEffect.ok) return { ok: false, blockers }
   const battery = doc.parts.find((p) => p.kind === 'battery')
   const vehicle = vehicleDefinition(mp, motors)
@@ -158,6 +173,7 @@ export function enginePayload(
       thrustFit: fitBuildThrustCurve(propulsion.motors, definition.battery, airDensityFor(0, null)),
       aero: { cdBody: cd as [number, number, number], areaM2: area },
       environment: env.environment,
+      ...(sensors?.payload === undefined ? {} : { sensors: sensors.payload }),
       ...(wind.wind === undefined ? {} : { wind: wind.wind }),
       ...(groundEffect.radiiM === undefined ? {} : { groundEffect: groundEffect.radiiM }),
       ...(env.environment.terrain
@@ -167,7 +183,7 @@ export function enginePayload(
   }
 }
 
-export type FlightGate = { ok: true; input: FlightStartInput & Pick<EnginePayload, 'environment'>; thrustFit: BuildThrustCurveFit | null } | { ok: false; blockers: FlightBlocker[] }
+export type FlightGate = { ok: true; input: FlightStartInput & Pick<EnginePayload, 'environment' | 'sensors'>; thrustFit: BuildThrustCurveFit | null } | { ok: false; blockers: FlightBlocker[] }
 
 /** Ready to fly: the build is complete and the conditions are entered. Otherwise everything still open. */
 export function flightGate(result: PayloadResult, c: FlightConditions): FlightGate {
@@ -183,6 +199,7 @@ export function flightGate(result: PayloadResult, c: FlightConditions): FlightGa
       propulsion: payload.propulsion,
       aero: payload.aero,
       environment: payload.environment,
+      ...(payload.sensors === undefined ? {} : { sensors: payload.sensors }),
       ...(payload.wind === undefined ? {} : { wind: payload.wind }),
       ...(payload.groundEffect === undefined ? {} : { groundEffect: payload.groundEffect }),
       airDensityKgM3: airDensityFor(c.ambientAltitudeM, c.temperatureC),

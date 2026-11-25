@@ -39,7 +39,10 @@ it('server-renders both traces, metric outcomes, editable conventions and the em
   })
   try {
     const { StepResponsePanel } = await server.ssrLoadModule('/src/features/tuning/StepResponsePanel.tsx') as {
-      StepResponsePanel: ComponentType<{ samples: readonly StepSample[]; step: ResponseStep; gainsUsed: Record<string, number> }>
+      StepResponsePanel: ComponentType<{
+        samples: readonly StepSample[]; gyroSamples?: readonly StepSample[]; sensorsOn?: boolean
+        step: ResponseStep; gainsUsed: Record<string, number>
+      }>
     }
     const render = (samples: readonly StepSample[]) =>
       renderToStaticMarkup(createElement(StepResponsePanel, { samples, step, gainsUsed: { TestGain: 0.7 } }))
@@ -58,6 +61,14 @@ it('server-renders both traces, metric outcomes, editable conventions and the em
     expect(settled).not.toContain('Did not settle')
     expect(settled).not.toContain('No overshoot')
     expect(settled).toContain('>25<span')
+    const withGyro = renderToStaticMarkup(createElement(StepResponsePanel, {
+      samples: partial, step, gainsUsed: {}, sensorsOn: true, gyroSamples: [{ t: 1, y: -1 }, { t: 2, y: 2 }],
+    }))
+    expect(withGyro).toContain('signal extent -1 to 2')
+    expect(withGyro).toContain('data-testid="step-gyro-trace" points="50,100 100,0"')
+    expect(withGyro).toContain('stroke-width="0.6"')
+    expect(withGyro).toContain('No overshoot')
+    expect(withGyro).not.toContain('The signals are exact')
     const empty = render([])
     expect(empty).toContain('No step-response samples.')
     expect(empty).not.toContain('<svg')

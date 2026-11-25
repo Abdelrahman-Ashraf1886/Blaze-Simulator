@@ -108,10 +108,8 @@ export async function flightStartForView(engine: EngineForFlight, payload: unkno
   const input = recording ? { ...start, recording: { ...recording, live: true } }
     : live ? { ...start, sampleEverySteps: RECORD_EVERY_STEPS } : start
   const result = await flightStart(engine, input, recorder)
-  if (result.ok && !(live || recording?.live)) {
-    delete result.data.channels
-    delete result.data.samples
-  }
+  // Keep the engine's column order for a live panel opened after a sampled run starts.
+  if (result.ok && !(live || recording?.live)) delete result.data.samples
   return result
 }
 

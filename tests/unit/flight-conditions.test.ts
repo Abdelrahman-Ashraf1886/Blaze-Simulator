@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import type { FlightConditionsDoc } from '../../electron/ipc/contract'
+import type { FlightConditionsDoc, FlightSensorsDoc } from '../../electron/ipc/contract'
 import { flightConditionsDocSchema, saveAssemblySchema } from '../../electron/ipc/schemas'
 import { MIGRATIONS, openDatabase, schemaVersion } from '../../electron/main/db/database'
 import { STARTING_FRAME, createRepositories } from '../../electron/main/db/repositories'
@@ -17,6 +17,11 @@ const dir = mkdtempSync(join(tmpdir(), 'blaze-flight-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 const entered: FlightConditionsDoc = { ambientAltitudeM: 1500, temperatureC: 12.5, cutoffType: 'chargeMah', cutoffValue: 4200 }
+const sensors: FlightSensorsDoc = {
+  mode: 'flyOnGyro', seed: -1, flightControllerPartId: 'controller',
+  gyro: { bias: null, delayMs: 4 }, accelerometer: { mountPositionM: [0, 0, 0] },
+  gyroFilters: { notch0: { frequencyHz: 0 }, notch1: null }, gps: { periodMs: 1000 }, barometer: null,
+}
 
 describe('flight conditions document', () => {
   const ok = (v: unknown) => flightConditionsDocSchema.safeParse(v).success
@@ -36,6 +41,19 @@ describe('flight conditions document', () => {
       { ...entered, extra: 1 },
       { ambientAltitudeM: 0, temperatureC: null, cutoffValue: 1 },
     ]) expect(ok(bad), JSON.stringify(bad)).toBe(false)
+  })
+  it('round-trips partial sensor settings and preserves absent and null sensor fields', () => {
+    for (const flight of [entered, { ...entered, sensors: null }, { ...entered, sensors }, { ...entered, sensors: { mode: 'off' } }]) {
+      expect(flightConditionsDocSchema.parse(JSON.parse(JSON.stringify(flight)))).toStrictEqual(flight)
+    }
+    for (const bad of [
+      { ...sensors, mode: 'on' }, { ...sensors, flyOnGyro: true }, { ...sensors, seed: 0.5 },
+      { ...sensors, gyro: { range: 0 } }, { ...sensors, gyro: { delayMs: 0.5 } },
+      { ...sensors, gyro: { delaySteps: 1 } }, { ...sensors, gyro: { bias: [1, 2] } },
+      { ...sensors, gps: { periodMs: null } }, { ...sensors, barometer: { sigmaPa: -1 } },
+      { ...sensors, gyroFilters: { notch0: { frequencyHz: 1, other: 2 } } },
+      { ...sensors, gyroFilters: { notch0: { bandwidthHz: Number.MAX_VALUE } } },
+    ]) expect(ok({ ...entered, sensors: bad }), JSON.stringify(bad)).toBe(false)
   })
 })
 
@@ -64,13 +82,14 @@ describe('flight conditions persistence (schema v12)', () => {
         gust: { kind: 'none' },
       },
       groundEffect: true,
+      sensors,
     }
     const updated = repos.assemblies.save(saveAssemblySchema.parse({ ...input, baseRevision: loaded.revision, flight: extended }))
     expect(repos.assemblies.load(p.id).flight).toEqual(extended)
     repos.assemblies.save(saveAssemblySchema.parse({
-      ...input, baseRevision: updated.revision, flight: { ...entered, wind: null, groundEffect: null },
+      ...input, baseRevision: updated.revision, flight: { ...entered, wind: null, groundEffect: null, sensors: null },
     }))
-    expect(repos.assemblies.load(p.id).flight).toEqual({ ...entered, wind: null, groundEffect: null })
+    expect(repos.assemblies.load(p.id).flight).toEqual({ ...entered, wind: null, groundEffect: null, sensors: null })
     // Clearing it removes the field again.
     repos.assemblies.save({ ...input, baseRevision: repos.assemblies.load(p.id).revision, flight: null })
     expect(repos.assemblies.load(p.id)).not.toHaveProperty('flight')

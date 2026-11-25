@@ -1,7 +1,7 @@
 import '@/three/setup'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { GizmoHelper, GizmoViewport, Html } from '@react-three/drei'
-import { Suspense, useMemo, useRef, useState, type PointerEvent } from 'react'
+import { Suspense, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react'
 import { DoubleSide, Quaternion, Vector3, type Group, type Mesh } from 'three'
 import type { AssemblyDocument, AssemblyPart, Spin } from '../../../electron/ipc/contract'
 import type { FrameGeometry } from '@/three/frame-geometry'
@@ -154,11 +154,14 @@ function WindArrow({ frame, lengthM }: { frame: FlightFrame; lengthM: number }) 
   </group>
 }
 
-export function FlightViewport({ frame, doc, geo, projectId, running = false }: {
-  frame: FlightFrame; doc: AssemblyDocument; geo: FrameGeometry; projectId?: string; running?: boolean
-}) {
+type ViewportProps = { frame: FlightFrame; running?: boolean } & (
+  | { doc: AssemblyDocument; geo: FrameGeometry; projectId?: string; replay?: never }
+  | { doc?: never; geo?: never; projectId?: never; replay: { model: ReactNode; environment: ReactNode; follow: CameraSettings } }
+)
+
+export function FlightViewport({ frame, doc, geo, projectId, running = false, replay }: ViewportProps) {
   const pose = frameToPose(frame)
-  const follow = useMemo(() => followSettings(geo), [geo])
+  const follow = useMemo(() => replay?.follow ?? followSettings(geo!), [geo, replay])
   const starting = startingCameraSettings(follow)
   const cameraOptions = useMemo(() => ({
     position: [-follow.distanceM, -follow.distanceM, follow.distanceM] as [number, number, number],
@@ -174,9 +177,9 @@ export function FlightViewport({ frame, doc, geo, projectId, running = false }: 
   }))
   const [drag, setDrag] = useState<Partial<Record<'Orbit' | 'Fixed', CameraDrag>>>({})
   const pointer = useRef<{ x: number; y: number } | null>(null)
-  const cameras = useMemo(() => doc.parts.filter((part) => part.kind === 'camera'), [doc.parts])
+  const cameras = useMemo(() => doc?.parts.filter((part) => part.kind === 'camera') ?? [], [doc])
   const part = cameras.find((entry) => entry.id === partId)
-  const mount = useMemo(() => part && cameraMount(doc, geo, part), [doc, geo, part])
+  const mount = useMemo(() => part && doc && geo && cameraMount(doc, geo, part), [doc, geo, part])
   const activeMode = mode === 'FPV' && !mount ? 'Follow' : mode
   const settings = isExterior(activeMode) ? prefs[activeMode] : starting
   const pointerMode = activeMode === 'Orbit' || activeMode === 'Fixed' ? activeMode : null
@@ -213,19 +216,22 @@ export function FlightViewport({ frame, doc, geo, projectId, running = false }: 
       }} />}
       <div className="pointer-events-none relative min-h-[240px] flex-1" aria-label="Z-up flight view" data-testid="flight-viewport" data-camera={activeMode}>
         <Canvas camera={cameraOptions} dpr={[1, 2]} fallback={<p className="p-4 text-warn">WebGL is unavailable. Flight diagnostics remain available.</p>}>
-          {flightTiming && <FlightTimingProbe timing={flightTiming} frame={frame} />}
+          {!replay && flightTiming && <FlightTimingProbe timing={flightTiming} frame={frame} />}
           <color attach="background" args={['#101215']} />
           <ambientLight intensity={0.8} />
           <directionalLight position={[3, -2, 5]} intensity={2} />
           <CameraRig frame={frame} mode={activeMode} running={running} follow={follow} exterior={settings}
             drag={pointerMode ? drag[pointerMode] ?? initialDrag : initialDrag} mount={mount} />
-          <EnvironmentMeshes environment={doc.environment} />
+          {replay ? replay.environment : <EnvironmentMeshes environment={doc?.environment} />}
           <group position={pose.position} quaternion={pose.quaternion}>
             {/* Reused workshop models are display-only here; no editor gizmos or picking. */}
             <group raycast={() => null}>
               <Suspense fallback={null}>
-                <FrameModel geo={geo} params={doc.frame} />
-                <FlightParts frame={frame} doc={doc} geo={geo} hiddenCameraId={activeMode === 'FPV' ? part?.id : undefined} />
+                {replay?.model}
+                {doc && geo && <>
+                  <FrameModel geo={geo} params={doc.frame} />
+                  <FlightParts frame={frame} doc={doc} geo={geo} hiddenCameraId={activeMode === 'FPV' ? part?.id : undefined} />
+                </>}
               </Suspense>
             </group>
           </group>
@@ -233,7 +239,7 @@ export function FlightViewport({ frame, doc, geo, projectId, running = false }: 
             <sphereGeometry args={[0.012, 16, 12]} />
             <meshBasicMaterial color="#d9a03f" depthTest={false} />
           </mesh>
-          <WindArrow frame={frame} lengthM={doc.frame.motorDiagonal} />
+          {doc && <WindArrow frame={frame} lengthM={doc.frame.motorDiagonal} />}
           <GizmoHelper alignment="bottom-right" margin={[48, 48]}>
             <GizmoViewport disabled axisColors={['#e0605a', '#6fc27a', '#5aa7e0']} labelColor="#101215" />
           </GizmoHelper>
@@ -246,8 +252,8 @@ export function FlightViewport({ frame, doc, geo, projectId, running = false }: 
           }}
           onPointerMove={(event) => moveCamera(event, pointerMode)}
           onLostPointerCapture={() => { pointer.current = null }} />}
-        <p className="pointer-events-none absolute left-3 top-3 text-[12px] text-warn">Live engine · {activeMode} camera · Amber sphere: CoM</p>
-        <p className="pointer-events-none absolute bottom-3 left-3 max-w-[70%] text-[12px] text-muted">Propeller motion blur: translucent discs at ≥{ROTOR_BLUR_THRESHOLD_RADPS.toFixed(1)} rad/s (900 rpm), or sooner at the display’s blade-sampling limit.</p>
+        <p className="pointer-events-none absolute left-3 top-3 text-[12px] text-warn">{replay ? 'Recorded flight' : 'Live engine'} · {activeMode} camera · Amber sphere: CoM</p>
+        {!replay && <p className="pointer-events-none absolute bottom-3 left-3 max-w-[70%] text-[12px] text-muted">Propeller motion blur: translucent discs at ≥{ROTOR_BLUR_THRESHOLD_RADPS.toFixed(1)} rad/s (900 rpm), or sooner at the display’s blade-sampling limit.</p>}
       </div>
     </div>
   )

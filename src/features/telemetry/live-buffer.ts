@@ -50,6 +50,11 @@ export function createLiveBuffer(durationS: number, capacity: number) {
     end() {
       recording = false
     },
+    reset() {
+      recording = false
+      head = 0
+      length = 0
+    },
     read(names: readonly string[], fromS: number): RecordingSeries[] {
       const selected = names.filter((name) => name === 'time' ? clockIndex >= 0 : columns.has(name))
       return selected.map((channel) => {

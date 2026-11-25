@@ -198,13 +198,13 @@ describe('recording IPC', () => {
       ...invalid, error: { ...invalid.error, message: 'Inverted recording time range' },
     })
     await expect(handlers[Channels.recordingReadSamples](query)).resolves.toEqual({
-      ok: true, data: [{ channel: 'v', points: [{ timeS: 0.004, value: 5 }] }],
+      ok: true, data: { series: [{ channel: 'v', points: [{ timeS: 0.004, value: 5 }] }], integrityError: null },
     })
     const file = await readFile(filePath(header.runId))
     file[file.length - 1] = file[file.length - 1]! ^ 1
     await writeFile(filePath(header.runId), file)
     await expect(handlers[Channels.recordingSummary]({ id: header.runId })).resolves.toMatchObject({
-      ...invalid, error: { ...invalid.error, message: expect.stringMatching(/CRC-32 mismatch/) },
+      ok: true, data: { incomplete: true, integrityError: expect.stringMatching(/CRC-32 mismatch/) },
     })
   })
 })

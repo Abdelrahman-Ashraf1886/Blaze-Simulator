@@ -3,7 +3,7 @@ import { existsSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
-import { createHandlers, createRecordingHandlers, createTerrainHandlers, importTerrain } from '../ipc/handlers'
+import { createHandlers, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, importTerrain } from '../ipc/handlers'
 import { RecordingStore } from './telemetry/store'
 import { SessionRecorder } from './telemetry/session-recorder'
 import { backfillHullsAsync, importAssetFileAsync, removeAssetFiles, resolveAssetUrl } from './assets/store'
@@ -15,7 +15,7 @@ import { z } from 'zod'
 import { openDatabase, schemaVersion, type Db } from './db/database'
 import { createRepositories } from './db/repositories'
 import { dropTest } from './engine/drop-test'
-import { flightEnd, flightStart, flightStep } from './engine/flight-session'
+import { flightEnd } from './engine/flight-session'
 import { scenarioRun } from './engine/scenario-run'
 import { stepTest } from './engine/step-test'
 import { EngineSupervisor } from './engine/supervisor'
@@ -334,6 +334,9 @@ async function start(): Promise<void> {
   for (const [channel, handler] of Object.entries({ ...handlers, ...createTerrainHandlers(repos, assetsDir), ...createRecordingHandlers(recordings) })) {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload))
   }
+  for (const [channel, handler] of Object.entries(createRecordingVerifyHandlers(recordings, binaryPath))) {
+    ipcMain.handle(channel, (event, payload: unknown) => handler(event.sender, payload))
+  }
   // Same validation and storage as the async save; used only while a window unloads.
   ipcMain.on(Channels.assemblySaveSync, (event, payload: unknown) => {
     event.returnValue = handlers[Channels.assemblySave]!(payload)
@@ -347,8 +350,8 @@ async function start(): Promise<void> {
     return result
   }
   ipcMain.handle(Channels.engineDropTest, (_event, payload: unknown) => withLoadedVehicle(() => dropTest(engine!, payload)))
-  ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => withLoadedVehicle(() => flightStart(engine!, payload, recorder)))
-  ipcMain.handle(Channels.engineFlightStep, (_event, payload: unknown) => flightStep(engine!, payload, recorder))
+  ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => withLoadedVehicle(() => flightStartForView(engine!, payload, recorder)))
+  ipcMain.handle(Channels.engineFlightStep, (_event, payload: unknown) => flightStepForView(engine!, payload, recorder))
   ipcMain.handle(Channels.engineFlightEnd, () => flightEnd(engine!, recorder))
   ipcMain.handle(Channels.engineScenarioRun, (_event, payload: unknown) => withLoadedVehicle(() => scenarioRun(engine!, payload, recorder)))
   ipcMain.handle(Channels.engineStepTest, (_event, payload: unknown) => withLoadedVehicle(() => stepTest(engine!, payload, recorder)))

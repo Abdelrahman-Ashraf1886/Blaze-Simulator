@@ -119,6 +119,28 @@ export interface RecordingSeries {
   points: RecordingPoint[]
 }
 
+export interface RecordingSampleWindow {
+  series: RecordingSeries[]
+  integrityError: string | null
+}
+
+export interface RecordingRequestLog {
+  lines: string[]
+  integrityError: string | null
+}
+
+export type RecordingVerifyResult =
+  | { status: 'same'; step: number }
+  | { status: 'different'; step: number; reason: string }
+  | { status: 'cannot-verify'; reason: string }
+  | { status: 'cancelled' }
+
+export interface RecordingVerifyProgress {
+  requestId: string
+  step: number
+  totalSteps: number
+}
+
 export type EngineState = 'stopped' | 'starting' | 'connected' | 'restarting' | 'failed'
 
 export interface EngineStatus {
@@ -512,6 +534,8 @@ export interface RecordingProgress {
 
 export interface FlightStartInput {
   recording?: RecordingOptions
+  /** Sample for the live panel even when no recording file is requested. */
+  live?: true
   /** The pinned VehicleDefinition (src/domain/mass.ts). */
   vehicle: unknown
   /** The motors' coefficients and the battery (src/domain/propulsion.ts `propulsionDefinition`). */
@@ -535,7 +559,7 @@ export interface FlightStartInput {
   controller?: FlightSessionStartParams['controller']
 }
 export type FlightStartResult = FlightSessionStartResult & RecordingProgress
-export type FlightStepInput = FlightSessionStepParams
+export type FlightStepInput = FlightSessionStepParams & { live?: true }
 export type FlightStepResult = FlightSessionStepResult & RecordingProgress
 export type FlightEndResult = FlightSessionEndResult & RecordingProgress
 
@@ -641,6 +665,9 @@ export const Channels = {
   recordingSummary: 'recording:summary',
   recordingReadSamples: 'recording:readSamples',
   recordingReadRequests: 'recording:readRequests',
+  recordingVerify: 'recording:verify',
+  recordingVerifyCancel: 'recording:verifyCancel',
+  recordingVerifyProgress: 'recording:verifyProgress',
   recordingTotalSize: 'recording:totalSize',
   systemStatus: 'system:status',
   assemblyLoad: 'assembly:load',
@@ -692,8 +719,11 @@ interface RunRecordingApi {
 
 interface RecordingApi {
   summary(id: string): Promise<IpcResult<RecordingSummary>>
-  readSamples(query: RecordingSampleQuery): Promise<IpcResult<RecordingSeries[]>>
-  readRequests(id: string): Promise<IpcResult<string[]>>
+  readSamples(query: RecordingSampleQuery): Promise<IpcResult<RecordingSampleWindow>>
+  readRequests(id: string): Promise<IpcResult<RecordingRequestLog>>
+  verify(id: string, requestId: string): Promise<IpcResult<RecordingVerifyResult>>
+  cancelVerify(requestId: string): Promise<IpcResult<null>>
+  onVerifyProgress(listener: (progress: RecordingVerifyProgress) => void): () => void
   totalSize(): Promise<IpcResult<number>>
 }
 

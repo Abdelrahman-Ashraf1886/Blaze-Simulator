@@ -12,12 +12,13 @@ export interface LiveGraphSource {
   read(names: readonly string[], fromS: number): RecordingSeries[]
 }
 
-export function createGraphCursor() {
+export function createGraphCursor(retainOnLeave = false) {
   let time: number | null = null
   const listeners = new Set<(source?: uPlot) => void>()
   return {
     get: () => time,
     set(next: number | null, source?: uPlot) {
+      if (retainOnLeave && next === null && source) return
       if (time === next) return
       time = next
       listeners.forEach((listener) => listener(source))
@@ -29,22 +30,30 @@ export function createGraphCursor() {
   }
 }
 
-function seriesStyles(channels: readonly PlotChannel[]) {
+export const comparisonChannelName = (name: string) => `comparison:${name}`
+
+function seriesStyles(channels: readonly PlotChannel[], comparison: readonly PlotChannel[]) {
   const palette = ['fg', 'accent', 'fg-muted']
   let setpoints = 0
   let measurements = 0
-  return channels.map(({ name }) => {
+  const primary = channels.map(({ name }) => {
     const target = name.startsWith('setpoint.')
     const i = target ? setpoints++ : measurements++
     // Setpoints use magenta (DESIGN.md:18). Dash patterns distinguish series sharing a colour.
     const dash = target ? i + 1 : Math.floor(i / palette.length)
     return { token: `--color-${target ? 'setpoint' : palette[i % palette.length]!}`, dash }
   })
+  return [...primary, ...comparison.map(({ name }) => {
+    const style = primary[channels.findIndex((channel) => channel.name === name)]!
+    return { ...style, dash: style.dash + 2 }
+  })]
 }
 
 function plotOptions(
   node: HTMLElement,
   channels: readonly PlotChannel[],
+  comparison: readonly PlotChannel[],
+  drawn: readonly PlotChannel[],
   width: number,
   height: number,
   hooks: uPlot.Options['hooks'],
@@ -56,7 +65,7 @@ function plotOptions(
   const grid = { stroke: color('line') }
   const axes = [...groupAxes(channels)]
   const scale = (unit: string) => `unit-${axes.findIndex(([key]) => key === unit)}`
-  const styles = seriesStyles(channels)
+  const styles = seriesStyles(channels, comparison)
   return {
     width, height, hooks,
     scales: { x: { time: false } },
@@ -78,7 +87,7 @@ function plotOptions(
       drag: { x: true, y: false },
       bind: { dblclick: () => null },
     },
-    series: [{}, ...channels.map((channel, index): uPlot.Series => {
+    series: [{}, ...drawn.map((channel, index): uPlot.Series => {
       const { token, dash } = styles[index]!
       return {
         label: channel.label,
@@ -95,6 +104,7 @@ function plotOptions(
 interface GraphProps {
   title: string
   channels: readonly PlotChannel[]
+  comparison?: readonly PlotChannel[]
   cursor: ReturnType<typeof createGraphCursor>
   series?: readonly RecordingSeries[]
   live?: LiveGraphSource
@@ -110,6 +120,7 @@ interface GraphRuntime {
 }
 
 const emptySeries: RecordingSeries[] = []
+const emptyChannels: PlotChannel[] = []
 
 export function TelemetryGraph(props: GraphProps) {
   if (groupAxes(props.channels).size > MAX_AXES) {
@@ -118,7 +129,7 @@ export function TelemetryGraph(props: GraphProps) {
   return <GraphPlot {...props} />
 }
 
-function GraphPlot({ title, channels, cursor, series = emptySeries, live, range, zoomed, onWidth, onZoom }: GraphProps) {
+function GraphPlot({ title, channels, comparison = emptyChannels, cursor, series = emptySeries, live, range, zoomed, onWidth, onZoom }: GraphProps) {
   const heading = useId()
   const instructions = useId()
   const host = useRef<HTMLDivElement>(null)
@@ -130,6 +141,9 @@ function GraphPlot({ title, channels, cursor, series = emptySeries, live, range,
 
   useEffect(() => {
     const node = host.current!
+    const drawn = [...channels, ...comparison.map((channel) => ({
+      ...channel, name: comparisonChannelName(channel.name), label: `${channel.label} · comparison`,
+    }))]
     let chart: uPlot | undefined
     let ordered = emptySeries
     let data = alignSamples([])
@@ -143,7 +157,7 @@ function GraphPlot({ title, channels, cursor, series = emptySeries, live, range,
       if (source !== chart) chart.setCursor({ left: visible ? chart.valToPos(time, 'x') : -1, top: -1 }, false)
       setReadout(time === null ? null : {
         time,
-        values: channels.map((channel, index) =>
+        values: drawn.map((channel, index) =>
           valueLabel(channel, visible ? pointAt(ordered[index]?.points ?? [], time, channel.kind !== 'number') : null)),
       })
     }
@@ -162,7 +176,7 @@ function GraphPlot({ title, channels, cursor, series = emptySeries, live, range,
     runtime.current = {
       draw(next, visible) {
         const byName = new Map(next.map((item) => [item.channel, item]))
-        ordered = channels.map(({ name }) => byName.get(name) ?? { channel: name, points: [] })
+        ordered = drawn.map(({ name }) => byName.get(name) ?? { channel: name, points: [] })
         data = alignSamples(ordered)
         drawnRange = visible
         applyData()
@@ -180,15 +194,15 @@ function GraphPlot({ title, channels, cursor, series = emptySeries, live, range,
           refresh()
         }
       } else {
-        chart = new uPlot(plotOptions(node, channels, width, height, {
+        chart = new uPlot(plotOptions(node, channels, comparison, drawn, width, height, {
           setCursor: [(plot) => {
             const left = plot.cursor.left
-            const next = left === undefined || left < 0 ? null : Math.max(0, plot.posToVal(left, 'x'))
+            const next = left === undefined || left < 0 ? null : plot.posToVal(left, 'x')
             cursor.set(next !== null && Number.isFinite(next) ? next : null, plot)
           }],
           setSelect: [(plot) => {
             const { left, width: selected } = plot.select
-            const fromS = Math.max(0, plot.posToVal(left, 'x'))
+            const fromS = plot.posToVal(left, 'x')
             const toS = plot.posToVal(left + selected, 'x')
             if (selected > 0 && Number.isFinite(fromS) && Number.isFinite(toS) && fromS < toS) reportZoom({ fromS, toS })
           }],
@@ -205,7 +219,7 @@ function GraphPlot({ title, channels, cursor, series = emptySeries, live, range,
       chart?.destroy()
       runtime.current = null
     }
-  }, [channels, cursor])
+  }, [channels, comparison, cursor])
 
   useEffect(() => {
     if (!live) {
@@ -227,7 +241,7 @@ function GraphPlot({ title, channels, cursor, series = emptySeries, live, range,
       unsubscribe()
       if (frame !== undefined) cancelAnimationFrame(frame)
     }
-  }, [channels, cursor, live, range, series])
+  }, [channels, comparison, cursor, live, range, series])
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const times = runtime.current?.times() ?? []
@@ -268,16 +282,16 @@ function GraphPlot({ title, channels, cursor, series = emptySeries, live, range,
         <div className="flex flex-wrap justify-between gap-x-2">
           <dt>Cursor time</dt><dd className="num text-fg">{readout ? `${readout.time} s` : '—'}</dd>
         </div>
-        {seriesStyles(channels).map(({ token, dash }, i) => {
-          const channel = channels[i]!
+        {seriesStyles(channels, comparison).map(({ token, dash }, i) => {
+          const channel = i < channels.length ? channels[i]! : comparison[i - channels.length]!
           const color = `var(${token})`
           const background = dash
             ? `repeating-linear-gradient(to right, ${color} 0 ${dash}px, transparent ${dash}px ${dash * 2}px)` : color
           return (
-            <div key={channel.name} className="flex flex-wrap justify-between gap-x-2">
+            <div key={i < channels.length ? channel.name : comparisonChannelName(channel.name)} className="flex flex-wrap justify-between gap-x-2">
               <dt className="flex items-baseline gap-2">
                 <span aria-hidden="true" className="h-px w-6 shrink-0 self-center" style={{ background }} />
-                <span>{channel.label} ({channel.unit})</span>
+                <span>{channel.label}{i >= channels.length && ' · comparison'} ({channel.unit})</span>
               </dt>
               <dd className="num text-fg">{readout?.values[i] ?? '—'}</dd>
             </div>

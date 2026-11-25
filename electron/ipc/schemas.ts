@@ -37,6 +37,9 @@ export const recordingOptionsSchema = z.strictObject({
 }).optional()
 
 export const recordingIdSchema = z.object({ id: z.uuid() })
+export const recordingVerifyCancelSchema = z.strictObject({ requestId: z.uuid() })
+export const recordingVerifySchema = recordingVerifyCancelSchema.extend({ id: z.uuid() })
+export const flightLiveViewSchema = z.looseObject({ live: z.literal(true).optional() })
 export const recordingSampleSchema = recordingIdSchema.extend({
   channels: z.array(z.string().min(1)).nonempty(),
   fromS: z.number().nonnegative().optional(),

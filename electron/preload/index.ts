@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DesktopApiWithRecordings, EngineStatus } from '../ipc/contract'
+import type { DesktopApiWithRecordings, EngineStatus, RecordingVerifyProgress } from '../ipc/contract'
 
 // Channel names are duplicated as literals on purpose: importing the contract
 // module at runtime would bundle zod into the sandboxed preload.
@@ -20,6 +20,13 @@ const api: DesktopApiWithRecordings = {
     summary: (id) => ipcRenderer.invoke('recording:summary', { id }),
     readSamples: (query) => ipcRenderer.invoke('recording:readSamples', query),
     readRequests: (id) => ipcRenderer.invoke('recording:readRequests', { id }),
+    verify: (id, requestId) => ipcRenderer.invoke('recording:verify', { id, requestId }),
+    cancelVerify: (requestId) => ipcRenderer.invoke('recording:verifyCancel', { requestId }),
+    onVerifyProgress: (listener) => {
+      const receive = (_event: unknown, progress: RecordingVerifyProgress) => listener(progress)
+      ipcRenderer.on('recording:verifyProgress', receive)
+      return () => ipcRenderer.removeListener('recording:verifyProgress', receive)
+    },
     totalSize: () => ipcRenderer.invoke('recording:totalSize'),
   },
   tuning: {

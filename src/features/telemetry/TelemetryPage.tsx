@@ -42,7 +42,7 @@ async function loadRuns(api: DesktopApi, list: NonNullable<DesktopApi['runs']['l
   return { runs, errors }
 }
 
-function RunDetail({ run: listed, api, onClose }: { run: RecordingRun; api: DesktopApi; onClose: () => void }) {
+function RunDetail({ run: listed, runs, api, onClose }: { run: RecordingRun; runs: readonly RecordingRun[]; api: DesktopApi; onClose: () => void }) {
   const [detail, setDetail] = useState<{ run: RecordingRun; summary?: RecordingSummary; error?: string }>()
   const heading = useRef<HTMLHeadingElement>(null)
   useEffect(() => { heading.current?.focus() }, [])
@@ -114,7 +114,7 @@ function RunDetail({ run: listed, api, onClose }: { run: RecordingRun; api: Desk
       {summary?.integrityError && <p role="alert" className="text-warn">{summary.integrityError}</p>}
       {summary?.end?.engineError && <p role="alert" className="text-fault">{summary.end.engineError}</p>}
       {detail?.error && <p role="alert" className="text-fault">{detail.error}</p>}
-      {summary && header && api.recording && <RunGraphs id={run.id} api={api.recording} summary={summary} />}
+      {summary && header && api.recording && <RunGraphs id={run.id} api={api.recording} summary={summary} runs={runs} />}
     </section>
   )
 }
@@ -180,7 +180,7 @@ export default function TelemetryPage() {
         {!list && <p role="status">Loading runs…</p>}
         {list?.errors.map((error, i) => <p key={i} role="alert" className="text-fault">{error}</p>)}
         {list?.runs.length === 0 && list.errors.length === 0 && <p className="text-fg-muted">No runs yet.</p>}
-        {opened ? <RunDetail key={opened.id} run={opened} api={window.api} onClose={() => {
+        {opened ? <RunDetail key={opened.id} run={opened} runs={list?.runs ?? []} api={window.api} onClose={() => {
           returnFocus.current = opened.id
           setOpenedId(undefined)
         }} /> : !!list?.runs.length && (

@@ -730,6 +730,72 @@ describe('6.5 on the real NDJSON engine', () => {
     expect(await request(getLog)).toMatchObject({ ok: false, error: { code: 'NO_SESSION' } })
   }))
 
+  it('combines Dryden with mean and discrete gust, then replays the seeded session across chunk sizes', async () => withProtocol(async ({ result, request }) => {
+    await result(load)
+    const turbulence = { kind: 'dryden', seed: 0 } as const
+    const setup = { ...baseStart, wind, groundEffect }
+    const initial = start({ ...setup, wind: { ...wind, turbulence } })
+    const oneStep = step(1, rates)
+    const advance = async (input: typeof oneStep) => FlightSessionStepResultSchema.parse(await result(input))
+    await result(start(setup))
+    const baseline = await advance(oneStep)
+    await result(start({ ...setup, wind: { ...wind, turbulence: null } }))
+    expect(await advance(oneStep)).toEqual(baseline)
+    expect(baseline.diagnostic.loads.turbulence).toBeUndefined()
+
+    await result(initial)
+    const first = await advance(oneStep)
+    const sample = first.diagnostic.loads.turbulence
+    expect(sample).toMatchObject({ belowRange: true, aboveRange: false })
+    if (!sample) throw new Error('Dryden loads are missing')
+    expect(first.diagnostic.loads.windComWorldMps).toEqual(
+      baseline.diagnostic.loads.windComWorldMps.map((mean, axis) => mean + sample.velocityWorldMps[axis]!),
+    )
+    expect(toFlightFrame(first.diagnostic, first.endReason, first.contacts).environmentLoads?.turbulence).toEqual(sample)
+    expect(first.diagnostic.loads.dragBodyN).not.toEqual(baseline.diagnostic.loads.dragBodyN)
+    const full = await advance(step(MAX_SESSION_STEPS, rates))
+    expect(full.diagnostic.loads.groundEffectAddedThrustN).toBeGreaterThan(0)
+
+    const log = FlightSessionLogResultSchema.parse(await result(getLog))
+    expect(log.start.wind).toEqual({ ...wind, turbulence })
+    await result(log.start)
+    expect(await advance(log.steps[0]!)).toEqual(first)
+    expect(await advance(log.steps[1]!)).toEqual(full)
+
+    await result(log.start)
+    await advance(log.steps[0]!)
+    const logged = log.steps[1]!
+    let partitioned
+    // The seven-step replay partition above crosses the estimator interval.
+    for (let remaining = logged.steps; remaining > 0; remaining -= 7) {
+      partitioned = await advance({ ...logged, steps: Math.min(remaining, 7) })
+    }
+    expect(partitioned?.stateHash).toBe(full.stateHash)
+    expect(partitioned?.diagnostic).toEqual(full.diagnostic)
+
+    await result(start({ ...setup, wind: { ...wind, turbulence: { ...turbulence, seed: 1 } } }))
+    const different = await advance(oneStep)
+    expect(different.stateHash).not.toBe(first.stateHash)
+    expect(different.diagnostic.loads.turbulence).not.toEqual(sample)
+
+    // The first step samples the height at exactly twice the 1000 ft limit.
+    await result({ ...initial, startPositionM: v3(0, 0, 2 * 1000 * 0.3048) })
+    expect((await advance(oneStep)).diagnostic.loads.turbulence).toMatchObject({ belowRange: false, aboveRange: true })
+    for (const badWind of [
+      { ...wind, mean: null, turbulence },
+      { ...wind, mean: { kind: 'constant', speedMps: 0 }, turbulence },
+    ]) {
+      expect(await request({ ...initial, wind: badWind })).toMatchObject({
+        ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('requires a positive mean wind speed') },
+      })
+    }
+    for (const badTurbulence of [{ kind: 'dryden' }, { ...turbulence, seed: Number.MAX_SAFE_INTEGER + 1 }]) {
+      expect(await request({ ...initial, wind: { ...wind, turbulence: badTurbulence } })).toMatchObject({
+        ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('seed') },
+      })
+    }
+  }))
+
   it('applies terrain and shapes and forwards the environment through batch, session and scenario', async () => withProtocol(async ({ result, request }) => {
     await result(load)
     const sim = { airDensityKgM3, durationS, startPositionM, environment: terrainEnvironment, wind, groundEffect,

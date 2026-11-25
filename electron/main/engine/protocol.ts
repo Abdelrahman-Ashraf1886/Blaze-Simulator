@@ -172,6 +172,11 @@ export const WindSchema = z.strictObject({
   ]).nullable(),
   /** Speed in m/s, distance in metres, and time since the run began in seconds. */
   gust: z.strictObject({ amplitudeMps: nonnegative, lengthM: positive, startS: nonnegative }).nullable(),
+  turbulence: z.strictObject({ kind: z.literal('dryden'), seed: z.int().nonnegative() }).nullable().optional(),
+}).superRefine(({ mean, turbulence }, ctx) => {
+  if (turbulence && (!mean || (mean.kind === 'constant' ? mean.speedMps : mean.speedAt20FtMps) === 0)) {
+    ctx.addIssue({ code: 'custom', path: ['turbulence'], message: 'Dryden turbulence requires a positive mean wind speed' })
+  }
 }).nullable()
 
 const flightEnvironmentShape = {
@@ -467,6 +472,8 @@ export const FlightDiagnosticSchema = z.strictObject({
     totalTorqueNm: vec3,
     /** Wind at the CoM at the start of the step, world Z-up, m/s. */
     windComWorldMps: vec3,
+    /** Dryden velocity at the CoM, in world m/s, and AGL holds at any sampled point. */
+    turbulence: z.strictObject({ velocityWorldMps: vec3, belowRange: z.boolean(), aboveRange: z.boolean() }).optional(),
     /** Sum of thrust increases in N, before projection onto the rotor axes. */
     groundEffectAddedThrustN: num,
     /** Vehicle motor order. Empty when ground effect is off. */

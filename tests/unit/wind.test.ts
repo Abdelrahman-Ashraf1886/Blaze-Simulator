@@ -1,11 +1,40 @@
 import { describe, expect, it } from 'vitest'
 import type { WindDoc, WindRoughnessDoc } from '../../electron/ipc/contract'
 import { windDocSchema } from '../../electron/ipc/schemas'
+import { WindSchema } from '../../electron/main/engine/protocol'
 import { openDatabase } from '../../electron/main/db/database'
 import { createRepositories } from '../../electron/main/db/repositories'
 import { simGroundEffect } from '../../src/domain/environment'
 import type { MotorSlot } from '../../src/domain/propulsion'
 import { simWind } from '../../src/domain/wind'
+
+it('round-trips Dryden and explicit off while refusing incomplete or unsafe inputs', () => {
+  const base = { kind: 'wind', fromDeg: 90, mean: { kind: 'constant', speedMps: 4.5 }, gust: { kind: 'none' } } as const
+  const wire = { fromDeg: base.fromDeg, mean: base.mean, gust: null }
+  const dryden = (seed: number | null) => ({ kind: 'dryden', seed }) as const
+  for (const turbulence of [null, dryden(0), dryden(Number.MAX_SAFE_INTEGER)]) {
+    const doc = { ...base, turbulence }
+    expect(windDocSchema.parse(JSON.parse(JSON.stringify(doc)))).toEqual(doc)
+    expect(simWind(windDocSchema.parse(doc))).toEqual({ ok: true, wind: WindSchema.parse({ ...wire, turbulence }) })
+  }
+  const legacy = windDocSchema.parse(base)
+  expect(legacy).toEqual(base)
+  expect(WindSchema.parse(wire)).toEqual(wire)
+  expect(simWind(legacy)).toEqual({ ok: true, wind: wire })
+  for (const turbulence of [dryden(-1), dryden(0.5), dryden(Number.MAX_SAFE_INTEGER + 1), { kind: 'dryden' }]) {
+    expect(windDocSchema.safeParse({ ...base, turbulence }).success).toBe(false)
+    expect(WindSchema.safeParse({ ...wire, turbulence }).success).toBe(false)
+  }
+  const draft = windDocSchema.parse({ ...base, turbulence: dryden(null) })
+  expect(simWind(draft)).toMatchObject({ ok: false, missing: [{ field: 'wind.turbulence.seed' }] })
+  expect(WindSchema.safeParse({ ...wire, turbulence: dryden(null) }).success).toBe(false)
+  for (const mean of [{ kind: 'none' }, { ...base.mean, speedMps: 0 }] as const) {
+    expect(simWind(windDocSchema.parse({ ...base, mean, turbulence: dryden(0) }))).toMatchObject({
+      ok: false, missing: [{ field: 'wind.turbulence', message: expect.stringContaining('positive mean wind speed') }],
+    })
+    expect(WindSchema.safeParse({ ...wire, mean: mean.kind === 'none' ? null : mean, turbulence: dryden(0) }).success).toBe(false)
+  }
+})
 
 describe('simWind', () => {
   it('preserves legacy omission, distinguishes unset and emits null for explicit calm', () => {

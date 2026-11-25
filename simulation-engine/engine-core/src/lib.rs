@@ -32,6 +32,7 @@ pub mod hover_thrust;
 pub mod controller;
 pub mod position_control;
 pub mod wind;
+mod turbulence;
 
 /// Engine crate version, reported to the host during the handshake.
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");

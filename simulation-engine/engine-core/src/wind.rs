@@ -1,4 +1,4 @@
-//! Mean wind and one discrete gust in world coordinates.
+//! Mean wind, one discrete gust and optional Dryden turbulence in world coordinates.
 //!
 //! Frame and direction: documentation/plans/phase-6-flight-environment.md:103-106.
 //! MIL-F-8785C §§3.7.3.2 and 3.7.1.3 supply the logarithmic profile and the
@@ -6,6 +6,7 @@
 //! the plan's hold below 3 ft. Integrating mean-air-relative speed after the
 //! start is the plan's convention (plan:139-143).
 
+use crate::turbulence::{DrydenState, Parameters};
 use rapier3d_f64::math::Vector;
 use serde::Deserialize;
 use serde_json::Value;
@@ -13,12 +14,15 @@ use std::f64::consts::PI;
 use std::fmt;
 
 // database/reference/physics.v1.json:1393-1398,1409-1411.
-const METRES_PER_FOOT: f64 = 0.3048;
+pub(crate) const METRES_PER_FOOT: f64 = 0.3048;
 const CATEGORY_C_M: f64 = 0.15 * METRES_PER_FOOT;
 const OTHER_PHASES_M: f64 = 2.0 * METRES_PER_FOOT;
 const MIN_SHEAR_HEIGHT_M: f64 = 3.0 * METRES_PER_FOOT;
 const REFERENCE_HEIGHT_M: f64 = 20.0 * METRES_PER_FOOT;
-const MAX_SHEAR_HEIGHT_M: f64 = 1000.0 * METRES_PER_FOOT;
+pub(crate) const MAX_SHEAR_HEIGHT_M: f64 = 1000.0 * METRES_PER_FOOT;
+
+// JSON integers exactly representable throughout the JavaScript IPC path.
+const MAX_SAFE_SEED: u64 = (1_u64 << f64::MANTISSA_DIGITS) - 1;
 
 /// Validated wind configuration. The mean and gust share a direction.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -26,6 +30,7 @@ pub struct Wind {
     direction: Vector,
     mean: Option<Mean>,
     gust: Option<Gust>,
+    turbulence: Option<(u64, f64)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -62,11 +67,18 @@ struct Gust {
 }
 
 #[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+enum Turbulence {
+    Dryden { seed: u64 },
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct WindInput {
     from_deg: f64,
     mean: Value,
     gust: Value,
+    turbulence: Option<Value>,
 }
 
 /// A schema, numeric input, or calculation error.
@@ -76,6 +88,8 @@ pub enum WindError {
     ExpectedObject(&'static str),
     InvalidNumber { field: &'static str, value: f64, requirement: &'static str },
     ShearHeightAboveLimit(f64),
+    TurbulenceSeed,
+    TurbulenceNeedsMean,
     Overflow(&'static str),
 }
 
@@ -90,6 +104,8 @@ impl fmt::Display for WindError {
             Self::ShearHeightAboveLimit(height) => {
                 write!(f, "shear height {height} m exceeds 1000 ft ({MAX_SHEAR_HEIGHT_M} m)")
             }
+            Self::TurbulenceSeed => write!(f, "turbulence.seed must be a nonnegative JSON safe integer"),
+            Self::TurbulenceNeedsMean => write!(f, "Dryden turbulence requires a positive mean wind speed"),
             Self::Overflow(quantity) => write!(f, "{quantity} is outside the finite numeric range"),
         }
     }
@@ -122,7 +138,7 @@ fn object<T: serde::de::DeserializeOwned>(value: Value, field: &'static str) -> 
 impl Wind {
     /// The explicit calm state, also used when there is no wind configuration.
     pub const fn calm() -> Self {
-        Self { direction: Vector::ZERO, mean: None, gust: None }
+        Self { direction: Vector::ZERO, mean: None, gust: None, turbulence: None }
     }
 
     /// Accepts null for calm, or an object with `fromDeg`, `mean`, and `gust`.
@@ -135,6 +151,8 @@ impl Wind {
     /// 3 ft, the lowest height evaluated: at h < z0 the logarithm is negative, so
     /// the profile would blow backwards near the ground.
     /// Gust: `{"amplitudeMps":…,"lengthM":…,"startS":…}`, with time since simulation start.
+    /// Optional turbulence: `{"kind":"dryden","seed":…}` or null. Dryden
+    /// requires a positive constant or 20 ft mean speed and an explicit seed.
     pub fn from_json(value: &Value) -> Result<Self, WindError> {
         if value.is_null() {
             return Ok(Self::calm());
@@ -162,13 +180,47 @@ impl Wind {
             number("gust.lengthM", gust.length_m, gust.length_m > 0.0, "finite and positive")?;
             number("gust.startS", gust.start_s, gust.start_s >= 0.0, "finite and nonnegative")?;
         }
+        let turbulence = match input.turbulence {
+            None => None,
+            Some(value) => {
+                let Turbulence::Dryden { seed } = object(value, "turbulence")?;
+                if seed > MAX_SAFE_SEED {
+                    return Err(WindError::TurbulenceSeed);
+                }
+                let w20 = match mean {
+                    Some(Mean::Constant { speed_mps }) => speed_mps,
+                    Some(Mean::Shear { speed_at_20_ft_mps, .. }) => speed_at_20_ft_mps,
+                    None => return Err(WindError::TurbulenceNeedsMean),
+                };
+                if w20 == 0.0 {
+                    return Err(WindError::TurbulenceNeedsMean);
+                }
+                Some((seed, w20))
+            }
+        };
         let (sin, cos) = (input.from_deg % 360.0).to_radians().sin_cos();
-        Ok(Self { direction: Vector::new(-cos, sin, 0.0), mean, gust })
+        Ok(Self { direction: Vector::new(-cos, sin, 0.0), mean, gust, turbulence })
     }
 
     /// Initial gust state at simulation time zero, if a gust is configured.
     pub fn gust_state(&self) -> Option<GustState> {
         self.gust.map(|gust| GustState { time_until_start_s: gust.start_s.max(0.0), distance_m: 0.0 })
+    }
+
+    pub(crate) fn turbulence_state(&self) -> Option<DrydenState> {
+        self.turbulence.map(|(seed, _)| DrydenState::new(seed))
+    }
+
+    pub(crate) fn turbulence_parameters(&self, height_m: f64) -> Option<Parameters> {
+        self.turbulence
+            .filter(|_| height_m.is_finite())
+            .map(|(_, w20)| Parameters::at_height(height_m, w20))
+    }
+
+    pub(crate) fn turbulence_velocity(&self, state: DrydenState, parameters: Parameters) -> Vector {
+        let [u, v, w] = state.velocity(parameters);
+        let (x, y) = (self.direction.x, self.direction.y);
+        Vector::new(x * u - y * v, y * u + x * v, w)
     }
 
     /// Mean world velocity in m/s, for computing airspeed before the gust.

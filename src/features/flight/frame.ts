@@ -21,7 +21,7 @@ export interface FlightFrame {
   thrustBodyN: AxisVector
   dragBodyN: AxisVector
   environmentLoads: Pick<FlightStepResult['diagnostic']['loads'],
-    'windComWorldMps' | 'groundEffectAddedThrustN' | 'groundEffectStatus' | 'windAboveRange' | 'windInvalid'> | null
+    'windComWorldMps' | 'turbulence' | 'groundEffectAddedThrustN' | 'groundEffectStatus' | 'windAboveRange' | 'windInvalid'> | null
   armTorqueNm: AxisVector
   /** The rotors' drag torque on the body, −s·Q·a per motor. */
   dragReactionTorqueNm: AxisVector

@@ -4,10 +4,15 @@ import type { MissingValue } from './environment'
 type Roughness = Exclude<WindRoughnessDoc, { kind: 'custom' }> | { kind: 'custom'; lengthM: number }
 type Mean = { kind: 'constant'; speedMps: number } | { kind: 'shear'; speedAt20FtMps: number; roughness: Roughness }
 type Gust = { amplitudeMps: number; lengthM: number; startS: number }
+type Turbulence = { kind: 'dryden'; seed: number }
 
-/** engine-core/src/wind.rs:128–137. Direction is already in the engine's input frame. */
-export type SimWind = { fromDeg: number; mean: Mean | null; gust: Gust | null } | null
+/** engine-core/src/wind.rs. Direction is already in the engine's input frame. */
+export type SimWind = { fromDeg: number; mean: Mean | null; gust: Gust | null; turbulence?: Turbulence | null } | null
 export type WindResult = { ok: true; wind?: SimWind } | { ok: false; missing: MissingValue[] }
+
+export function validTurbulenceSeed(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0
+}
 
 export function simWind(wind: FlightConditionsDoc['wind']): WindResult {
   // An omitted setting preserves the payload of a legacy document.
@@ -48,6 +53,18 @@ export function simWind(wind: FlightConditionsDoc['wind']): WindResult {
     need(startS, 'wind.gust.startS', 'Enter the gust start time')
     gust = { amplitudeMps: amplitudeMps!, lengthM: lengthM!, startS: startS! }
   }
+  let turbulence: Turbulence | null | undefined = wind.turbulence === null ? null : undefined
+  if (wind.turbulence?.kind === 'dryden') {
+    const { seed } = wind.turbulence
+    if (seed === null || !validTurbulenceSeed(seed)) {
+      missing.push({ field: 'wind.turbulence.seed', message: 'Enter a nonnegative safe integer seed under Wind in Flight Conditions.' })
+    } else {
+      turbulence = { kind: 'dryden', seed }
+    }
+    if (wind.mean?.kind === 'none' || (mean?.kind === 'constant' ? mean.speedMps : mean?.speedAt20FtMps) === 0) {
+      missing.push({ field: 'wind.turbulence', message: 'Dryden turbulence requires a positive mean wind speed under Wind in Flight Conditions.' })
+    }
+  }
   if (missing.length) return { ok: false, missing }
-  return { ok: true, wind: { fromDeg: wind.fromDeg!, mean, gust } }
+  return { ok: true, wind: { fromDeg: wind.fromDeg!, mean, gust, ...(turbulence === undefined ? {} : { turbulence }) } }
 }

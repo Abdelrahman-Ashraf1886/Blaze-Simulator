@@ -90,6 +90,8 @@ pub enum Command {
         duration_s: f64,
         #[serde(default)]
         environment: Option<Value>,
+        /// Optional `turbulence: {kind:"dryden",seed}` within wind requires a
+        /// positive mean speed. The seed is a nonnegative JSON safe integer.
         #[serde(default, deserialize_with = "present")]
         wind: Option<Value>,
         #[serde(default, deserialize_with = "present")]

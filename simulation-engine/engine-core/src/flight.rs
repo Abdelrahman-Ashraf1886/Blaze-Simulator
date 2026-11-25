@@ -25,7 +25,7 @@
 //! 4. The body steps (rapier, gravity included).
 //!
 //! Throttles are given in the order of `VehicleDefinition.motors`.
-//! With optional wind, sample the mean plus gust at the CoM's height above
+//! With optional wind, sample mean, gust and turbulence at the CoM's height above
 //! ground or terrain. Where there is no ground below the sample, use world z.
 //! Use the start-of-step gust distance for all samples, then advance it with
 //! the CoM speed relative to the mean air (`wind.rs:252-265`).
@@ -44,7 +44,8 @@ use crate::math::Vec3 as MVec3;
 use crate::propulsion::{Propulsion, PropulsionState};
 use crate::sim::{BodyInput, SimState, Simulation};
 use crate::vehicle::{vec, Spin, Vehicle};
-use crate::wind::{GustState, Wind, WindError};
+use crate::turbulence::{DrydenState, Parameters};
+use crate::wind::{GustState, MAX_SHEAR_HEIGHT_M, Wind, WindError};
 use rapier3d_f64::math::{Rotation, Vector};
 use serde::Serialize;
 
@@ -147,6 +148,9 @@ pub struct StepLoads {
     /// World wind at the CoM at the start of the step, m/s.
     #[serde(skip)]
     pub wind_com_world_mps: [f64; 3],
+    /// Dryden readout when the step sampled turbulence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turbulence: Option<TurbulenceLoads>,
     /// Sum of scalar thrust increases in N, before projection onto the rotor axes.
     #[serde(skip)]
     pub ground_effect_added_thrust_n: f64,
@@ -156,11 +160,21 @@ pub struct StepLoads {
     /// The CoM or a sampled hub was above the 1000 ft shear limit.
     #[serde(skip)]
     pub wind_above_range: bool,
-    /// A wind sample or gust update failed. A failed CoM sample uses calm air
-    /// for drag, a failed hub sample skips ground effect, and a failed gust
-    /// update leaves the gust state unchanged.
+    /// A wind sample or time update failed. A failed CoM sample uses calm air
+    /// for drag, and a failed hub sample skips ground effect.
     #[serde(skip)]
     pub wind_invalid: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurbulenceLoads {
+    /// Turbulent velocity at the CoM, in world m/s.
+    pub velocity_world_mps: [f64; 3],
+    /// The CoM or a sampled hub was below 10 ft AGL.
+    pub below_range: bool,
+    /// The CoM or a sampled hub was above 1000 ft AGL.
+    pub above_range: bool,
 }
 
 // Keep the reason, since the rejected numeric payload may itself be non-finite.
@@ -192,6 +206,8 @@ pub enum RotorGroundEffect {
 struct WindFlags {
     above_range: bool,
     invalid: bool,
+    turbulence_below_range: bool,
+    turbulence_above_range: bool,
 }
 
 impl WindFlags {
@@ -204,10 +220,27 @@ impl WindFlags {
         if matches!(sample, Err(WindError::ShearHeightAboveLimit(_))) {
             // Reviewer's decision: hold at the top of the shear profile (wind.rs:16,21,187-199).
             self.above_range = true;
-            sample = at(1000.0 * 0.3048);
+            sample = at(MAX_SHEAR_HEIGHT_M);
         }
         self.invalid |= sample.is_err();
         sample.ok()
+    }
+
+    fn sample_with_turbulence(
+        &mut self, wind: &Wind, height: f64, gust_distance: Option<f64>,
+        turbulence: Option<(DrydenState, Parameters)>,
+    ) -> Option<(Vector, Option<Vector>)> {
+        let base = self.sample(wind, height, gust_distance)?;
+        let Some((state, parameters)) = turbulence else { return Some((base, None)) };
+        self.turbulence_below_range |= parameters.below_range;
+        self.turbulence_above_range |= parameters.above_range;
+        let turbulent_velocity = wind.turbulence_velocity(state, parameters);
+        let total = base + turbulent_velocity;
+        if !total.is_finite() {
+            self.invalid = true;
+            return None;
+        }
+        Some((total, Some(turbulent_velocity)))
     }
 }
 
@@ -253,6 +286,7 @@ pub struct Flight {
     drag: Option<(BodyDrag, f64)>,
     rotor_air_density: Option<f64>,
     wind: Option<Wind>,
+    turbulence: Option<DrydenState>,
     gust: Option<GustState>,
     rotor_radii: Vec<f64>,
     last_ground_effect_rotors: Option<RotorForces>,
@@ -301,14 +335,15 @@ impl Flight {
             motors, propulsion, state, drag, throttle: vec![0.0; n], cutoff: None,
             ended: None, loads: StepLoads::default(), base_coefficients,
             rotor_air_density: air_density.filter(|rho| rho.is_finite() && *rho > 0.0),
-            wind: None, gust: None, rotor_radii: Vec::new(), last_ground_effect_rotors: None,
+            wind: None, gust: None, turbulence: None, rotor_radii: Vec::new(), last_ground_effect_rotors: None,
         })
     }
 
     /// Install wind. Configure before the first step to measure gust start time
-    /// from simulation time zero. Replacing wind starts its gust clock anew.
+    /// from simulation time zero. Replacing wind resets gust and Dryden state.
     pub fn set_wind(&mut self, wind: Wind) {
         self.gust = wind.gust_state();
+        self.turbulence = wind.turbulence_state();
         self.wind = Some(wind);
     }
 
@@ -430,15 +465,27 @@ impl Flight {
 
     fn step_wind(
         &mut self, sim: &Simulation, s: &SimState, dt: f64, gust_distance: Option<f64>, flags: &mut WindFlags,
-    ) -> Vector {
-        let Some(wind) = &self.wind else { return Vector::ZERO };
+    ) -> (Vector, Option<Vector>) {
+        let Some(wind) = &self.wind else { return (Vector::ZERO, None) };
         let [x, y, z] = s.com_m;
         let height = z - sim.height_below(x, y).unwrap_or(0.0);
-        let sample = flags.sample(wind, height, gust_distance).unwrap_or(Vector::ZERO);
-        if let Some(gust) = &mut self.gust {
-            if let Some(mean) = flags.sample(wind, height, None) {
-                flags.invalid |= gust.advance((vec(s.linear_velocity_mps) - mean).length(), dt).is_err();
+        let parameters = wind.turbulence_parameters(height);
+        let sample = flags.sample_with_turbulence(wind, height, gust_distance, self.turbulence.zip(parameters))
+            .unwrap_or((Vector::ZERO, None));
+        let airspeed = if self.gust.is_some() || self.turbulence.is_some() {
+            flags.sample(wind, height, None).map(|mean| (vec(s.linear_velocity_mps) - mean).length())
+        } else {
+            None
+        };
+        if let (Some(gust), Some(airspeed)) = (&mut self.gust, airspeed) {
+            flags.invalid |= gust.advance(airspeed, dt).is_err();
+        }
+        if let Some(state) = &mut self.turbulence {
+            let distance = airspeed.map(|speed| speed * dt).filter(|ds| ds.is_finite());
+            if distance.is_none() {
+                flags.invalid = true;
             }
+            state.advance(distance.zip(parameters));
         }
         sample
     }
@@ -457,8 +504,9 @@ impl Flight {
         let s = sim.state();
         let omega_body = vec(s.angular_velocity_body_radps);
         let gust_distance = self.gust.as_ref().map(GustState::distance_m);
+        let turbulence_start = self.turbulence;
         let mut wind_flags = WindFlags::default();
-        let wind_com = self.step_wind(sim, &s, dt, gust_distance, &mut wind_flags);
+        let (wind_com, turbulence_com) = self.step_wind(sim, &s, dt, gust_distance, &mut wind_flags);
         let mut ground_status = std::mem::take(&mut self.loads.ground_effect_status);
         let mut added_thrust = 0.0;
         let rotors = if let Some(rho) = self.rotor_air_density.filter(|_| !self.rotor_radii.is_empty()) {
@@ -474,7 +522,9 @@ impl Flight {
                 let height = hub.z - ground;
                 let mut air_velocity = vec(s.linear_velocity_mps) + attitude * omega_body.cross(motor.arm);
                 if let Some(wind) = &self.wind {
-                    let Some(sample) = wind_flags.sample(wind, height, gust_distance) else {
+                    // Hubs share the step's filter state, scaled at each local AGL.
+                    let turbulence = turbulence_start.zip(wind.turbulence_parameters(height));
+                    let Some((sample, _)) = wind_flags.sample_with_turbulence(wind, height, gust_distance, turbulence) else {
                         ground_status[i] = RotorGroundEffect::InvalidWind;
                         return thrust;
                     };
@@ -539,6 +589,11 @@ impl Flight {
             rotor_gyro_torque_nm: arr(-omega_body.cross(rotors.momentum)),
             total_torque_nm: arr(loads.torque_body_nm),
             wind_com_world_mps: arr(wind_com),
+            turbulence: turbulence_com.map(|velocity| TurbulenceLoads {
+                velocity_world_mps: arr(velocity),
+                below_range: wind_flags.turbulence_below_range,
+                above_range: wind_flags.turbulence_above_range,
+            }),
             ground_effect_added_thrust_n: added_thrust,
             ground_effect_status: ground_status,
             wind_above_range: wind_flags.above_range,
@@ -587,13 +642,16 @@ impl Flight {
         }
     }
 
-    /// Exact bit patterns of the rotor speeds, charge used and optional gust state, appended
+    /// Exact bit patterns of the rotor speeds, charge used and optional wind state, appended
     /// to the body's state hash (`Simulation::state_hash_with`).
     pub fn hash_words(&self) -> Vec<u64> {
         let mut words: Vec<u64> = self.state.omega.iter().map(|w| w.to_bits()).collect();
         words.push(self.state.charge_used_c.to_bits());
         if let Some(gust) = &self.gust {
             words.extend(gust.hash_words());
+        }
+        if let Some(turbulence) = self.turbulence {
+            words.extend(turbulence.hash_words());
         }
         words
     }

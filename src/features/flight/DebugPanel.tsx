@@ -21,12 +21,16 @@ function EnvironmentLoads({ loads }: { loads: NonNullable<FlightFrame['environme
   return <Section title="Environment loads">
     <Readouts>
       <Readout label="Wind at CoM (world X / Y / Z)" value={vector(loads.windComWorldMps, 'm/s')} unit="m/s" />
+      {loads.turbulence && <Readout label="Dryden turbulence (world X / Y / Z)"
+        value={vector(loads.turbulence.velocityWorldMps, 'm/s')} unit="m/s" />}
       <Readout label="Ground-effect added thrust" value={value(loads.groundEffectAddedThrustN, 'N')} unit="N" />
       <Readout label="Ground-effect motors" value={loads.groundEffectStatus.length === 0 ? 'Off' :
         `${counts.applied} applied / ${counts.inactive} inactive / ${counts.invalidInput} invalid inputs / ${counts.invalidWind} invalid wind / ${counts.nonFiniteThrust} non-finite thrust`} />
     </Readouts>
     {loads.windAboveRange && <p className="text-warn">Above the shear model’s height range. The engine held wind at the top of the profile for this step.</p>}
-    {loads.windInvalid && <p className="text-warn">A wind calculation failed this step. Wind drag or the gust’s progress may be affected.</p>}
+    {loads.turbulence?.belowRange && <p className="text-warn">Dryden turbulence held at 10 ft above ground.</p>}
+    {loads.turbulence?.aboveRange && <p className="text-warn">Dryden turbulence held at 1000 ft above ground.</p>}
+    {loads.windInvalid && <p className="text-warn">A wind calculation failed this step. Wind loads or gust progress may be affected.</p>}
     {(counts.invalidInput > 0 || counts.invalidWind > 0 || counts.nonFiniteThrust > 0) &&
       <p className="text-warn">The engine skipped ground-effect thrust on motors with an invalid calculation this step.</p>}
     {belowRange > 0 && <p className="text-warn">Ground effect was applied below the tested height range on {belowRange} {belowRange === 1 ? 'motor' : 'motors'}.</p>}

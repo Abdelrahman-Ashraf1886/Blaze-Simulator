@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router'
-import { FRAME_SPECS } from '../../../electron/ipc/contract'
+import { FRAME_SPECS, type RecordingRun, type SimulationRun } from '../../../electron/ipc/contract'
 import { EngineState } from '@/components/engine-state'
 import { FrameGlyph } from '@/components/frame-glyph'
 import { PageHeader } from '@/components/page-header'
@@ -18,13 +18,20 @@ export function DashboardPage() {
   const projectsError = useProjects((s) => s.error)
   const status = useSystem((s) => s.status)
   const engine = useSystem((s) => s.engine)
-  const runs = useSystem((s) => s.runs)
+  const runs: (SimulationRun & Partial<RecordingRun>)[] = useSystem((s) => s.runs)
+  const hasOpenRun = runs.some((run) => run.open)
   const systemError = useSystem((s) => s.error)
 
   useEffect(() => {
     void useProjects.getState().load()
     void useSystem.getState().refresh()
   }, [])
+
+  useEffect(() => {
+    if (!hasOpenRun) return
+    const timer = setInterval(() => void useSystem.getState().refresh(), 1000)
+    return () => clearInterval(timer)
+  }, [hasOpenRun])
 
   const recent = projects.slice(0, RECENT_LIMIT)
   const connected = engine?.state === 'connected'
@@ -85,29 +92,36 @@ export function DashboardPage() {
 
           <Section title="Simulation history" testId="simulation-history">
             {runs.length === 0 ? (
-              <EmptyState>No simulation runs yet. Recording flights comes with telemetry (Phase 7).</EmptyState>
+              <EmptyState>Recorded flights, scenarios and step tests will appear here.</EmptyState>
             ) : (
               <Table>
                 <thead>
                   <tr>
-                    <Th className="w-full">Project</Th>
+                    <Th className="w-full">Run</Th>
+                    <Th>Kind</Th>
                     <Th>Started</Th>
                     <Th className="text-right">Duration</Th>
-                    <Th>Result</Th>
+                    <Th>Status</Th>
+                    <Th>Size</Th>
                   </tr>
                 </thead>
                 <tbody>
                   {runs.map((r) => (
-                    <tr key={r.id}>
-                      <Td className="max-w-0 truncate" title={r.projectName}>
-                        {r.projectName}
+                    <tr key={r.id} data-testid="simulation-run">
+                      <Td className="max-w-0 truncate" title={r.title ?? r.projectName}>
+                        {r.title ?? r.projectName}
+                        {r.title && <div className="truncate text-fg-muted">{r.projectName}</div>}
                       </Td>
+                      <Td className="text-fg-muted">{r.kind ?? '—'}</Td>
                       <Td className="num text-fg-muted">{formatTimestamp(r.startedAt)}</Td>
                       <Td className="num text-right">
                         {r.durationS.toFixed(1)}
                         <span className="ml-1 text-fg-subtle">s</span>
                       </Td>
-                      <Td className="text-fg-muted">{r.status}</Td>
+                      <Td className="text-fg-muted">{r.open ? 'recording' : r.status}</Td>
+                      <Td className="num text-fg-muted">{r.bytes == null ? '—' : `${r.bytes.toLocaleString()} B`}
+                        {r.fileMissing && !r.open && <div className="text-warn">file missing</div>}
+                      </Td>
                     </tr>
                   ))}
                 </tbody>

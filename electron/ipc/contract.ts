@@ -499,7 +499,19 @@ export interface DropTestResult {
  * the assembly (mass properties are computed in TypeScript, ADR 0006); main validates all of it
  * with the protocol schemas, loads the vehicle into the engine and starts the session.
  */
+export interface RecordingOptions {
+  projectId: string
+  title: string
+  live?: boolean
+}
+
+export interface RecordingProgress {
+  recordingId?: string
+  recordingError?: string
+}
+
 export interface FlightStartInput {
+  recording?: RecordingOptions
   /** The pinned VehicleDefinition (src/domain/mass.ts). */
   vehicle: unknown
   /** The motors' coefficients and the battery (src/domain/propulsion.ts `propulsionDefinition`). */
@@ -522,10 +534,10 @@ export interface FlightStartInput {
   gains?: Record<string, number>
   controller?: FlightSessionStartParams['controller']
 }
-export type FlightStartResult = FlightSessionStartResult
+export type FlightStartResult = FlightSessionStartResult & RecordingProgress
 export type FlightStepInput = FlightSessionStepParams
-export type FlightStepResult = FlightSessionStepResult
-export type FlightEndResult = FlightSessionEndResult
+export type FlightStepResult = FlightSessionStepResult & RecordingProgress
+export type FlightEndResult = FlightSessionEndResult & RecordingProgress
 
 /**
  * A scripted ClosedLoop or FlightLoop scenario flown on the build. As for a flight, the renderer builds the vehicle, propulsion
@@ -533,6 +545,7 @@ export type FlightEndResult = FlightSessionEndResult
  * runs the scenario. Nothing is filled in: the air density, the cut-off and a built-in's parameters are the caller's.
  */
 export interface ScenarioRunInput {
+  recording?: RecordingOptions
   /** The pinned VehicleDefinition (src/domain/mass.ts). */
   vehicle: unknown
   /** The motors' coefficients and the battery (src/domain/propulsion.ts `propulsionDefinition`). */
@@ -544,10 +557,10 @@ export interface ScenarioRunInput {
   /** Air density, the user's cut-off, gain overrides, optionally a ground and its start position. */
   config: ScenarioConfigParams
 }
-export type ScenarioRunOutput = ScenarioRunResult
+export type ScenarioRunOutput = ScenarioRunResult & RecordingProgress
 
-export type StepTestInput = Pick<ScenarioRunInput, 'vehicle' | 'propulsion' | 'aero'> & StepTestRunParams
-export type StepTestOutput = StepTestRunResult
+export type StepTestInput = Pick<ScenarioRunInput, 'vehicle' | 'propulsion' | 'aero' | 'recording'> & StepTestRunParams
+export type StepTestOutput = StepTestRunResult & RecordingProgress
 
 /** Id an allowed pair uses for the parametric frame (its plate and arms are one part). */
 export const FRAME_PART_ID = 'frame'

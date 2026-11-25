@@ -7,7 +7,7 @@
  * last diagnostic becomes one `FlightFrame`, so subscribers see at most one frame per animation frame, never
  * the 1 kHz step stream.
  */
-import type { DesktopApi, FlightStartInput, FlightStepInput, FlightStepResult } from '../../../electron/ipc/contract'
+import type { DesktopApi, FlightStartInput, FlightStepInput, FlightStepResult, RecordingProgress } from '../../../electron/ipc/contract'
 import { flightTiming } from './flight-timing'
 import type { AxisVector, FlightFrame, FlightSource, SetpointProvider, Vec3 } from './frame'
 
@@ -133,7 +133,10 @@ export function idleFrame(motorCount: number, startPositionM: Vec3, bodyCom: Vec
 }
 
 type EngineApi = Pick<DesktopApi['engine'], 'flightStart' | 'flightStep' | 'flightEnd'>
+const engineOwners = new WeakMap<EngineApi, object>()
+
 export interface EngineFlightSourceOptions {
+  onRecording?: (progress: RecordingProgress) => void
   /** Milliseconds, monotonic. */
   now?: () => number
   /** Runs `callback` on the next animation frame; returns its cancel function. */
@@ -155,6 +158,7 @@ export class EngineFlightSource implements FlightSource {
   private listeners = new Set<(frame: FlightFrame) => void>()
   private errorListeners = new Set<(message: string) => void>()
   private generation = 0
+  private owner: object | undefined
   private sessionOpen = false
   private cancelFrame: (() => void) | null = null
   private clockResetAt: number | null = null
@@ -165,7 +169,7 @@ export class EngineFlightSource implements FlightSource {
   constructor(
     private readonly api: EngineApi,
     private readonly input: FlightStartInput,
-    options: EngineFlightSourceOptions = {},
+    private readonly options: EngineFlightSourceOptions = {},
   ) {
     this.now = options.now ?? (() => performance.now())
     this.schedule = options.schedule ?? animationFrame
@@ -185,7 +189,10 @@ export class EngineFlightSource implements FlightSource {
   start(setpoint: () => ReturnType<SetpointProvider> | null) {
     this.stop()
     this.contacts.clear()
-    void this.run(this.generation, setpoint)
+    const owner = {}
+    this.owner = owner
+    engineOwners.set(this.api, owner)
+    void this.run(this.generation, owner, setpoint)
   }
 
   /** A pause or resume discards elapsed time and any fractional step carried over. */
@@ -200,8 +207,19 @@ export class EngineFlightSource implements FlightSource {
     this.clockResetAt = null
     if (this.sessionOpen) {
       this.sessionOpen = false
-      void Promise.resolve(this.api.flightEnd()).catch(() => {})
+      if (engineOwners.get(this.api) === this.owner) this.endSession()
     }
+  }
+
+  private endSession() {
+    const owner = this.owner
+    void Promise.resolve(this.api.flightEnd()).then((result) => {
+      if (result.ok && engineOwners.get(this.api) === owner) this.reportRecording(result.data)
+    }).catch(() => {})
+  }
+
+  private reportRecording({ recordingId, recordingError }: RecordingProgress) {
+    if (recordingId || recordingError) this.options.onRecording?.({ recordingId, recordingError })
   }
 
   private fail(generation: number, message: string) {
@@ -217,16 +235,17 @@ export class EngineFlightSource implements FlightSource {
     }
   }
 
-  private async run(generation: number, setpoint: () => ReturnType<SetpointProvider> | null) {
+  private async run(generation: number, owner: object, setpoint: () => ReturnType<SetpointProvider> | null) {
     try {
       const started = await this.api.flightStart(this.input)
       if (generation !== this.generation) {
         // Stopped while the engine was starting: do not leave its session behind.
-        if (started.ok) void Promise.resolve(this.api.flightEnd()).catch(() => {})
+        if (started.ok && engineOwners.get(this.api) === owner) this.endSession()
         return
       }
       if (!started.ok) return this.fail(generation, started.error.message)
       this.sessionOpen = true
+      this.reportRecording(started.data)
       this.publish(generation, toFlightFrame(started.data.diagnostic, null, []))
       let last = this.now()
       let owedMs = 0
@@ -254,6 +273,7 @@ export class EngineFlightSource implements FlightSource {
                 : this.api.flightStep({ steps: due.steps, setpoint: command }))
               if (generation !== this.generation) return
               if (!result.ok) return this.fail(generation, result.error.message)
+              this.reportRecording(result.data)
               for (const c of result.data.contacts) this.contacts.set(`${c.partId}|${c.with}|${c.startS}`, c)
               this.publish(generation, toFlightFrame(result.data.diagnostic, result.data.endReason, [...this.contacts.values()], command.mode))
               // A cut-off ended the run: sources stop themselves after publishing an ended frame.

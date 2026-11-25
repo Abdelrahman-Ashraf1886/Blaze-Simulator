@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Section } from '@/components/section'
 import type { TuningOverrides } from '@/domain/controller-params'
+import { readRecordRuns } from '@/lib/prefs'
 import { getApi } from '@/services/api'
 import type { StepTestInput, StepTestOutput } from '../../../electron/ipc/contract'
 import type { FlightGate } from '../flight/readiness'
@@ -22,7 +23,8 @@ type RunState =
   | { status: 'error'; message: string }
   | { status: 'done'; result: StepTestOutput; step: StepTestInput['test']['step']; label: string; unit: string }
 
-export function StepTestPanel({ gate, engineReady, saved, dirty, pending }: {
+export function StepTestPanel({ projectId, gate, engineReady, saved, dirty, pending }: {
+  projectId: string
   gate: FlightGate; engineReady: boolean; saved: TuningOverrides | null; dirty: boolean; pending: boolean
 }) {
   const [draft, setDraft] = useState<StepTestDraft>(EMPTY_STEP_TEST)
@@ -48,7 +50,9 @@ export function StepTestPanel({ gate, engineReady, saved, dirty, pending }: {
     running.current = true
     setRun({ status: 'running' })
     try {
-      const reply = await getApi().engine.stepTest(input)
+      const reply = await getApi().engine.stepTest(readRecordRuns()
+        ? { ...input, recording: { projectId, title: choice.label } }
+        : input)
       if (!alive.current) return
       setRun(reply.ok
         ? { status: 'done', result: reply.data, step: input.test.step, label: choice.label, unit: choice.unit }
@@ -67,7 +71,10 @@ export function StepTestPanel({ gate, engineReady, saved, dirty, pending }: {
           dirty={dirty} onSubmit={(event) => void submit(event)} onChange={(name, value) => setDraft((d) => ({ ...d, [name]: value }))} />
       </Section>
       {run?.status === 'error' && <p role="alert" className="text-fault">Engine: {run.message}</p>}
-      {run?.status === 'done' && <StepTestResult result={run.result} step={run.step} label={run.label} unit={run.unit} />}
+      {run?.status === 'done' && <>
+        {run.result.recordingError && <p role="alert" className="text-fault">Recording stopped: {run.result.recordingError}</p>}
+        <StepTestResult result={run.result} step={run.step} label={run.label} unit={run.unit} />
+      </>}
     </div>
   )
 }

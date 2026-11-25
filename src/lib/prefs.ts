@@ -65,3 +65,16 @@ export function readFlightDeviceButtons(): boolean {
 export function writeFlightDeviceButtons(enabled: boolean): void {
   writePref('flight.deviceButtons', enabled)
 }
+
+import { isTelemetryLayout, type TelemetryLayout } from '../features/telemetry/layout'
+
+const telemetryLayoutKey = 'telemetry.layout'
+
+export function readTelemetryLayout(): TelemetryLayout | undefined {
+  const saved = readPref<unknown>(telemetryLayoutKey, undefined)
+  return isTelemetryLayout(saved) ? saved : undefined
+}
+
+export function writeTelemetryLayout(layout: TelemetryLayout): void {
+  if (isTelemetryLayout(layout)) writePref(telemetryLayoutKey, layout)
+}

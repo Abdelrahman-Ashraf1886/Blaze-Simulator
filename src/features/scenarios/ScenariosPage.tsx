@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { getApi } from '@/services/api'
 import { useComponents } from '@/stores/components'
 import { useProjects } from '@/stores/projects'
+import { readRecordRuns } from '@/lib/prefs'
 import { useSystem } from '@/stores/system'
 import { useTerrainGrid } from '../workshop/environment/terrain-preview'
 import { buildFrame } from '@/three/frame-geometry'
@@ -136,7 +137,9 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
       }
       const input = scenarioRunInput(gate, info, entries, tuning.data.overrides)
       if (!input) return
-      const r = await getApi().engine.scenarioRun(input)
+      const r = await getApi().engine.scenarioRun(readRecordRuns()
+        ? { ...input, recording: { projectId: project.id, title: info.title } }
+        : input)
       set(r.ok ? { status: 'done', result: r.data } : { status: 'error', message: r.error.message })
     } catch (e) {
       set({ status: 'error', message: (e as Error).message })
@@ -325,7 +328,10 @@ function ScenarioCard({ info, entries, onEntries, payload, run, runnable, busy, 
       )}
       {need && <p className="mt-1 text-[12px] text-warn" data-testid={`scenario-need-${info.name}`}>{need}</p>}
       {run?.status === 'error' && <p role="alert" className="mt-2 text-[12.5px] text-fault" data-testid={`scenario-error-${info.name}`}>The engine did not run this scenario: {run.message}</p>}
-      {run?.status === 'done' && <Result info={info} result={run.result} />}
+      {run?.status === 'done' && <>
+        {run.result.recordingError && <p role="alert" className="text-fault">Recording stopped: {run.result.recordingError}</p>}
+        <Result info={info} result={run.result} />
+      </>}
     </li>
   )
 }

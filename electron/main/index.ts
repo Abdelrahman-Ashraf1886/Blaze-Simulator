@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
 import { createHandlers, createRecordingHandlers, createTerrainHandlers, importTerrain } from '../ipc/handlers'
 import { RecordingStore } from './telemetry/store'
+import { SessionRecorder } from './telemetry/session-recorder'
 import { backfillHullsAsync, importAssetFileAsync, removeAssetFiles, resolveAssetUrl } from './assets/store'
 import { shutdownHullWorkers } from './assets/hull-async'
 import { safeFileName, savePngSchema } from './screenshot'
@@ -41,6 +42,7 @@ protocol.registerSchemesAsPrivileged([
 let db: Db | null = null
 let dbPath = ''
 let engine: EngineSupervisor | null = null
+let recorder: SessionRecorder | undefined
 let mainWindow: BrowserWindow | null = null
 
 if (!app.requestSingleInstanceLock()) {
@@ -315,6 +317,7 @@ async function start(): Promise<void> {
 
   const binaryPath = engineBinaryPath()
   engine = new EngineSupervisor({ binaryPath, log: (l) => console.log(l) })
+  recorder = new SessionRecorder(recordings, (id) => repos.projects.get(id).name, app.getVersion(), () => engine!.status)
   if (!existsSync(binaryPath)) console.error(`[engine] binary not found at ${binaryPath}`)
 
   const handlers = createHandlers(repos, () => ({
@@ -344,18 +347,20 @@ async function start(): Promise<void> {
     return result
   }
   ipcMain.handle(Channels.engineDropTest, (_event, payload: unknown) => withLoadedVehicle(() => dropTest(engine!, payload)))
-  ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => withLoadedVehicle(() => flightStart(engine!, payload)))
-  ipcMain.handle(Channels.engineFlightStep, (_event, payload: unknown) => flightStep(engine!, payload))
-  ipcMain.handle(Channels.engineFlightEnd, () => flightEnd(engine!))
-  ipcMain.handle(Channels.engineScenarioRun, (_event, payload: unknown) => withLoadedVehicle(() => scenarioRun(engine!, payload)))
-  ipcMain.handle(Channels.engineStepTest, (_event, payload: unknown) => withLoadedVehicle(() => stepTest(engine!, payload)))
+  ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => withLoadedVehicle(() => flightStart(engine!, payload, recorder)))
+  ipcMain.handle(Channels.engineFlightStep, (_event, payload: unknown) => flightStep(engine!, payload, recorder))
+  ipcMain.handle(Channels.engineFlightEnd, () => flightEnd(engine!, recorder))
+  ipcMain.handle(Channels.engineScenarioRun, (_event, payload: unknown) => withLoadedVehicle(() => scenarioRun(engine!, payload, recorder)))
+  ipcMain.handle(Channels.engineStepTest, (_event, payload: unknown) => withLoadedVehicle(() => stepTest(engine!, payload, recorder)))
 
   engine.on('status', (status) => {
+    if ((status.state === 'restarting' || status.state === 'failed') && status.lastError) recorder?.failFlight(status.lastError)
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(Channels.engineStatusChanged, status)
   })
   engine.start()
 
   mainWindow = createWindow()
+  mainWindow.on('close', () => { void recorder?.shutdown('window closed') })
   mainWindow.on('closed', () => (mainWindow = null))
 }
 
@@ -368,7 +373,8 @@ app.on('before-quit', (event) => {
   quitting = true
   // Never let a stuck engine keep the app alive: give it 3 s, then quit regardless.
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 3000))
-  void Promise.race([engine.stop(), deadline]).finally(() => app.quit())
+  const closeRecordings = recorder?.shutdown('app quit')
+  void Promise.race([Promise.allSettled([closeRecordings, engine.stop()]), deadline]).finally(() => app.quit())
 })
 
 // The database must outlive the windows: closing a window runs its unload handler,

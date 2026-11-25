@@ -102,7 +102,7 @@ function ProjectTuning({ project, doc }: { project: Project; doc: AssemblyDocume
             )}
             {!engineReady && <p className="pt-2 text-[12.5px] text-warn">The engine is not connected.</p>}
           </Section>
-          <StepTestPanel gate={gate} engineReady={engineReady} {...tuning} />
+          <StepTestPanel projectId={project.id} gate={gate} engineReady={engineReady} {...tuning} />
         </div>
       )} />
     </div>

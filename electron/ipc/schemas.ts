@@ -30,6 +30,12 @@ export const createProjectSchema = z.object({ name: projectName, frameType: z.en
 export const renameProjectSchema = z.object({ id: z.uuid(), name: projectName })
 export const projectIdSchema = z.object({ id: z.uuid() })
 export const listRunsSchema = z.object({ limit: z.int().min(1).max(200) })
+export const recordingOptionsSchema = z.strictObject({
+  projectId: projectIdSchema.shape.id,
+  title: z.string().min(1),
+  live: z.boolean().optional(),
+}).optional()
+
 export const recordingIdSchema = z.object({ id: z.uuid() })
 export const recordingSampleSchema = recordingIdSchema.extend({
   channels: z.array(z.string().min(1)).nonempty(),

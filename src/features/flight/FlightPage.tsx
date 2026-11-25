@@ -6,7 +6,7 @@ import { EmptyState, Section } from '@/components/section'
 import { Button } from '@/components/ui/button'
 import type { TuningOverrides } from '@/domain/controller-params'
 import { thrustFactorReadout } from '@/domain/thrust-curve'
-import { readFlightDeviceButtons, readInputCalibration, writeFlightDeviceButtons } from '@/lib/prefs'
+import { readFlightDeviceButtons, readInputCalibration, readRecordRuns, writeFlightDeviceButtons, writeRecordRuns } from '@/lib/prefs'
 import { runChecks } from '@/domain/checks'
 import { lowestPoint } from '@/domain/collisions'
 import { terrainHeightAt } from '@/domain/terrain'
@@ -124,6 +124,11 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     }
     return idleFrame(mass.motors.length, position, mass.mp.com ?? [0, 0, 0])
   }, [mass, payload, terrain, doc, geo, components, assets])
+  const [recordRuns, setRecordRuns] = useState(readRecordRuns)
+  const [recordingId, setRecordingId] = useState<string>()
+  const [recordingError, setRecordingError] = useState<string>()
+  const [runBytes, setRunBytes] = useState<number>()
+  const [totalBytes, setTotalBytes] = useState<number>()
   const [frame, setFrame] = useState(idle)
   const latest = useRef(idle)
   const historyRef = useRef<FlightFrame[]>([])
@@ -244,10 +249,39 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     selectedMode.current = next
     setMode(next)
   }
+  useEffect(() => {
+    let active = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const api = getApi()
+    async function refresh() {
+      const [total, run] = await Promise.allSettled([
+        api.recording?.totalSize(),
+        recordingId ? api.runs.get?.(recordingId) : undefined,
+      ])
+      if (!active) return
+      if (total.status === 'fulfilled' && total.value?.ok) setTotalBytes(total.value.data)
+      const current = run.status === 'fulfilled' && run.value?.ok ? run.value.data : null
+      if (current?.bytes != null) setRunBytes(current.bytes)
+      if (current && !current.open && current.incomplete && current.status === 'failed' && current.endReason) setRecordingError(current.endReason)
+      if (recordingId && (running || current?.open)) timer = setTimeout(() => void refresh(), 1000)
+    }
+    void refresh()
+    return () => { active = false; clearTimeout(timer) }
+  }, [recordingId, running])
+
   const start = () => {
     if (!gate.ok || engineBlock || !tuning || running || deviceBlocked) return
     stopSource()
-    const next = new EngineFlightSource(getApi().engine, { ...gate.input, ...tuning.session })
+    setRecordingId(undefined)
+    setRecordingError(undefined)
+    setRunBytes(undefined)
+    const next = new EngineFlightSource(getApi().engine, {
+      ...gate.input, ...tuning.session,
+      ...(recordRuns ? { recording: { projectId: project.id, title: 'Flight Simulator' } } : {}),
+    }, { onRecording: ({ recordingId, recordingError }) => {
+      if (recordingId) setRecordingId(recordingId)
+      if (recordingError) setRecordingError(recordingError)
+    } })
     const readDevice = selectedDevice ? createLiveCalibratedInputReader(selectedDevice) : null
     let inputStatus = readyInput
     const buttonEdges = createDeviceButtonEdges()
@@ -389,6 +423,18 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
       </div>
       <div className="shrink-0 space-y-1 border-b border-line px-3 py-2 text-[12px] text-fg-muted">
         <FlightModeStatus frame={frame} />
+        <div className="flex flex-wrap items-center gap-x-3">
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={recordRuns} onChange={(event) => {
+              const enabled = event.target.checked
+              writeRecordRuns(enabled)
+              setRecordRuns(enabled)
+            }} /> Record runs
+          </label>
+          <span>This run {runBytes === undefined ? '—' : `${runBytes.toLocaleString()} B`}</span>
+          <span>On disk {totalBytes === undefined ? '—' : `${totalBytes.toLocaleString()} B`}</span>
+        </div>
+        {recordingError && <p role="alert" className="text-fault">Recording stopped: {recordingError}</p>}
         {running && <FlightPauseControls paused={inputStatus.paused} blocker={inputStatus.blocker}
           device={device !== null} sticks={inputStatus.sticks} onToggle={() => runDeviceControls.current?.pause()} />}
         {running && mode !== 'attitudeHold' && <FlightCommandControls command={command} height={takeoffHeight}

@@ -65,3 +65,13 @@ export function readFlightDeviceButtons(): boolean {
 export function writeFlightDeviceButtons(enabled: boolean): void {
   writePref('flight.deviceButtons', enabled)
 }
+
+// Phase 7 telemetry D10 (documentation/plans/phase-7-telemetry.md:46).
+export function readRecordRuns(): boolean {
+  const saved = readPref<unknown>('record-runs', true)
+  return typeof saved === 'boolean' ? saved : true
+}
+
+export function writeRecordRuns(enabled: boolean): void {
+  writePref('record-runs', enabled)
+}

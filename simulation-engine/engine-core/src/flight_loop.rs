@@ -290,26 +290,23 @@ impl FlightLoop {
     }
 
     pub fn step(&mut self, sim: &mut Simulation, command: FlightCommand) -> Result<(), String> {
-        self.step_with_commands(sim, command, |_, _, _, _| {})
-    }
-
-    /// Expose the controller and allocator outputs for direct setpoint runs.
-    /// The motor slice borrows the allocator's existing command buffer.
-    pub(crate) fn step_with_commands(
-        &mut self,
-        sim: &mut Simulation,
-        command: FlightCommand,
-        observe: impl FnOnce([f64; 3], Option<Quat>, &[f64], SaturationDiagnostic),
-    ) -> Result<(), String> {
-        self.step_observed(sim, command, |sp, signals, saturation| {
-            observe(sp.rates, sp.attitude, signals, saturation);
-        })
+        self.step_observed(sim, command, |_, _, _| {})
     }
 
     pub fn step_observed(
         &mut self,
         sim: &mut Simulation,
         command: FlightCommand,
+        observe: impl FnOnce(FlightSetpoints, &[f64], SaturationDiagnostic),
+    ) -> Result<(), String> {
+        self.step_with_rate_feedback(sim, command, None, observe)
+    }
+
+    pub fn step_with_rate_feedback(
+        &mut self,
+        sim: &mut Simulation,
+        command: FlightCommand,
+        feedback: Option<crate::gyro_filters::RateFeedback>,
         observe: impl FnOnce(FlightSetpoints, &[f64], SaturationDiagnostic),
     ) -> Result<(), String> {
         if self.flight.ended().is_some() {
@@ -472,13 +469,10 @@ impl FlightLoop {
         } else {
             self.saturation
         };
-        let torque = self.rate.update(
-            &self.gains,
-            state.angular_velocity_body_radps,
-            rates,
-            rate_saturation,
-            dt,
-        );
+        let torque = match feedback {
+            Some(f) => self.rate.update_gyro(&self.gains, f.rate_radps, f.acceleration_radps2, rates, rate_saturation, dt),
+            None => self.rate.update(&self.gains, state.angular_velocity_body_radps, rates, rate_saturation, dt),
+        };
         let allocation = self
             .allocator
             .allocate([torque[0], torque[1], torque[2], thrust]);

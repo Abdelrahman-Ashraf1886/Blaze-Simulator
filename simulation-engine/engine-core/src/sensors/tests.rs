@@ -157,3 +157,37 @@ fn random_walk_variance_grows_linearly_with_elapsed_time() {
     gaussian_bounds(&early, 0.0, DENSITY.powi(2) * EARLY as f64 * SIM.dt_s);
     gaussian_bounds(&late, 0.0, DENSITY.powi(2) * LATE as f64 * SIM.dt_s);
 }
+
+#[test]
+fn gyro_feedback_waits_for_the_delayed_sample() {
+    let mut sensors = Sensors::new(19, SensorConfig {
+        gyro: Some(ImuConfig { delay_steps: 2, ..imu() }),
+        fly_on_gyro: Some(GyroFilterConfig {
+            gyro_cutoff_hz: 0.0, dgyro_cutoff_hz: 0.0, notch0: None, notch1: None,
+        }),
+        ..Default::default()
+    }).unwrap();
+    let mut truth = state(0);
+    truth.angular_velocity_body_radps = [1.0, 2.0, 3.0];
+    let config = SimConfig::default();
+    sensors.observe(truth, config);
+    let initial = sensors.rate_feedback().unwrap();
+    assert!(!initial.from_gyro);
+    assert_eq!(initial.rate_radps, truth.angular_velocity_body_radps);
+    for step in 1..=4 {
+        let mut truth = state(step);
+        truth.angular_velocity_body_radps = [step as f64 * 2.0; 3];
+        sensors.observe(truth, config);
+        let feedback = sensors.rate_feedback().unwrap();
+        match step {
+            1 | 2 => assert_eq!(feedback, initial),
+            3 | 4 => {
+                assert!(feedback.from_gyro);
+                assert_eq!(feedback.rate_radps, sensors.gyro().unwrap().value);
+                let expected = if step == 3 { 0.0 } else { 2.0 / config.dt_s };
+                assert_eq!(feedback.acceleration_radps2, [expected; 3]);
+            }
+            _ => unreachable!(),
+        }
+    }
+}

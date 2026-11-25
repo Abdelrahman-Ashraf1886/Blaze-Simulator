@@ -41,10 +41,15 @@ function vehicleLoad(motorCount: number) {
 }
 
 describe('telemetry channel table against the real engine', () => {
-  it.each([[4, false], [6, false], [4, true], [6, true]] as const)(
-    'matches both controllers with %i motors and sensors enabled = %s', (count, enabled) => {
+  it.each([[4, 'off'], [6, 'off'], [4, 'recorded'], [6, 'recorded'], [4, 'flown'], [6, 'flown']] as const)(
+    'matches both controllers with %i motors and sensors %s', (count, mode) => {
+    const enabled = mode !== 'off'
+    const flown = mode === 'flown'
     const sensors = enabled ? {
-      seed: 0, gyro: null, accelerometer: null, barometer: null,
+      seed: 0, accelerometer: null, barometer: null,
+      gyro: flown ? { noiseSigma: null, vibrationSigma: null, bias: null, randomWalk: null, range: null, delaySteps: null } : null,
+      // PX4 defaults in physics.v1.json:1540–1635.
+      ...(flown ? { flyOnGyro: { gyroCutoffHz: 40, dgyroCutoffHz: 30, notch0: null, notch1: null } } : {}),
       gps: { positionSigmaHorizontalM: null, positionSigmaVerticalM: null, velocitySigmaMps: null, periodSteps: 2, delaySteps: null },
     } : undefined
     const start = {
@@ -75,12 +80,16 @@ describe('telemetry channel table against the real engine', () => {
     for (const [kind, id] of [['attitudeHold', 1], ['flightLoop', 3]] as const) {
       const initial = FlightSessionStartResultSchema.parse(results[id])
       const next = FlightSessionStepResultSchema.parse(results[id + 1])
-      const table = telemetryChannels(count, kind, enabled)
+      const table = telemetryChannels(count, kind, enabled, flown)
       if (enabled) {
         const gpsZ = table.findIndex(({ name }) => name === 'sensor.gps.position.z')
         expect(gpsZ).toBeGreaterThanOrEqual(0)
         expect(initial.samples?.rows[0]?.[gpsZ]).toBeNull()
         expect(next.samples?.rows[0]?.[gpsZ]).toBe(next.diagnostic.state.comM[2])
+      }
+      if (flown) {
+        expect(table.at(-1)).toMatchObject({ name: 'controller.rateSource', kind: 'enum', values: ['true', 'gyro'] })
+        expect(next.samples?.rows[0]?.at(-1)).toBe(0)
       }
       expect(initial.channels).toEqual(table.map(({ name }) => name))
       expect(new Set(initial.channels).size).toBe(table.length)

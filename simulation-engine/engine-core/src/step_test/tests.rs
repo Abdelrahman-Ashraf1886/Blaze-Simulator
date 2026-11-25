@@ -242,3 +242,45 @@ fn an_offset_centre_of_mass_is_reported_and_trimmed_during_the_hold() {
     // 5 % of the step: the settled band, not a tuning claim.
     assert!((measured_m - setpoint_m).abs() < 0.05, "{measured_m} vs {setpoint_m}");
 }
+
+#[test]
+fn gyro_bias_shifts_the_true_steady_rate_in_the_opposite_direction() {
+    use crate::gyro_filters::GyroFilterConfig;
+    use crate::sensors::{ImuConfig, SensorConfig, Sensors};
+    let (v, p) = quad();
+    let cutoff = Cutoff::ChargeMah(p.battery.capacity_c / 3.6);
+    // Same duration as roll_step() with a zero rate command to isolate the bias.
+    let spec = StepTest {
+        step: Step::Rate { axis: RotationAxis::Yaw, amplitude_radps: 0.0 },
+        decimation_steps: 10,
+        ..roll_step()
+    };
+    // Reuse the roll step amplitude as the constant residual yaw gyro bias.
+    let bias = 10.0_f64.to_radians();
+    let sensors = Sensors::new(0, SensorConfig {
+        gyro: Some(ImuConfig {
+            noise_sigma: 0.0, vibration_sigma: 0.0, bias: [0.0, 0.0, bias],
+            random_walk: 0.0, delay_steps: 0, range: None,
+        }),
+        fly_on_gyro: Some(GyroFilterConfig {
+            gyro_cutoff_hz: 40.0, dgyro_cutoff_hz: 30.0, notch0: None, notch1: None,
+        }),
+        ..Default::default()
+    }).unwrap();
+    let hover = HoverStart::new(&v, &p, None, RHO, cutoff).unwrap();
+    let (report, ()) = run_with_sensors(&v, spec, hover, Some(sensors), |flight| {
+        let loop_ = FlightLoop::new(&v, flight, p.yaw_ratio(), Gains::px4_v1_13_3(),
+            PositionGains::px4_v1_13_3(), 0, HoverThrustParams::default())?;
+        Ok((loop_, ()))
+    }).unwrap();
+    let column = report.rate_loop_feedback.unwrap();
+    assert_eq!(report.end_reason, StepTestEnd::Duration);
+    assert_eq!(column.len(), report.trace.samples().len());
+    assert!(!column[0].from_gyro);
+    assert!(column[1].from_gyro);
+    let true_rate = rate(report.trace.samples().last().unwrap()).1;
+    let gyro = column.last().unwrap().rate_used_radps[2];
+    // Same 2% steady band used for step metrics (step-response.ts:44).
+    assert!((true_rate + bias).abs() < 0.02 * bias, "true rate={true_rate}, residual bias={bias}");
+    assert!(gyro.abs() < 0.02 * bias, "gyro rate={gyro}");
+}

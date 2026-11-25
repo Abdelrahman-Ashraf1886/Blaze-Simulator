@@ -1,4 +1,5 @@
-//! Validate the wire model with field paths shared by both entry points.
+//! Validate the wire model with field paths shared by the run entry points.
+use engine_core::gyro_filters::{GyroFilterConfig, NotchConfig};
 use engine_core::sensors::{
     BarometerConfig, GpsConfig, ImuConfig, SensorConfig, Sensors, ISA_MAX_ALTITUDE_M, ISA_MIN_ALTITUDE_M,
 };
@@ -15,6 +16,14 @@ pub(crate) fn parse_sensors(value: Option<Value>, path: &str) -> Result<Option<S
         n.abs() <= MAX_SAFE_INTEGER && n.fract() == 0.0
     })? as i64;
     let gyro = fields.group("gyro", imu)?;
+    let fly_on_gyro = if fields.remaining.contains_key("flyOnGyro") {
+        fields.group("flyOnGyro", gyro_filters)?
+    } else {
+        None
+    };
+    if fly_on_gyro.is_some() && gyro.is_none() {
+        return Err(format!("{path}.flyOnGyro requires {path}.gyro"));
+    }
     let accelerometer = fields.group("accelerometer", |fields| {
         let mount = fields.field("mountPositionM")?;
         Ok((imu(fields)?, mount))
@@ -43,7 +52,25 @@ pub(crate) fn parse_sensors(value: Option<Value>, path: &str) -> Result<Option<S
         delay_steps: fields.delay()?,
     }))?;
     fields.finish()?;
-    Ok(Sensors::new(seed, SensorConfig { gyro, accelerometer, barometer, gps }))
+    Ok(Sensors::new(seed, SensorConfig { gyro, fly_on_gyro, accelerometer, barometer, gps }))
+}
+
+fn gyro_filters(fields: &mut Fields) -> Result<GyroFilterConfig, String> {
+    // The filters themselves implement PX4's zero and Nyquist bypass rules.
+    fn hz(fields: &mut Fields, key: &str) -> Result<f32, String> {
+        fields.checked::<f64>(key, "must be a nonnegative finite single-precision frequency", |n| {
+            *n >= 0.0 && (*n as f32).is_finite()
+        }).map(|n| n as f32)
+    }
+    fn notch(fields: &mut Fields) -> Result<NotchConfig, String> {
+        Ok(NotchConfig { frequency_hz: hz(fields, "frequencyHz")?, bandwidth_hz: hz(fields, "bandwidthHz")? })
+    }
+    Ok(GyroFilterConfig {
+        gyro_cutoff_hz: hz(fields, "gyroCutoffHz")?,
+        dgyro_cutoff_hz: hz(fields, "dgyroCutoffHz")?,
+        notch0: fields.group("notch0", notch)?,
+        notch1: fields.group("notch1", notch)?,
+    })
 }
 
 fn imu(fields: &mut Fields) -> Result<ImuConfig, String> {

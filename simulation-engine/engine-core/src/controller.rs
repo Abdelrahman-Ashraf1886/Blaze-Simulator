@@ -333,6 +333,28 @@ impl RateControl {
         sat: Saturation,
         dt: f64,
     ) -> [f64; 3] {
+        let previous = self.previous;
+        let out = self.update_with_derivative(g, measured, desired, sat, dt, |a| {
+            previous.map_or(0.0, |prev| (measured[a] - prev[a]) / dt)
+        });
+        self.previous = Some(measured);
+        out
+    }
+
+    /// PX4 rate feedback uses the supplied angular acceleration
+    /// (RateControl/RateControl.cpp:57–64). The perfect-state update
+    /// independently differences its rates.
+    pub fn update_gyro(
+        &mut self, g: &Gains, measured: [f64; 3], acceleration: [f64; 3],
+        desired: [f64; 3], sat: Saturation, dt: f64,
+    ) -> [f64; 3] {
+        self.update_with_derivative(g, measured, desired, sat, dt, |a| acceleration[a])
+    }
+
+    fn update_with_derivative(
+        &mut self, g: &Gains, measured: [f64; 3], desired: [f64; 3],
+        sat: Saturation, dt: f64, derivative: impl Fn(usize) -> f64,
+    ) -> [f64; 3] {
         assert!(dt.is_finite() && dt > 0.0);
         let p = [g.mc_rollrate_p, g.mc_pitchrate_p, g.mc_yawrate_p];
         let i = [g.mc_rollrate_i, g.mc_pitchrate_i, g.mc_yawrate_i];
@@ -340,11 +362,9 @@ impl RateControl {
         let k = [g.mc_rollrate_k, g.mc_pitchrate_k, g.mc_yawrate_k];
         let ff = [g.mc_rollrate_ff, g.mc_pitchrate_ff, g.mc_yawrate_ff];
         let lim = [g.mc_rr_int_lim, g.mc_pr_int_lim, g.mc_yr_int_lim];
-        let out = std::array::from_fn(|a| {
+        std::array::from_fn(|a| {
             let error = desired[a] - measured[a];
-            let deriv = self
-                .previous
-                .map_or(0.0, |prev| (measured[a] - prev[a]) / dt);
+            let deriv = derivative(a);
             let torque =
                 k[a] * (p[a] * error - d[a] * deriv) + self.integral[a] + ff[a] * desired[a];
             if !sat.blocks(a, error) {
@@ -354,9 +374,7 @@ impl RateControl {
                     (self.integral[a] + factor * k[a] * i[a] * error * dt).clamp(-lim[a], lim[a]);
             }
             torque
-        });
-        self.previous = Some(measured);
-        out
+        })
     }
 }
 // Allocation algorithms below port PX4 v1.13.3 under its BSD-3-Clause license.
@@ -716,6 +734,13 @@ impl Controller {
     /// nonfinite state/setpoint or nonunit quaternions. Validate estimator health
     /// before calling. No heap allocation on the valid step path.
     pub fn step(&mut self, est: &ControllerInput, sp: &Setpoint, dt: f64) -> ControllerOutput<'_> {
+        self.step_with_rate_feedback(est, sp, dt, None)
+    }
+
+    pub fn step_with_rate_feedback(
+        &mut self, est: &ControllerInput, sp: &Setpoint, dt: f64,
+        feedback: Option<crate::gyro_filters::RateFeedback>,
+    ) -> ControllerOutput<'_> {
         assert!(dt.is_finite() && dt > 0.0);
         assert!(est
             .attitude
@@ -730,9 +755,10 @@ impl Controller {
         }
         let g = &self.gains;
         let rates = attitude_rates(g, est.attitude, sp.attitude, sp.yaw_rate);
-        let torque = self
-            .rate
-            .update(g, est.body_rates, rates, self.saturation, dt);
+        let torque = match feedback {
+            Some(f) => self.rate.update_gyro(g, f.rate_radps, f.acceleration_radps2, rates, self.saturation, dt),
+            None => self.rate.update(g, est.body_rates, rates, self.saturation, dt),
+        };
         let cosine = (q(sp.attitude) * Vector::Z).z;
         let thrust = self.position.step_vertical(est, sp, cosine, self.saturation, dt);
         let a = self

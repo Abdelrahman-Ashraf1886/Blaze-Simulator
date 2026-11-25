@@ -9,6 +9,7 @@ use engine_core::{
     ground_effect::InvalidInput,
     hover_thrust::HoverThrustEstimate,
     propulsion::{MotorModel, Propulsion},
+    gyro_filters::RateFeedback,
     sensors::{ImuSample, Sensors},
     sim::Simulation,
     takeoff::TakeoffState,
@@ -83,6 +84,11 @@ impl Sampling {
             axes(&mut columns, "sensor.gps.position", XYZ);
             axes(&mut columns, "sensor.gps.velocity", XYZ);
         }
+        if sensors.as_ref().is_some_and(Sensors::flying_on_gyro) {
+            axes(&mut columns, "sensor.gyroFiltered", XYZ);
+            axes(&mut columns, "sensor.angularAccelerationFiltered", XYZ);
+            names(&mut columns, &["controller.rateSource"]);
+        }
         Some(Self { every, motors, columns, base_columns, hover_column, sensors })
     }
 
@@ -92,6 +98,10 @@ impl Sampling {
 
     pub fn recording(&self) -> bool {
         self.every.is_some()
+    }
+
+    pub fn rate_feedback(&self) -> Option<RateFeedback> {
+        self.sensors.as_ref().and_then(Sensors::rate_feedback)
     }
 
     pub fn extend_hash(&self, hash: u64) -> u64 {
@@ -185,10 +195,14 @@ impl Sampling {
 
     fn record(&mut self, samples: &mut Samples, sim: &Simulation, flight: &Flight, controller: impl FnOnce(&mut Vec<f64>)) {
         let state = sim.state();
+        let recording = self.every.is_some_and(|every| state.steps.is_multiple_of(every.0));
+        // The row for step N records the feedback used to advance to N. Its
+        // post-step sensor acquisition belongs to the next controller tick.
+        let used = if recording { self.rate_feedback().filter(|f| f.from_gyro) } else { None };
         if let Some(sensors) = &mut self.sensors {
             sensors.observe(state, sim.config());
         }
-        if !self.every.is_some_and(|every| state.steps.is_multiple_of(every.0)) {
+        if !recording {
             return;
         }
         let mut row = Vec::with_capacity(self.columns.len());
@@ -238,6 +252,11 @@ impl Sampling {
             let gps = sensors.gps();
             row.extend(gps.map_or([MISSING; 3], |sample| sample.position_m));
             row.extend(gps.map_or([MISSING; 3], |sample| sample.velocity_mps));
+            if sensors.flying_on_gyro() {
+                row.extend(used.map_or([MISSING; 3], |f| f.rate_radps));
+                row.extend(used.map_or([MISSING; 3], |f| f.acceleration_radps2));
+                row.push(flag(used.is_some()));
+            }
         }
         debug_assert_eq!(row.len(), self.columns.len());
         samples.steps.push(state.steps);

@@ -64,6 +64,10 @@ pub enum StepTestEnd {
 #[serde(rename_all = "camelCase")]
 pub struct Report {
     pub trace: Trace,
+    /// Rate-loop inputs aligned with trace samples. The measured trace and all
+    /// response metrics use true state, including for rate steps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_loop_feedback: Option<Vec<RateLoopSample>>,
     pub step_time_s: f64,
     pub elapsed_s: f64,
     pub hover_collective_01: f64,
@@ -73,6 +77,14 @@ pub struct Report {
     pub end_reason: StepTestEnd,
     pub error: Option<String>,
     pub state_hash: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLoopSample {
+    pub rate_used_radps: [f64; 3],
+    pub angular_acceleration_used_radps2: [f64; 3],
+    pub from_gyro: bool,
 }
 
 // Same fixed-step quantization as scenario.rs:378-385.
@@ -250,6 +262,16 @@ pub fn run<G>(
     hover: HoverStart,
     controller: impl FnOnce(Flight) -> Result<(FlightLoop, G), String>,
 ) -> Result<(Report, G), String> {
+    run_with_sensors(vehicle, spec, hover, None, controller)
+}
+
+pub fn run_with_sensors<G>(
+    vehicle: &Vehicle,
+    spec: StepTest,
+    hover: HoverStart,
+    mut sensors: Option<crate::sensors::Sensors>,
+    controller: impl FnOnce(Flight) -> Result<(FlightLoop, G), String>,
+) -> Result<(Report, G), String> {
     let (hold, duration) = spec.timing()?;
     let mut sim = Simulation::new(vehicle, SimConfig::default())?;
     let (mut flight_loop, gains) = controller(hover.flight)?;
@@ -259,6 +281,10 @@ pub fn run<G>(
         flight_loop.trim_direct_position(hover_collective, DEFAULT_DT_S)?;
     }
     let mut state = sim.state();
+    let mut rate_loop_feedback = sensors.as_ref().filter(|s| s.flying_on_gyro()).map(|_| Vec::new());
+    if let Some(sensors) = &mut sensors {
+        sensors.observe(state, sim.config());
+    }
     let origin = state.com_m;
     let baseline = command(spec.step, false, origin, hover_collective);
     let target = command(spec.step, true, origin, hover_collective);
@@ -267,19 +293,28 @@ pub fn run<G>(
         let (command, setpoint) = if k < hold { baseline } else { target };
         // The allocator/physics can assert on invalid numerical demands.
         // Keep the completed trace if the same failure would end manual flight.
+        let feedback = sensors.as_ref().and_then(crate::sensors::Sensors::rate_feedback);
         let result = catch_unwind(AssertUnwindSafe(|| {
-            flight_loop.step_with_commands(&mut sim, command, |rates, attitude, motors, saturation| {
+            flight_loop.step_with_rate_feedback(&mut sim, command, feedback, |sp, motors, saturation| {
                 if trace.wants(k) {
                     trace.record(k, Sample {
                         time_s: state.time_s,
                         signal: signal(spec.step, setpoint, &state, origin),
-                        commanded_body_rates_radps: rates,
-                        commanded_attitude_xyzw: attitude,
+                        commanded_body_rates_radps: sp.rates,
+                        commanded_attitude_xyzw: sp.attitude,
                         saturation,
                     }, motors);
+                    if let (Some(column), Some(f)) = (&mut rate_loop_feedback, feedback) {
+                        column.push(RateLoopSample {
+                            rate_used_radps: f.rate_radps,
+                            angular_acceleration_used_radps2: f.acceleration_radps2,
+                            from_gyro: f.from_gyro,
+                        });
+                    }
                 }
             })
         }));
+        let previous_steps = state.steps;
         state = sim.state();
         if !finite_state(state, flight_loop.flight()) {
             end_reason = StepTestEnd::NonFinite;
@@ -300,6 +335,9 @@ pub fn run<G>(
                 break;
             }
         }
+        if let Some(sensors) = sensors.as_mut().filter(|_| state.steps != previous_steps) {
+            sensors.observe(state, sim.config());
+        }
         if let Some(cutoff) = flight_loop.flight().ended() {
             end_reason = match cutoff {
                 EndReason::VoltageCutoff => StepTestEnd::VoltageCutoff,
@@ -312,15 +350,18 @@ pub fn run<G>(
     if words.iter().any(|&word| !f64::from_bits(word).is_finite()) {
         end_reason = StepTestEnd::NonFinite;
     }
+    let hash = sim.state_hash_with(&words);
+    let hash = sensors.as_ref().map_or(hash, |s| s.extend_hash(hash));
     Ok((Report {
         trace,
+        rate_loop_feedback,
         step_time_s: hold as f64 * DEFAULT_DT_S,
         elapsed_s: state.time_s,
         hover_collective_01: hover_collective,
         start_imbalance_nm: hover.imbalance_nm,
         end_reason,
         error,
-        state_hash: hash_hex(sim.state_hash_with(&words)),
+        state_hash: hash_hex(hash),
     }, gains))
 }
 

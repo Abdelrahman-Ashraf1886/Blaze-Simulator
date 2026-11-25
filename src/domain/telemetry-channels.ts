@@ -24,7 +24,7 @@ const flag = { kind: 'flag' } as const
 const enumeration = (...values: string[]): ChannelKind => ({ kind: 'enum', values })
 
 export function telemetryChannels(
-  motorCount: number, controller: TelemetryControllerKind, sensors = false,
+  motorCount: number, controller: TelemetryControllerKind, sensors = false, flyOnGyro = false,
 ): TelemetryChannel[] {
   const columns: TelemetryChannel[] = []
   const add = (
@@ -140,7 +140,7 @@ export function telemetryChannels(
     add('input.altitude', 'Commanded altitude', 'm', 'input', 'World Z-up, at the CoM')
     add('input.climbRate', 'Commanded climb rate', 'm/s', 'input', 'World Z-up velocity feedforward')
   }
-  if (sensors) {
+  if (sensors || flyOnGyro) {
     vector('sensor.gyro', 'Gyroscope', 'rad/s', 'sensor', body)
     for (const axis of xyz) add(`sensor.gyroClipped.${axis}`, `Gyroscope ${axis.toUpperCase()} clipped`, dimensionless, 'sensor', body, flag)
     vector('sensor.accelerometer', 'Accelerometer specific force', 'm/s²', 'sensor', body)
@@ -149,6 +149,11 @@ export function telemetryChannels(
     add('sensor.barometer.altitude', 'Barometer pressure altitude', 'm', 'sensor', 'ISA geopotential altitude')
     vector('sensor.gps.position', 'GPS centre of mass position', 'm', 'sensor', world)
     vector('sensor.gps.velocity', 'GPS centre of mass velocity', 'm/s', 'sensor', world)
+  }
+  if (flyOnGyro) {
+    vector('sensor.gyroFiltered', 'Gyroscope used by rate loop', 'rad/s', 'sensor', body)
+    vector('sensor.angularAccelerationFiltered', 'Angular acceleration used by rate loop', 'rad/s²', 'sensor', body)
+    add('controller.rateSource', 'Rate feedback source', dimensionless, 'controller', 'Rate loop input', enumeration('true', 'gyro'))
   }
   return columns
 }

@@ -246,6 +246,7 @@ pub fn handle(
     let report = if let Some(sampling) = &mut sampling {
         run_observed(vehicle, propulsion.clone(), aero, &config, &scenario, configure, |sim, cl, input| {
             sampling.attitude(&mut samples, sim, cl, input);
+            sampling.rate_feedback()
         })
     } else {
         run_with_flight_config(vehicle, propulsion.clone(), aero, &config, &scenario, configure)
@@ -368,6 +369,7 @@ impl FlightRun<'_> {
             if let Some((sampling, samples)) = observer {
                 run_flight_script_observed(&mut sim, &mut controller, scenario, acceptance, |sim, loop_, input| {
                     sampling.flight_loop(samples, sim, loop_, input);
+                    sampling.rate_feedback()
                 })
             } else {
                 run_flight_script(&mut sim, &mut controller, scenario, acceptance)

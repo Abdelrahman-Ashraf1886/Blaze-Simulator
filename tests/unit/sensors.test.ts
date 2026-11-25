@@ -120,3 +120,25 @@ it('matches the Rust pressure fixture and varies density with actual temperature
     expect(airDensity(isa, altitude, 35)).toBeLessThan(airDensity(isa, altitude, 0))
   }
 })
+
+describe('gyro rate feedback settings', () => {
+  // Test inputs use the PX4 reference cutoffs (physics.v1.json:1540–1562).
+  const gyroFilters = { gyroCutoffHz: 40, dgyroCutoffHz: 30, notch0: null, notch1: null }
+  it('leaves the recorded-only payload byte-for-byte unchanged when off', () => {
+    const build = (settings: SensorSettings) => buildSensorPayload(noSpecs, settings, conditions)
+    expect(JSON.stringify(build({ ...configured, flyOnGyro: false, gyroFilters }))).toBe(JSON.stringify(build(configured)))
+    expect(build({ ...configured, flyOnGyro: true, gyroFilters }).payload?.flyOnGyro).toEqual(gyroFilters)
+  })
+
+  it('asks for all filter inputs and requires a gyro', () => {
+    const build = (settings: SensorSettings) => buildSensorPayload(noSpecs, { ...configured, flyOnGyro: true, ...settings }, conditions)
+    expect(build({}).missing.map(({ path }) => path)).toEqual([
+      'flyOnGyro.gyroCutoffHz', 'flyOnGyro.dgyroCutoffHz', 'flyOnGyro.notch0', 'flyOnGyro.notch1',
+    ])
+    const noGyro = build({ gyro: null, gyroFilters })
+    expect(noGyro.payload).toBeUndefined()
+    expect(noGyro.missing.map(({ path }) => path)).toEqual(['flyOnGyro'])
+    const missingNotch = build({ gyroFilters: { ...gyroFilters, notch0: { frequencyHz: 40 } } })
+    expect(missingNotch.missing.map(({ path }) => path)).toEqual(['flyOnGyro.notch0.bandwidthHz'])
+  })
+})

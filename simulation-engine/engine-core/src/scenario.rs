@@ -457,10 +457,10 @@ pub fn run_with_flight_config(
     scenario: &Scenario,
     configure: impl FnOnce(&mut Flight) -> Result<(), String>,
 ) -> Result<ScenarioReport, String> {
-    run_observed(vehicle, propulsion, drag, config, scenario, configure, |_, _, _| {})
+    run_observed(vehicle, propulsion, drag, config, scenario, configure, |_, _, _| None)
 }
 
-/// Observe the initial state, then each completed step with the applied setpoints.
+/// Observe the initial state and each completed step. Return rate feedback for the next tick.
 pub fn run_observed(
     vehicle: &Vehicle,
     propulsion: Propulsion,
@@ -468,7 +468,7 @@ pub fn run_observed(
     config: &ScenarioConfig,
     scenario: &Scenario,
     configure: impl FnOnce(&mut Flight) -> Result<(), String>,
-    mut observe: impl FnMut(&Simulation, &ClosedLoop, Option<(Setpoint, [f64; 3])>),
+    mut observe: impl FnMut(&Simulation, &ClosedLoop, Option<(Setpoint, [f64; 3])>) -> Option<crate::gyro_filters::RateFeedback>,
 ) -> Result<ScenarioReport, String> {
     scenario.validate(propulsion.motors.len())?;
     if scenario.flight_script.is_some() {
@@ -515,7 +515,7 @@ pub fn run_observed(
     let mut segment = 0;
     let mut steps = 0_u64;
     let mut altitude = 0.0;
-    observe(&sim, &cl, None);
+    let mut feedback = observe(&sim, &cl, None);
     for k in 0..steps_for(scenario.duration_s) {
         while segment + 1 < from_step.len() && from_step[segment + 1] <= k {
             segment += 1;
@@ -524,8 +524,8 @@ pub fn run_observed(
         let target = targets[segment];
         let setpoint = Setpoint { attitude: target, yaw_rate: s.yaw_rate_radps, z: s.z_m, z_velocity: s.z_velocity_mps };
         let mut inputs = None;
-        cl.step_observed(&mut sim, &setpoint, |rates| inputs = Some((setpoint, rates)));
-        observe(&sim, &cl, inputs);
+        cl.step_with_rate_feedback(&mut sim, &setpoint, feedback, |rates| inputs = Some((setpoint, rates)));
+        feedback = observe(&sim, &cl, inputs);
         steps += 1;
         let state = sim.state();
         // The controller's altitude is the CoM's (closed_loop.rs), so is the error.

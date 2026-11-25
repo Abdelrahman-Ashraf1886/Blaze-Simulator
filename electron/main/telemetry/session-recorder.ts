@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { EngineStatus, RecordingChannel, RecordingEnd, RecordingHeader, RecordingKind, RecordingOptions, RecordingProgress } from '../../ipc/contract'
 import { telemetryChannels } from '../../../src/domain/telemetry-channels'
-import { MAX_SCENARIO_S, type ScenarioRequest, type StepTestRunParams, type StepTestRunResult } from '../engine/protocol'
+import { MAX_SCENARIO_S, type FlightSessionStartParams, type ScenarioRequest, type StepTestRunParams, type StepTestRunResult } from '../engine/protocol'
 import { FLOAT_BYTES, FRAME_BYTES, PREAMBLE_BYTES, ROW_COUNT_BYTES } from './format'
 import type { RecordingStore } from './store'
 import type { RecordingWriter } from './writer'
@@ -15,16 +15,21 @@ type Sampling = Pick<RecordingHeader, 'channels' | 'samplePeriodSteps'> & { buff
 type EngineVersion = Pick<EngineStatus, 'engineVersion' | 'protocolVersion'>
 const message = (error: unknown) => error instanceof Error ? error.message : String(error)
 
+/** The engine adds sensor channels when at least one sensor is on (engine-core sensors.rs, Sensors::new). */
+function hasSensors(sensors: FlightSessionStartParams['sensors']): boolean {
+  return sensors != null && (sensors.gyro ?? sensors.accelerometer ?? sensors.barometer ?? sensors.gps) !== null
+}
+
 function sampled(sampling: ReturnType<typeof telemetryChannels>, bufferedS: number): Sampling {
   return { channels: sampling.map(({ name, unit, label }) => ({ name, unit, label })), samplePeriodSteps: RECORD_EVERY_STEPS, bufferedS }
 }
 
-function scenarioSampling(motors: number, request: ScenarioRequest): Sampling {
+function scenarioSampling(motors: number, request: ScenarioRequest, sensors: boolean): Sampling {
   // engine-host/src/scenario_run.rs:178-190,239-247,274-291 selects the controller.
   const scripted = request.type === 'custom'
     ? request.scenario.flightScript !== undefined
     : request.name === 'wind_hold' || request.name === 'gust' || request.name === 'takeoff_hold_land' || request.name === 'terrain'
-  return sampled(telemetryChannels(motors, scripted ? 'flightLoop' : 'attitudeHold'), MAX_SCENARIO_S)
+  return sampled(telemetryChannels(motors, scripted ? 'flightLoop' : 'attitudeHold', sensors), MAX_SCENARIO_S)
 }
 
 function traceSampling(motors: number, test: StepTestRunParams['test']): Sampling {
@@ -239,8 +244,8 @@ export class SessionRecorder {
     return run
   }
 
-  startFlight(options: RecordingOptions, motors: number, flightLoop: boolean) {
-    return this.begin('flight', options, sampled(telemetryChannels(motors, flightLoop ? 'flightLoop' : 'attitudeHold'), 3))
+  startFlight(options: RecordingOptions, motors: number, flightLoop: boolean, sensors?: FlightSessionStartParams['sensors']) {
+    return this.begin('flight', options, sampled(telemetryChannels(motors, flightLoop ? 'flightLoop' : 'attitudeHold', hasSensors(sensors)), 3))
   }
 
   replaceFlight(run: RunRecording | undefined) {
@@ -248,8 +253,8 @@ export class SessionRecorder {
     this.flight = run
   }
 
-  startScenario(options: RecordingOptions, motors: number, scenario: ScenarioRequest) {
-    return this.begin('scenario', options, scenarioSampling(motors, scenario))
+  startScenario(options: RecordingOptions, motors: number, scenario: ScenarioRequest, sensors?: FlightSessionStartParams['sensors']) {
+    return this.begin('scenario', options, scenarioSampling(motors, scenario, hasSensors(sensors)))
   }
 
   startStepTest(options: RecordingOptions, motors: number, test: StepTestRunParams['test']) {

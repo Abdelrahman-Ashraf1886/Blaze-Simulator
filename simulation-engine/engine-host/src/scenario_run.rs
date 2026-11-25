@@ -16,7 +16,7 @@
 //! `MAX_SCENARIO_WITH_GROUND_S`.
 use crate::engine::{closed_loop_gains, loaded_vehicle, manual_flight_with_gains};
 use crate::flight_environment;
-use crate::protocol::{present, ErrorCode, Response};
+use crate::protocol::{parse_sensors, present, ErrorCode, Response};
 use crate::telemetry::{ControllerKind, SampleEverySteps, Samples, Sampling};
 use engine_core::aero::BodyDrag;
 use engine_core::environment::Environment;
@@ -27,7 +27,7 @@ use engine_core::scenario::{
     position_hold_scenario, run_flight_script, run_flight_script_observed, run_observed, takeoff_hold_land_scenario, FlightAcceptance,
     ScenarioConfig, ScenarioReport, SETTLE_S,
 };
-use engine_core::sim::{SimConfig, Simulation};
+use engine_core::sim::{hash_hex, SimConfig, Simulation};
 use engine_core::vehicle::Vehicle;
 use engine_core::wind::Wind;
 use serde::{Deserialize, Serialize};
@@ -108,6 +108,7 @@ struct ConfigRequest {
     start_clearance_m: Option<f64>,
     #[serde(default, deserialize_with = "present")]
     sample_every_steps: Option<SampleEverySteps>,
+    sensors: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -151,12 +152,16 @@ pub fn handle(
             "cutoff is required: voltageV or chargeMah, with an explicit positive value (config.cutoff)",
         );
     }
-    let p: RunParams = match serde_json::from_value(Value::Object(params)) {
+    let mut p: RunParams = match serde_json::from_value(Value::Object(params)) {
         Ok(p) => p,
         Err(e) => return bad(e.to_string()),
     };
     let Some(rho) = p.config.air_density_kg_m3.filter(|r| r.is_finite() && *r > 0.0) else {
         return bad("config.airDensityKgM3 must be a positive number (ISA at the user's altitude)".into());
+    };
+    let sensors = match parse_sensors(p.config.sensors.take(), "config.sensors") {
+        Ok(sensors) => sensors,
+        Err(e) => return bad(e),
     };
     let cutoff = match p.config.cutoff {
         Some(CutoffRequest::VoltageV(v)) => Cutoff::VoltageV(v),
@@ -179,10 +184,10 @@ pub fn handle(
         Ok(Some((scenario, builtin))) => {
             let context = FlightRun { vehicle, propulsion, aero, rho };
             let mut samples = Samples::default();
-            let sampling = p.config.sample_every_steps.map(|every| Sampling::new(every, vehicle, propulsion, ControllerKind::FlightLoop));
-            let observer = sampling.as_ref().map(|sampling| (sampling, &mut samples));
+            let mut sampling = Sampling::new(p.config.sample_every_steps, sensors, vehicle, propulsion, ControllerKind::FlightLoop);
+            let observer = sampling.as_mut().map(|sampling| (sampling, &mut samples));
             return match context.run(&p.config, cutoff, flight, &scenario, builtin, observer) {
-                Ok(report) => result(id, &scenario, &report, sampling.as_ref(), samples),
+                Ok(report) => result(id, &scenario, report, sampling.as_ref(), samples),
                 Err(e) => invalid_scenario(e),
             };
         }
@@ -237,8 +242,8 @@ pub fn handle(
         flight_environment::configure(flight, p.config.wind.as_ref(), p.config.ground_effect.as_ref(), "config.")
     };
     let mut samples = Samples::default();
-    let sampling = p.config.sample_every_steps.map(|every| Sampling::new(every, vehicle, propulsion, ControllerKind::AttitudeHold));
-    let report = if let Some(sampling) = &sampling {
+    let mut sampling = Sampling::new(p.config.sample_every_steps, sensors, vehicle, propulsion, ControllerKind::AttitudeHold);
+    let report = if let Some(sampling) = &mut sampling {
         run_observed(vehicle, propulsion.clone(), aero, &config, &scenario, configure, |sim, cl, input| {
             sampling.attitude(&mut samples, sim, cl, input);
         })
@@ -246,13 +251,17 @@ pub fn handle(
         run_with_flight_config(vehicle, propulsion.clone(), aero, &config, &scenario, configure)
     };
     match report {
-        Ok(report) => result(id, &scenario, &report, sampling.as_ref(), samples),
+        Ok(report) => result(id, &scenario, report, sampling.as_ref(), samples),
         Err(e) => bad(e),
     }
 }
 
-fn result(id: u64, scenario: &Scenario, report: &ScenarioReport, sampling: Option<&Sampling>, samples: Samples) -> Response {
+fn result(id: u64, scenario: &Scenario, mut report: ScenarioReport, sampling: Option<&Sampling>, samples: Samples) -> Response {
     if let Some(sampling) = sampling {
+        let hash = u64::from_str_radix(&report.final_state_hash, 16).expect("scenario returned a u64 hex hash");
+        report.final_state_hash = hash_hex(sampling.extend_hash(hash));
+    }
+    if let Some(sampling) = sampling.filter(|s| s.recording()) {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct SampledResult<'a> {
@@ -263,7 +272,7 @@ fn result(id: u64, scenario: &Scenario, report: &ScenarioReport, sampling: Optio
             samples: Samples,
         }
         return Response::serialized_ok(id, SampledResult {
-            scenario, report, state_hash: &report.final_state_hash, channels: sampling.channels(), samples,
+            scenario, report: &report, state_hash: &report.final_state_hash, channels: sampling.channels(), samples,
         });
     }
     Response::ok(id, json!({
@@ -307,7 +316,7 @@ const NEEDS_PLANE: &str = "Enter the ground plane's friction and restitution in 
 impl FlightRun<'_> {
     fn run(
         self, config: &ConfigRequest, cutoff: Cutoff, mut flight: Flight,
-        scenario: &Scenario, builtin: Option<Builtin>, observer: Option<(&Sampling, &mut Samples)>,
+        scenario: &Scenario, builtin: Option<Builtin>, observer: Option<(&mut Sampling, &mut Samples)>,
     ) -> Result<ScenarioReport, String> {
         let FlightRun { vehicle, propulsion, aero, rho } = self;
         let plant = modified_vehicle(vehicle, scenario)?;

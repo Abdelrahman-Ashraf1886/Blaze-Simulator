@@ -1,7 +1,7 @@
 /** The column order mirrors engine-host/src/telemetry.rs. Enum codes are zero-based indices in values. */
 export type TelemetryControllerKind = 'attitudeHold' | 'flightLoop'
 
-type Group = 'time' | 'state' | 'motor' | 'battery' | 'loads' | 'controller' | 'input'
+type Group = 'time' | 'state' | 'motor' | 'battery' | 'loads' | 'controller' | 'input' | 'sensor'
 type ChannelKind = { kind: 'number' } | { kind: 'flag' } | { kind: 'enum'; values: readonly string[] }
 
 export type TelemetryChannel = {
@@ -23,7 +23,9 @@ const numeric = { kind: 'number' } as const
 const flag = { kind: 'flag' } as const
 const enumeration = (...values: string[]): ChannelKind => ({ kind: 'enum', values })
 
-export function telemetryChannels(motorCount: number, controller: TelemetryControllerKind): TelemetryChannel[] {
+export function telemetryChannels(
+  motorCount: number, controller: TelemetryControllerKind, sensors = false,
+): TelemetryChannel[] {
   const columns: TelemetryChannel[] = []
   const add = (
     name: string, label: string, unit: string, group: Group, frame: string, kind: ChannelKind = numeric,
@@ -137,6 +139,16 @@ export function telemetryChannels(motorCount: number, controller: TelemetryContr
   } else {
     add('input.altitude', 'Commanded altitude', 'm', 'input', 'World Z-up, at the CoM')
     add('input.climbRate', 'Commanded climb rate', 'm/s', 'input', 'World Z-up velocity feedforward')
+  }
+  if (sensors) {
+    vector('sensor.gyro', 'Gyroscope', 'rad/s', 'sensor', body)
+    for (const axis of xyz) add(`sensor.gyroClipped.${axis}`, `Gyroscope ${axis.toUpperCase()} clipped`, dimensionless, 'sensor', body, flag)
+    vector('sensor.accelerometer', 'Accelerometer specific force', 'm/s²', 'sensor', body)
+    for (const axis of xyz) add(`sensor.accelerometerClipped.${axis}`, `Accelerometer ${axis.toUpperCase()} clipped`, dimensionless, 'sensor', body, flag)
+    add('sensor.barometer.pressure', 'Barometer pressure', 'Pa', 'sensor', 'ISA pressure')
+    add('sensor.barometer.altitude', 'Barometer pressure altitude', 'm', 'sensor', 'ISA geopotential altitude')
+    vector('sensor.gps.position', 'GPS centre of mass position', 'm', 'sensor', world)
+    vector('sensor.gps.velocity', 'GPS centre of mass velocity', 'm/s', 'sensor', world)
   }
   return columns
 }

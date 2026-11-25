@@ -16,6 +16,10 @@
 //! The TypeScript mirror of these types lives in `electron/main/engine/protocol.ts`;
 //! both must change together and bump `PROTOCOL_VERSION` on breaking changes.
 
+#[path = "sensor_request.rs"]
+mod sensor_request;
+pub(crate) use sensor_request::parse_sensors;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

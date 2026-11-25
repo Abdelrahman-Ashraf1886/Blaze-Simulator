@@ -53,7 +53,7 @@ export async function flightStart(engine: EngineForFlight, payload: unknown, rec
   const parsed = flightStartSchema.safeParse(payload)
   if (!parsed.success) return invalid(issues(parsed.error))
   const { vehicle, propulsion, aero, recording, ...session } = parsed.data
-  const run = recording && recorder?.startFlight(recording, vehicle.motors.length, session.controller !== undefined)
+  const run = recording && recorder?.startFlight(recording, vehicle.motors.length, session.controller !== undefined, session.sensors)
   try {
     const loaded = await engine.loadVehicle(vehicle, { propulsion, aero }, ...(run ? [run.captureVehicle] : []))
     if (!loaded.valid) throw new Error(`The engine refused the vehicle: ${loaded.errors.map((e) => `${e.path}: ${e.message}`).join('; ')}`)

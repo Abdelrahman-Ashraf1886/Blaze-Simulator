@@ -11,7 +11,7 @@ const WorkshopPage = lazy(() => import('@/features/workshop/WorkshopPage'))
 const FlightPage = lazy(() => import('@/features/flight/FlightPage'))
 const ScenariosPage = lazy(() => import('@/features/scenarios/ScenariosPage'))
 const flight = (
-  <Suspense fallback={<p className="px-6 pt-5 text-[12.5px] text-fg-subtle">Loading flight test…</p>}>
+  <Suspense fallback={<p className="px-6 pt-5 text-[12.5px] text-fg-subtle">Loading flight simulator…</p>}>
     <FlightPage />
   </Suspense>
 )

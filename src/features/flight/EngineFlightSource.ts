@@ -8,6 +8,7 @@
  * the 1 kHz step stream.
  */
 import type { DesktopApi, FlightStartInput, FlightStepInput, FlightStepResult } from '../../../electron/ipc/contract'
+import { flightTiming } from './flight-timing'
 import type { AxisVector, FlightFrame, FlightSource, SetpointProvider, Vec3 } from './frame'
 
 /** Most simulated time one request advances (ms = steps). Engine limit is 100; 50 ms bounds the gap between frames. */
@@ -248,7 +249,9 @@ export class EngineFlightSource implements FlightSource {
               owedMs = 0
             } else {
               const command = toEngineSetpoint(input)
-              const result = await this.api.flightStep({ steps: due.steps, setpoint: command })
+              const result = await (flightTiming
+                ? flightTiming.step(this.api, due.steps, command)
+                : this.api.flightStep({ steps: due.steps, setpoint: command }))
               if (generation !== this.generation) return
               if (!result.ok) return this.fail(generation, result.error.message)
               for (const c of result.data.contacts) this.contacts.set(`${c.partId}|${c.with}|${c.startS}`, c)

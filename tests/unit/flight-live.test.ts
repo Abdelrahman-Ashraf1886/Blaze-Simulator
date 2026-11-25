@@ -5,19 +5,30 @@
  * through the same handlers.
  */
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
+import { EventEmitter, once } from 'node:events'
+import { mkdtemp, open, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { PassThrough, Writable } from 'node:stream'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import type { FlightStartInput, FlightStepInput, FlightStepResult, IpcResult } from '../../electron/ipc/contract'
+import type { FlightStartInput, FlightStepInput, FlightStepResult, IpcResult, RecordingOptions } from '../../electron/ipc/contract'
 import { flightEnd, flightStart, flightStep, type EngineForFlight } from '../../electron/main/engine/flight-session'
 import {
   FlightDiagnosticSchema, FlightSessionLogRequestSchema, FlightSessionLogResultSchema, FlightSessionStartParamsSchema,
   FlightSessionStartResultSchema, FlightSessionStepParamsSchema, FlightSessionStepResultSchema, MAX_SESSION_STEPS,
-  ScenarioRunParamsSchema, ScenarioRunResultSchema, SimRunParamsSchema, SimRunResultSchema, StepTestRunParamsSchema,
+  MAX_SCENARIO_S, PROTOCOL_VERSION, ScenarioRunParamsSchema, ScenarioRunResultSchema, SimRunParamsSchema, SimRunResultSchema, StepTestRunParamsSchema,
   StepTestRunResultSchema, isEngineResponse, type FlightSessionStepParams,
 } from '../../electron/main/engine/protocol'
 import { EngineSupervisor } from '../../electron/main/engine/supervisor'
+import { scenarioRun } from '../../electron/main/engine/scenario-run'
+import { stepTest } from '../../electron/main/engine/step-test'
+import { openDatabase } from '../../electron/main/db/database'
+import { createRepositories } from '../../electron/main/db/repositories'
+import { Frame } from '../../electron/main/telemetry/format'
+import { RECORD_EVERY_STEPS, SessionRecorder } from '../../electron/main/telemetry/session-recorder'
+import { RecordingStore } from '../../electron/main/telemetry/store'
+import { unwrap } from '../../src/services/api'
 import type { ReadyItem } from '../../src/domain/propulsion'
 import type { SensorPayload } from '../../src/domain/sensors'
 import { telemetryChannels } from '../../src/domain/telemetry-channels'
@@ -598,6 +609,7 @@ const binaryPath = join(__dirname, '../../simulation-engine/target/release', pro
 // Direct NDJSON also checks requests that Zod would refuse before the supervisor sends them.
 async function withProtocol(run: (engine: {
   request: (command: object) => Promise<ReturnType<typeof decodeResponse>>
+  sendLine: (line: string) => Promise<ReturnType<typeof decodeResponse>>
   result: (command: object) => Promise<unknown>
   lineBytes: (command: object) => number
   replyBytes: () => number
@@ -609,13 +621,16 @@ async function withProtocol(run: (engine: {
   let nextId = 0
   let lastReplyBytes = 0
   const line = (id: number, command: object) => JSON.stringify({ ...command, id }) + '\n'
-  const request = async (command: object) => {
-    const id = nextId++
-    child.stdin.write(line(id, command))
+  const sendLine = async (requestLine: string) => {
+    child.stdin.write(requestLine)
     const reply = await replies.next()
     if (reply.done) throw new Error('The engine closed stdout before replying')
     lastReplyBytes = Buffer.byteLength(reply.value) + 1 // The sidecar writes LF.
-    const response = decodeResponse(reply.value)
+    return decodeResponse(reply.value)
+  }
+  const request = async (command: object) => {
+    const id = nextId++
+    const response = await sendLine(line(id, command))
     expect(response.id).toBe(id)
     return response
   }
@@ -625,7 +640,7 @@ async function withProtocol(run: (engine: {
     return response.result
   }
   try {
-    await run({ request, result, lineBytes: (command) => Buffer.byteLength(line(nextId, command)), replyBytes: () => lastReplyBytes })
+    await run({ request, sendLine, result, lineBytes: (command) => Buffer.byteLength(line(nextId, command)), replyBytes: () => lastReplyBytes })
     await result({ type: 'shutdown' })
   } finally {
     child.stdin.end()
@@ -1403,6 +1418,291 @@ describe('6.5 on the real NDJSON engine', () => {
   }), 15_000)
 })
 
+const fakeBinary = 'recording-test-engine'
+type StepMode = 'ok' | 'voltageCutoff' | 'chargeCutoff' | 'refused' | 'timeout' | 'crash'
+let spawnRecordingFake: () => unknown
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    spawn: (path: string, ...args: unknown[]) => path === fakeBinary
+      ? spawnRecordingFake()
+      : Reflect.apply(actual.spawn, undefined, [path, ...args]),
+  }
+})
+
+function fakeRecordingEngine() {
+  const wire: string[] = []
+  const channels = telemetryChannels(quad.vehicle.motors.length, 'attitudeHold').map(({ name }) => name)
+  let stepMode: StepMode = 'ok'
+  spawnRecordingFake = () => {
+    const child = new EventEmitter()
+    const stdout = new PassThrough()
+    let steps = 0
+    let period: number | undefined
+    const samples = (sampleSteps: number[]) => ({
+      steps: sampleSteps,
+      rows: sampleSteps.map((step) => channels.map((_, i) => i === 0 ? step * 0.001 : step + i)),
+    })
+    const stdin = new Writable({
+      write(bytes: Buffer, _encoding, done) {
+        const line = bytes.toString('utf8')
+        wire.push(line)
+        const { id, type, sampleEverySteps, steps: requestedSteps } = JSON.parse(line)
+        const send = (result: unknown) => stdout.write(JSON.stringify({ id, ok: true, result }) + '\n')
+        queueMicrotask(() => {
+          switch (type) {
+            case 'hello': send({ engineVersion: 'fake-engine', protocolVersion: PROTOCOL_VERSION, threads: 1 }); break
+            case 'ping': send({}); break
+            case 'vehicle.load': send({
+              valid: true, partCount: quad.vehicle.parts.length, motorCount: quad.vehicle.motors.length, missingMass: [],
+              totals: { massKg: quad.vehicle.totalMassKg, com: quad.vehicle.com, inertia: quad.vehicle.inertia },
+            }); break
+            case 'flight.session.start':
+              steps = 0
+              period = sampleEverySteps
+              send({ dtS: 0.001, maxStepsPerRequest: MAX_SESSION_STEPS,
+                diagnostic: diagnostic({ state: { ...diagnostic().state, steps, timeS: 0 } }),
+                ...(period ? { channels, samples: samples([0]) } : {}),
+              })
+              break
+            case 'flight.session.step': {
+              if (stepMode === 'timeout') break
+              if (stepMode === 'crash') { child.emit('exit', 1, null); break }
+              if (stepMode === 'refused') {
+                stdout.write(JSON.stringify({ id, ok: false, error: { code: 'NO_SESSION', message: 'refused step' } }) + '\n')
+                break
+              }
+              const sampleSteps: number[] = []
+              for (let i = 0; i < requestedSteps; i++) {
+                steps++
+                if (period && steps % period === 0) sampleSteps.push(steps)
+              }
+              send(stepResult({
+                stepsRun: requestedSteps,
+                endReason: stepMode === 'voltageCutoff' || stepMode === 'chargeCutoff' ? stepMode : null,
+                stateHash: steps.toString(16).padStart(16, '0'),
+                ...(period ? { samples: samples(sampleSteps) } : {}),
+              }, { state: { ...diagnostic().state, steps, timeS: steps * 0.001 } }))
+              break
+            }
+            case 'flight.session.end': send({ ended: true }); break
+            case 'shutdown': send({}); child.emit('exit', 0, null); break
+          }
+        })
+        done()
+      },
+    })
+    return Object.assign(child, { stdout, stdin, stderr: new PassThrough() })
+  }
+  const engine = new EngineSupervisor({ binaryPath: fakeBinary, maxRestarts: 0, requestTimeoutMs: 150 })
+  return {
+    engine, wire, setStepMode: (mode: StepMode) => { stepMode = mode },
+    async start() {
+      engine.start()
+      await vi.waitFor(() => expect(engine.status.state).toBe('connected'))
+    },
+  }
+}
+
+type RecordingFixture = { store: RecordingStore; recorder: SessionRecorder; recording: RecordingOptions }
+
+async function withRecordingStore(engine: EngineSupervisor, test: (fixture: RecordingFixture) => Promise<void>) {
+  const dir = await mkdtemp(join(tmpdir(), 'blaze-session-recorder-'))
+  const db = openDatabase(':memory:')
+  const repos = createRepositories(db, undefined, dir)
+  const project = repos.projects.create({ name: 'Recording test quad', frameType: 'quad-x' })
+  const store = new RecordingStore(dir, repos.runs)
+  const recorder = new SessionRecorder(store, (id) => repos.projects.get(id).name, 'test-app', () => engine.status)
+  const crash = (status: EngineSupervisor['status']) => {
+    if ((status.state === 'failed' || status.state === 'restarting') && status.lastError) recorder.failFlight(status.lastError)
+  }
+  engine.on('status', crash)
+  try {
+    await test({ store, recorder, recording: { projectId: project.id, title: 'Test flight Ω' } })
+  } finally {
+    engine.off('status', crash)
+    await recorder.shutdown('test finished')
+    db.close()
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+const recordStep = (steps = RECORD_EVERY_STEPS) => ({ steps, setpoint: { attitude: [0, 0, 0, 1], yawRateRadps: 0, climbRateMps: 0 } })
+const getRecording = (store: RecordingStore, id: string) => store.read(id, async (reader) => ({
+  summary: await reader.summary(),
+  requests: await reader.readRequests(),
+  series: await reader.readSamples({ channels: ['time'] }),
+}))
+
+describe('main recording with a fake engine transport', () => {
+  async function testFlight(test: (
+    fake: ReturnType<typeof fakeRecordingEngine>,
+    fixture: RecordingFixture,
+  ) => Promise<void>) {
+    const fake = fakeRecordingEngine()
+    await fake.start()
+    try {
+      await withRecordingStore(fake.engine, (fixture) => test(fake, fixture))
+    } finally {
+      await fake.engine.stop()
+    }
+  }
+
+  it('saves the stdin bytes, writes rows in order across chunks and hides samples unless requested', async () => testFlight(async ({ engine, wire }, { store, recorder, recording }) => {
+    const started = unwrap(await flightStart(engine, { ...startInput(), recording }, recorder))
+    const { recordingId } = started
+    expect(recordingId).toBeDefined()
+    expect(started).not.toHaveProperty('samples')
+    expect(started).not.toHaveProperty('channels')
+    const first = unwrap(await flightStep(engine, recordStep(RECORD_EVERY_STEPS - 1), recorder))
+    const last = unwrap(await flightStep(engine, recordStep(RECORD_EVERY_STEPS + 1), recorder))
+    expect(first).not.toHaveProperty('samples')
+    expect(last).not.toHaveProperty('samples')
+    unwrap(await flightEnd(engine, recorder))
+    const { summary, requests, series } = await getRecording(store, recordingId!)
+    const sent = wire.filter((line) => ['vehicle.load', 'flight.session.start', 'flight.session.step'].includes(JSON.parse(line).type))
+    expect([summary.header?.vehicleLoad, summary.header?.startRequest, ...requests].map((line) => Buffer.from(line!)))
+      .toEqual(sent.map((line) => Buffer.from(line)))
+    expect(summary.header).toMatchObject({
+      appVersion: 'test-app', engineVersion: 'fake-engine', protocolVersion: PROTOCOL_VERSION,
+      kind: 'flight', projectId: recording.projectId, projectName: 'Recording test quad', title: recording.title,
+      samplePeriodSteps: RECORD_EVERY_STEPS, firstSampleStep: 0, stepLengthS: started.dtS,
+    })
+    expect(JSON.parse(sent[1]!).sampleEverySteps).toBe(RECORD_EVERY_STEPS)
+    expect(summary).toMatchObject({ sampleCount: 3, requestCount: 2, incomplete: false,
+      end: { status: 'completed', reason: 'stopped', finalStateHash: last.stateHash, elapsedS: 0.008 },
+    })
+    expect(series[0]?.points.map(({ value }) => value)).toEqual([0, 0.004, 0.008])
+
+    const live = unwrap(await flightStart(engine, { ...startInput(), recording: { ...recording, live: true } }, recorder))
+    expect(live.channels).toEqual(summary.header?.channels.map(({ name }) => name))
+    expect(live.samples?.steps).toEqual([0])
+    expect(unwrap(await flightStep(engine, recordStep(), recorder)).samples?.steps).toEqual([RECORD_EVERY_STEPS])
+    unwrap(await flightEnd(engine, recorder))
+  }))
+
+  it('sends and returns identical bytes when recording is off, even with a recorder wired', async () => {
+    async function fly(wired: boolean) {
+      let output: unknown
+      await testFlight(async ({ engine, wire }, { recorder, store }) => {
+        const useRecorder = wired ? recorder : undefined
+        const results = [
+          await flightStart(engine, startInput(), useRecorder),
+          await flightStep(engine, recordStep(), useRecorder),
+          await flightEnd(engine, useRecorder),
+        ]
+        expect(await store.listRecent(10)).toEqual([])
+        output = [wire.filter((line) => !['hello', 'ping'].includes(JSON.parse(line).type)), JSON.stringify(results)]
+      })
+      return output
+    }
+    expect(await fly(true)).toEqual(await fly(false))
+  })
+
+  it.each([
+    ['voltageCutoff', 'completed', 'voltageCutoff'],
+    ['chargeCutoff', 'completed', 'chargeCutoff'],
+    ['refused', 'failed', 'NO_SESSION: refused step'],
+    ['timeout', 'failed', 'engine request flight.session.step timed out'],
+    ['crash', 'failed', 'Engine exited unexpectedly (exit code 1)'],
+  ] as const)('closes on %s with the last received hash', async (mode, status, reason) => testFlight(async ({ engine, setStepMode }, { store, recorder, recording }) => {
+    const { recordingId } = unwrap(await flightStart(engine, { ...startInput(), recording }, recorder))
+    const first = unwrap(await flightStep(engine, recordStep(), recorder))
+    setStepMode(mode)
+    const last = await flightStep(engine, recordStep(), recorder)
+    expect(last.ok).toBe(status === 'completed')
+    await vi.waitFor(async () => expect((await store.get(recordingId!)).open).toBe(false))
+    const { summary, requests } = await getRecording(store, recordingId!)
+    expect(requests).toHaveLength(2)
+    expect(summary.end).toMatchObject({ status, reason, finalStateHash: last.ok ? last.data.stateHash : first.stateHash,
+      engineError: status === 'failed' ? reason : null,
+    })
+  }))
+
+  it.each(['app quit', 'window closed'])('aborts the replaced flight and waits for the active writer on %s', async (reason) => testFlight(async ({ engine }, { store, recorder, recording }) => {
+    const before = unwrap(await flightStart(engine, { ...startInput(), recording }, recorder))
+    const lastBefore = unwrap(await flightStep(engine, recordStep(), recorder))
+    const after = unwrap(await flightStart(engine, { ...startInput(), recording }, recorder))
+    const lastAfter = unwrap(await flightStep(engine, recordStep(), recorder))
+    await recorder.shutdown(reason)
+    const beforeSummary = (await getRecording(store, before.recordingId!)).summary
+    const afterSummary = (await getRecording(store, after.recordingId!)).summary
+    expect(beforeSummary.end).toMatchObject({ status: 'aborted', reason: 'replaced by a new start', finalStateHash: lastBefore.stateHash })
+    expect(afterSummary.end).toMatchObject({ status: 'aborted', reason, finalStateHash: lastAfter.stateHash })
+  }))
+
+  it('starts and steps while the file opens, then drains buffered data on stop', async () => testFlight(async ({ engine }, { store, recorder, recording }) => {
+    let release!: () => void
+    const opening = new Promise<void>((resolve) => { release = resolve })
+    const start = store.start.bind(store)
+    const spy = vi.spyOn(store, 'start').mockImplementation(async (header, options) => {
+      await opening
+      return start(header, options)
+    })
+    try {
+      const { recordingId } = unwrap(await flightStart(engine, { ...startInput(), recording }, recorder))
+      const last = unwrap(await flightStep(engine, recordStep(), recorder))
+      const stopped = flightEnd(engine, recorder)
+      release()
+      unwrap(await stopped)
+      const { summary, series } = await getRecording(store, recordingId!)
+      expect(summary).toMatchObject({ sampleCount: 2, requestCount: 1, end: { reason: 'stopped', finalStateHash: last.stateHash } })
+      expect(series[0]?.points.map(({ value }) => value)).toEqual([0, 0.004])
+    } finally {
+      release()
+      spy.mockRestore()
+    }
+  }))
+
+  it('aborts the recorded flight when a start with recording off replaces it', async () => testFlight(async ({ engine }, { store, recorder, recording }) => {
+    const before = unwrap(await flightStart(engine, { ...startInput(), recording }, recorder))
+    const inFlight = flightStep(engine, recordStep(), recorder)
+    const after = unwrap(await flightStart(engine, startInput(), recorder))
+    const last = unwrap(await inFlight)
+    expect(after).not.toHaveProperty('recordingId')
+    expect(unwrap(await flightStep(engine, recordStep(), recorder))).not.toHaveProperty('samples')
+    await vi.waitFor(async () => expect((await store.get(before.recordingId!)).open).toBe(false))
+    const { summary } = await getRecording(store, before.recordingId!)
+    expect(summary.end).toMatchObject({ status: 'aborted', finalStateHash: last.stateHash })
+    unwrap(await flightEnd(engine, recorder))
+  }))
+
+  it('reports a failing writer and continues stepping the engine', async () => testFlight(async ({ engine }, { store, recorder, recording }) => {
+    const start = store.start.bind(store)
+    const spy = vi.spyOn(store, 'start').mockImplementation((header, options) => start(header, {
+      ...options,
+      openFile: async (path, flags) => {
+        const file = await open(path, flags)
+        let writeCount = 0
+        return {
+          write: (buffer, offset, length) => {
+            // Prefix, header and initial row succeed; fail the first flight-step request frame.
+            if (++writeCount > 3 && buffer[0] === Frame.request) return Promise.reject(new Error('ENOSPC: test disk full'))
+            return file.write(buffer, offset, length)
+          },
+          sync: () => file.sync(),
+          close: () => file.close(),
+        }
+      },
+    }))
+    try {
+      const { recordingId } = unwrap(await flightStart(engine, { ...startInput(), recording }, recorder))
+      const first = unwrap(await flightStep(engine, recordStep(), recorder))
+      expect(first.stepsRun).toBe(RECORD_EVERY_STEPS)
+      await vi.waitFor(async () => expect(await store.get(recordingId!)).toMatchObject({ open: false, status: 'failed', sampleCount: 1 }))
+      unwrap(await flightStep(engine, recordStep(), recorder))
+      const next = unwrap(await flightStep(engine, recordStep(), recorder))
+      expect(next).toMatchObject({ recordingError: 'ENOSPC: test disk full', stepsRun: RECORD_EVERY_STEPS })
+      expect(next).not.toHaveProperty('samples')
+      unwrap(await flightEnd(engine, recorder))
+    } finally {
+      spy.mockRestore()
+    }
+  }))
+})
+
 const sup = new EngineSupervisor({ binaryPath })
 afterAll(() => sup.stop())
 
@@ -1419,6 +1719,96 @@ describe('a real engine session', () => {
       check()
     })
   }, 10000)
+
+  it('replays saved wind and Dryden turbulence lines in a fresh engine with the recorded hash', async () => withRecordingStore(sup, async ({ store, recorder, recording }) => {
+    // Same fixed wind seed as the raw sampling/replay test above.
+    const started = unwrap(await flightStart(sup, { ...startInput(), recording, wind: {
+      fromDeg: 0, mean: { kind: 'constant', speedMps: 8 }, gust: null, turbulence: { kind: 'dryden', seed: 0 },
+    } }, recorder))
+    unwrap(await flightStep(sup, recordStep(MAX_SESSION_STEPS - 1), recorder))
+    const last = unwrap(await flightStep(sup, recordStep(MAX_SESSION_STEPS), recorder))
+    unwrap(await flightEnd(sup, recorder))
+    const { summary, requests, series } = await getRecording(store, started.recordingId!)
+    expect(summary.sampleCount).toBe(1 + Math.floor((2 * MAX_SESSION_STEPS - 1) / RECORD_EVERY_STEPS))
+    expect(series[0]?.points).toHaveLength(summary.sampleCount)
+    expect(summary.end?.finalStateHash).toBe(last.stateHash)
+
+    await withProtocol(async ({ sendLine }) => {
+      let final: unknown
+      for (const line of [summary.header!.vehicleLoad, summary.header!.startRequest, ...requests]) {
+        const response = await sendLine(line)
+        if (!response.ok) throw new Error(response.error.message)
+        final = response.result
+      }
+      expect(FlightSessionStepResultSchema.parse(final).stateHash).toBe(summary.end?.finalStateHash)
+    })
+  }))
+
+  it('reads scenario samples and step-test trace channels from disk', async () => withRecordingStore(sup, async ({ store, recorder, recording }) => {
+    const { airDensityKgM3, cutoff } = startInput()
+    const config = { airDensityKgM3, cutoff }
+    const scenario = unwrap(await scenarioRun(sup, { ...quad, config, recording,
+      scenario: { type: 'builtin', name: 'balanced_hover' },
+    }, recorder))
+    const saved = await getRecording(store, scenario.recordingId!)
+    expect(scenario).not.toHaveProperty('samples')
+    expect(scenario).not.toHaveProperty('channels')
+    expect(saved.summary).toMatchObject({ requestCount: 0, header: { kind: 'scenario', samplePeriodSteps: RECORD_EVERY_STEPS },
+      end: { reason: 'duration (passed)', status: 'completed', finalStateHash: scenario.stateHash },
+    })
+    expect(saved.series[0]?.points).toHaveLength(Math.floor(scenario.report.elapsedS / (0.001 * RECORD_EVERY_STEPS)) + 1)
+
+    // Same AttitudeLost threshold as engine-core/src/scenario/builtins.rs:388-390.
+    const failed = unwrap(await scenarioRun(sup, { ...quad, config, recording, scenario: { type: 'custom', scenario: {
+      ...scenario.scenario, checks: [{ type: 'attitudeLost', afterS: 0, aboveDeg: 30 }],
+    } } }, recorder))
+    expect(failed.report.passed).toBe(false)
+    expect((await getRecording(store, failed.recordingId!)).summary.end).toMatchObject({ status: 'completed', reason: 'duration (failed)' })
+
+    // Same step and decimation as the raw step-test wind/terrain check above.
+    const test = { step: { type: 'rate', axis: 'roll', amplitudeRadps: 10 * Math.PI / 180 }, holdS: 0.002, durationS: 0.008, decimationSteps: 2 }
+    const stepped = unwrap(await stepTest(sup, { ...quad, config, recording, test }, recorder))
+    const trace = await getRecording(store, stepped.recordingId!)
+    expect(trace.summary).toMatchObject({ sampleCount: stepped.trace.samples.length, requestCount: 0,
+      header: { kind: 'step-test', samplePeriodSteps: test.decimationSteps },
+      end: { reason: 'duration', status: 'completed', finalStateHash: stepped.stateHash },
+    })
+    const measured = await store.read(stepped.recordingId!, (reader) => reader.readSamples({ channels: ['stepTest.measured'] }))
+    expect(measured[0]?.points.map(({ value }) => value)).toEqual(stepped.trace.samples.map(({ signal }) => signal.kind === 'rate' ? signal.measuredRadps : null))
+  }))
+
+  it('measures the actual 60 s scenario NDJSON response sampled every fourth step', async () => {
+    const { airDensityKgM3, cutoff } = startInput()
+    const config = { airDensityKgM3, cutoff, wind: {
+      fromDeg: 0, mean: { kind: 'constant', speedMps: 8 }, gust: null, turbulence: { kind: 'dryden', seed: 0 },
+    } }
+    const scenario = { type: 'custom', scenario: {
+      name: '60 s position hold', durationS: MAX_SCENARIO_S, modifications: [], checks: [], script: [],
+      flightScript: [{ fromS: 0, command: { type: 'position', forward: 0, right: 0, yawRight: 0, throttle: 0 } }],
+    } }
+    const expectedRows = MAX_SCENARIO_S / (0.001 * RECORD_EVERY_STEPS) + 1
+    await withProtocol(async ({ result, replyBytes }) => {
+      await result({ type: 'vehicle.load', ...quad })
+      const params = ScenarioRunParamsSchema.parse({ scenario, config: { ...config, sampleEverySteps: RECORD_EVERY_STEPS } })
+      const start = performance.now()
+      const raw = await result({ type: 'scenario.run', ...params })
+      const wireMs = performance.now() - start
+      const data = ScenarioRunResultSchema.parse(raw)
+      expect(data.report.elapsedS).toBeCloseTo(MAX_SCENARIO_S)
+      expect(data.samples?.rows).toHaveLength(expectedRows)
+      console.info(`60 s scenario at 250 Hz: ${replyBytes()} NDJSON bytes, ${data.channels?.length} columns, ${wireMs.toFixed(0)} ms through stdout and JSON parse`)
+    })
+
+    await withRecordingStore(sup, async ({ store, recorder, recording }) => {
+      const start = performance.now()
+      const data = unwrap(await scenarioRun(sup, { ...quad, config, scenario, recording }, recorder))
+      const endToEndMs = performance.now() - start
+      expect(data).not.toHaveProperty('samples')
+      const summary = await store.read(data.recordingId!, (reader) => reader.summary())
+      expect(summary).toMatchObject({ sampleCount: expectedRows, end: { status: 'completed', finalStateHash: data.stateHash } })
+      console.info(`60 s scenario through main and recording close: ${endToEndMs.toFixed(0)} ms, ${summary.bytes} saved bytes`)
+    })
+  })
 
   it('starts, steps in chunks (contacts and a valid last diagnostic) and ends, through the IPC handlers', async () => {
     const setpoint = { attitude: [0, 0, 0, 1] as [number, number, number, number], yawRateRadps: 0, climbRateMps: 0 }

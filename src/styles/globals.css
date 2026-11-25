@@ -1,4 +1,12 @@
 @import 'tailwindcss';
+@import 'uplot/dist/uPlot.min.css';
+
+.telemetry-plot .u-select {
+  background: color-mix(in oklch, var(--color-accent) 35%, transparent);
+}
+.telemetry-plot .u-cursor-x {
+  border-color: var(--color-fg-muted);
+}
 
 /*
  * Visual language — see documentation/DESIGN.md.

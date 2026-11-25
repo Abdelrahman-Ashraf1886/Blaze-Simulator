@@ -1,4 +1,5 @@
 import { isDeviceCalibration, type DeviceCalibration } from '../features/input/calibration'
+import { isTelemetryLayout, type TelemetryLayout } from '../features/telemetry/layout'
 
 /**
  * Per-user UI conveniences (sidebar state and similar). Stored in localStorage;
@@ -64,4 +65,25 @@ export function readFlightDeviceButtons(): boolean {
 
 export function writeFlightDeviceButtons(enabled: boolean): void {
   writePref('flight.deviceButtons', enabled)
+}
+
+// Phase 7 telemetry D10 (documentation/plans/phase-7-telemetry.md:46).
+export function readRecordRuns(): boolean {
+  const saved = readPref<unknown>('record-runs', true)
+  return typeof saved === 'boolean' ? saved : true
+}
+
+export function writeRecordRuns(enabled: boolean): void {
+  writePref('record-runs', enabled)
+}
+
+const telemetryLayoutKey = 'telemetry.layout'
+
+export function readTelemetryLayout(): TelemetryLayout | undefined {
+  const saved = readPref<unknown>(telemetryLayoutKey, undefined)
+  return isTelemetryLayout(saved) ? saved : undefined
+}
+
+export function writeTelemetryLayout(layout: TelemetryLayout): void {
+  if (isTelemetryLayout(layout)) writePref(telemetryLayoutKey, layout)
 }

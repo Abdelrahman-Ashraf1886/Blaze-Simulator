@@ -38,6 +38,8 @@ import {
 } from './protocol'
 import { runStepTest } from './step-test'
 
+export type CaptureRequestLine = (line: string) => void
+
 export interface SupervisorOptions {
   binaryPath: string
   requestTimeoutMs?: number
@@ -148,6 +150,7 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
   async loadVehicle(
     vehicle: VehicleDefinition,
     extra: { propulsion?: PropulsionDefinition; aero?: BodyDrag } = {},
+    capture?: CaptureRequestLine,
   ): Promise<VehicleLoadResult> {
     const checked = VehicleDefinitionSchema.parse(vehicle)
     const result = await this.request({
@@ -155,7 +158,7 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
       vehicle: checked,
       ...(extra.propulsion ? { propulsion: PropulsionDefinitionSchema.parse(extra.propulsion) } : {}),
       ...(extra.aero ? { aero: BodyDragSchema.parse(extra.aero) } : {}),
-    })
+    }, undefined, capture)
     return VehicleLoadResultSchema.parse(result)
   }
 
@@ -170,15 +173,15 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
   }
 
   /** Live flight (4.8 part B): replaces any session; the loaded vehicle must carry propulsion. */
-  async startFlightSession(params: FlightSessionStartParams): Promise<FlightSessionStartResult> {
+  async startFlightSession(params: FlightSessionStartParams, capture?: CaptureRequestLine): Promise<FlightSessionStartResult> {
     const checked = FlightSessionStartParamsSchema.parse(params)
-    return FlightSessionStartResultSchema.parse(await this.request({ type: 'flight.session.start', ...checked }))
+    return FlightSessionStartResultSchema.parse(await this.request({ type: 'flight.session.start', ...checked }, undefined, capture))
   }
 
   /** Advances the session by `steps` 1 ms steps with the setpoint held (at most 100 steps, well inside the timeout). */
-  async stepFlightSession(params: FlightSessionStepParams): Promise<FlightSessionStepResult> {
+  async stepFlightSession(params: FlightSessionStepParams, capture?: CaptureRequestLine): Promise<FlightSessionStepResult> {
     const checked = FlightSessionStepParamsSchema.parse(params)
-    return FlightSessionStepResultSchema.parse(await this.request({ type: 'flight.session.step', ...checked }))
+    return FlightSessionStepResultSchema.parse(await this.request({ type: 'flight.session.step', ...checked }, undefined, capture))
   }
 
   async endFlightSession(): Promise<FlightSessionEndResult> {
@@ -189,13 +192,13 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
    * A scripted scenario (4.9 part B) on the loaded vehicle, which needs propulsion. The engine bounds it
    * (60 s, or 10 s with a ground), so the default timeout is enough.
    */
-  async runScenario(params: ScenarioRunParams): Promise<ScenarioRunResult> {
+  async runScenario(params: ScenarioRunParams, capture?: CaptureRequestLine): Promise<ScenarioRunResult> {
     const checked = ScenarioRunParamsSchema.parse(params)
-    return ScenarioRunResultSchema.parse(await this.request({ type: 'scenario.run', ...checked }))
+    return ScenarioRunResultSchema.parse(await this.request({ type: 'scenario.run', ...checked }, undefined, capture))
   }
 
-  runStepTest(params: StepTestRunParams) {
-    return runStepTest((command) => this.request(command), params)
+  runStepTest(params: StepTestRunParams, capture?: CaptureRequestLine) {
+    return runStepTest((command) => this.request(command, undefined, capture), params)
   }
 
   private launch(state: 'starting' | 'restarting'): void {
@@ -283,7 +286,7 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
     this.restartTimer = setTimeout(() => this.launch('restarting'), delay)
   }
 
-  private request(command: EngineCommand, timeoutMs = this.opts.requestTimeoutMs): Promise<unknown> {
+  private request(command: EngineCommand, timeoutMs = this.opts.requestTimeoutMs, capture?: CaptureRequestLine): Promise<unknown> {
     const child = this.child
     if (!child) return Promise.reject(new Error('engine not running'))
     if (this.stopping && command.type !== 'shutdown') return Promise.reject(new Error('engine is stopping'))
@@ -294,13 +297,19 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
         reject(new Error(`engine request ${command.type} timed out`))
       }, timeoutMs)
       this.pending.set(id, { resolve, reject, timer })
-      child.stdin.write(`${JSON.stringify({ id, ...command })}\n`, (err) => {
+      const line = `${JSON.stringify({ id, ...command })}\n`
+      child.stdin.write(line, (err) => {
         if (err) {
           clearTimeout(timer)
           this.pending.delete(id)
           reject(err)
         }
       })
+      try {
+        capture?.(line)
+      } catch (error) {
+        this.opts.log(`[recordings] could not capture engine request: ${String(error)}`)
+      }
     })
   }
 

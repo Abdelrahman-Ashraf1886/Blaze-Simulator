@@ -1,5 +1,23 @@
 # Development log
 
+## 2026-11-25 — Phase 6, milestone 6.0b: live-flight measurement; engine pipe crash
+
+**Verdict: the 4.8 lockstep stays (D2(a)).** Three runs of `npm run test:flight-perf`, all valid, all judged cases pass. i7-9750H, 60 Hz primary display, mains power, nothing else running, window 1388 × 785. The app drew on the Intel UHD 630 (ANGLE/D3D11), not on the GTX 1650. 20 s per case, 60 stick changes per case, none unmatched, no recorder overflow.
+
+| Case | Frame median, ms | Frame p95, ms | Frames over two periods (longest, ms) | Request p95, ms | Stick to draw p95, ms | Simulated / wall time |
+| --- | --- | --- | --- | --- | --- | --- |
+| Limit | 17.5 | 35.0 | – | – | 67 | – |
+| On the ground | 16.6 / 16.6 / 16.6 | 19.5 / 19.4 / 19.3 | 3 (271) / 4 (137) / 2 (426) | 6.4 / 6.4 / 6.7 | 50.5 / 51.4 / 50.6 | 0.986 / 0.991 / 0.980 |
+| Free hover | 16.6 / 16.6 / 16.6 | 19.3 / 18.4 / 18.5 | 5 (95) / 4 (124) / 5 (90) | 4.5 / 4.4 / 4.2 | 50.4 / 50.8 / 48.7 | 0.995 / 0.990 / 0.995 |
+| Hover over 512 × 512 terrain, wind, gust, turbulence, ground effect (reported) | 16.6 / 16.6 / 16.7 | 19.3 / 19.5 / 19.2 | 4 (125) / 5 (100) / 4 (128) | 5.8 / 5.7 / 5.7 | 49.4 / 50.5 / 51.7 | 0.986 / 0.991 / 0.989 |
+
+- Frame limits carry the 5 % timer tolerance of D2. The stick limit covers input sampling, IPC, engine and renderer submission; controller transport, GPU completion, compositor and monitor are outside it. The animation frame after the draw came 60.0–61.6 ms (p95) after the stick change.
+- Each 20 s run had two to five hitches above two periods, the longest 426 ms; they also give the largest single stick delays (up to 182 ms) and the 1–2 % of simulated time lost. They are within the p95 limits. Their cause was not traced.
+- The stick changes landed 5 to 17 ms into the frame, so the first 5 ms after a frame start, while the main thread draws, were not sampled.
+- Earlier runs the same night were discarded: three with bugs in the script (a readout parsed with its unit, the window checked before it was shown), three before the fix below or with lost window focus. Their judged values, where valid, also passed.
+
+**Crash fixed.** A request written to an engine that had just exited raised an unhandled `error` event on its stdin, and Electron ended in a "JavaScript error in the main process" dialog (`write EPIPE`). `EngineSupervisor` now handles that event (the request still fails on its own and the exit handler restarts the engine) and refuses requests while it stops. The regression test kills the engine under load and fails with the same error without the fix. The fault was older than Phase 6; it was seen when a measurement run closed the app during a flight.
+
 ## 2026-11-24 — Phase 6 flight environment
 
 - **6.0a–6.5.** Recorded the PX4 v1.13.3 references and MIL-F-8785C shear and gust sources. Wind pushes through body drag only. Shear clamps and sets the above-range flag above 1000 ft. The discrete gust ramps with mean-air-relative distance and stays at its final amplitude. Optional Cheeseman–Bennett ground effect is a single-rotor thrust correction without rotor interaction. Terrain and fixed obstacles enter the collision world, and start clearance resolves against the build’s collision shapes. The host and storage carry the environment data, and sessions retain accepted inputs for deterministic in-memory replay. The 6.5 host step costs were 1.3 ms / 4.2 ms per 100 steps (milestone measurements supplied for this entry). 6.0b stream measurement remains pending the user’s pass limits. [ADR 0010](adr/0010-flight-environment.md)

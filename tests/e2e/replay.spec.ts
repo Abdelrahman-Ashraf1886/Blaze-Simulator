@@ -76,8 +76,7 @@ test('shows a live trace, then replays, scrubs and verifies a three-second recor
       await page.getByRole('checkbox', { name: 'Mode names instead of codes' }).check()
       await page.getByRole('button', { name: 'Export CSV' }).click()
       await expect(page.getByText('CSV saved.')).toBeVisible()
-      const rows = (await readFile(csv, 'utf8')).trimEnd().split('
-')
+      const rows = (await readFile(csv, 'utf8')).trimEnd().split('\r\n')
       expect(rows[0]).toMatch(/^time \[s\],/)
       // 250 Hz for at least the three seconds flown, and one initial row.
       expect(rows.length - 1).toBeGreaterThanOrEqual(751)

@@ -48,6 +48,20 @@ export const recordingSampleSchema = recordingIdSchema.extend({
   message: 'Duplicate recording channel',
 })
 
+export const recordingCsvSchema = z.strictObject({
+  id: recordingIdSchema.shape.id,
+  channels: z.array(recordingSampleSchema.shape.channels.element).optional(),
+  fromS: recordingSampleSchema.shape.fromS,
+  toS: recordingSampleSchema.shape.toS,
+  bom: z.boolean().optional(),
+  comments: z.boolean().optional(),
+  enumNames: z.boolean().optional(),
+}).refine(({ fromS, toS }) => fromS === undefined || toS === undefined || fromS <= toS, {
+  message: 'Inverted recording time range',
+}).refine(({ channels }) => !channels || new Set(channels).size === channels.length, {
+  message: 'Duplicate recording channel',
+})
+
 export const setTuningSchema = z.object({
   id: z.uuid(),
   overrides: z.record(z.string(), z.unknown()).superRefine((overrides, ctx) => {

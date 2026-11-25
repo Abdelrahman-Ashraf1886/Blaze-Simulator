@@ -3,7 +3,8 @@ import { existsSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
-import { createHandlers, createRecordingHandlers, createTerrainHandlers, importTerrain } from '../ipc/handlers'
+import { createHandlers, createRecordingCsvHandler, createRecordingHandlers, createTerrainHandlers, importTerrain } from '../ipc/handlers'
+import { createRecordingCsvExporter } from './telemetry/csv'
 import { RecordingStore } from './telemetry/store'
 import { SessionRecorder } from './telemetry/session-recorder'
 import { backfillHullsAsync, importAssetFileAsync, removeAssetFiles, resolveAssetUrl } from './assets/store'
@@ -42,6 +43,7 @@ protocol.registerSchemesAsPrivileged([
 let db: Db | null = null
 let dbPath = ''
 let engine: EngineSupervisor | null = null
+let recordingCsv: ReturnType<typeof createRecordingCsvExporter> | undefined
 let recorder: SessionRecorder | undefined
 let mainWindow: BrowserWindow | null = null
 
@@ -275,6 +277,20 @@ async function start(): Promise<void> {
       return { ok: false, error: { code: 'INTERNAL', message: `Could not export: ${(e as Error).message}` } }
     }
   })
+  recordingCsv = createRecordingCsvExporter(recordings)
+  const exportCsv = createRecordingCsvHandler(recordingCsv)
+  ipcMain.handle(Channels.recordingExportCsv, (event, payload: unknown) =>
+    exportCsv(payload, async (suggestedName) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const options = {
+        title: 'Export recording',
+        defaultPath: join(app.getPath('documents'), suggestedName),
+        filters: [{ name: 'CSV', extensions: ['csv'] }],
+      }
+      const picked = await (win ? dialog.showSaveDialog(win, options) : dialog.showSaveDialog(options))
+      return picked.canceled || !picked.filePath ? null : picked.filePath
+    }))
+
   ipcMain.handle(Channels.componentsImportPack, async (event): Promise<IpcResult<{ imported: number; skipped: number } | null>> => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const options = {
@@ -377,7 +393,8 @@ app.on('before-quit', (event) => {
   // Never let a stuck engine keep the app alive: give it 3 s, then quit regardless.
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 3000))
   const closeRecordings = recorder?.shutdown('app quit')
-  void Promise.race([Promise.allSettled([closeRecordings, engine.stop()]), deadline]).finally(() => app.quit())
+  const closeCsvExports = recordingCsv?.shutdown()
+  void Promise.race([Promise.allSettled([closeRecordings, closeCsvExports, engine.stop()]), deadline]).finally(() => app.quit())
 })
 
 // The database must outlive the windows: closing a window runs its unload handler,

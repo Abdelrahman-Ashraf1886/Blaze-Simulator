@@ -89,6 +89,7 @@ describe('IPC handlers', () => {
       Channels.terrainImport,
       Channels.viewportSavePng,
       Channels.componentsExportPack,
+      Channels.recordingExportCsv,
       Channels.componentsImportPack,
     ]
     const requestChannels = Object.values(Channels).filter((c) => !mainOnly.includes(c))

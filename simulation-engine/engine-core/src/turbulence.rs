@@ -55,10 +55,10 @@ impl Parameters {
 /// Generators" (2014), fixed-increment variant by Sebastiano Vigna.
 /// Constants and transition from https://prng.di.unimi.it/splitmix64.c.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct SplitMix64(u64);
+pub(crate) struct SplitMix64(pub(crate) u64);
 
 impl SplitMix64 {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let z = (self.0 ^ (self.0 >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
         let z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
@@ -70,7 +70,7 @@ impl SplitMix64 {
         ((self.next() >> 12) as f64 + 0.5) / (1_u64 << 52) as f64
     }
 
-    fn normals(&mut self) -> [f64; 5] {
+    pub(crate) fn normals(&mut self) -> [f64; 5] {
         // Box and Muller (1958), "A Note on the Generation of Random Normal
         // Deviates". Draw three pairs every time and discard the sixth value.
         // Rapier's enhanced-determinism enables Simba's libm_force for the

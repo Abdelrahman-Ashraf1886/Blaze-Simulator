@@ -1,5 +1,33 @@
 # Development log
 
+## 2026-11-25 — Phase 7 telemetry, recordings and gyro feedback
+
+- **7.0–7.2.** Added sourced sensor specs and PX4 parameters. Unavailable inputs stay explicit in the sensor form. Added optional engine sampling for flights and scenarios. Stored runs in append-only, CRC-checked files with a SQLite metadata row. Startup recovers the intact prefix of an interrupted recording and closes its run row. [Catalogue](../database/seed/components.v1.json#L12-L44) · [Parameters](../database/reference/physics.v1.json#L1538) · [Sampler](../simulation-engine/engine-host/src/telemetry.rs#L63-L109) · [Recovery](../electron/main/telemetry/store.ts#L115-L144)
+- **7.3–7.4.** Connected the recorder to live flights, scenarios and step tests. The dashboard shows recent runs. Recording shutdown moved to the window's `closed` event so cancelling a close leaves the flight recording active. Added uPlot graphs and a rolling live panel. [Recorder](../electron/main/telemetry/session-recorder.ts#L228-L274) · [Dashboard](../src/features/dashboard/DashboardPage.tsx#L110-L123) · [Close handling](../electron/main/index.ts#L399-L417) · [Live plots](../src/features/telemetry/LiveGraphs.tsx#L6-L25)
+- **7.5.** Added run history, 3D replay, a shared graph cursor, a second-run overlay and Verify in a separate engine. Range reads on a 100 MB file took 1446 ms for a one-second query before the chunk index cache. With the cache they took 710 ms cold and 3–4 ms repeated. Main now reuses the validated offsets and reads the requested window. [Run graphs](../src/features/telemetry/RunGraphs.tsx#L140-L249) · [Verify](../electron/main/telemetry/verify.ts#L80-L166) · [Index](../electron/main/telemetry/reader.ts#L221-L280)
+- **7.6–7.7.** Added CSV export by channel and time range, and reports for flights, scenarios and step tests. Grouped propulsion rows by motor group and kept tables together in print. A 3 s report prints on six A4 pages. [CSV](../electron/main/telemetry/csv.ts#L40-L102) · [Report build](../src/features/telemetry/report/ReportBuild.tsx) · [Print layout](../src/features/telemetry/report/report.css#L51-L90) · [PDF footer](../electron/main/telemetry/report-pdf.ts#L17-L47)
+- **7.8–7.9.** Added seeded gyro, accelerometer, barometer and GPS signals, with saved project settings shared by flights, scenarios and step tests. Missing seeds appear first in the input list. Modelled gyro feedback adds the PX4 filters and a D term on filtered acceleration. The same step test compares gyro feedback with perfect state. Response metrics use true motion. Recordings declare the raw and filtered channels. [Settings inputs](../src/domain/sensors.ts#L174-L229) · [Models](../simulation-engine/engine-core/src/sensors.rs#L179-L257) · [Recorded channels](../electron/main/telemetry/session-recorder.ts#L18-L26) · [Comparison](../tests/unit/scenario-protocol.test.ts#L794-L820) · [Tuning readout](../src/features/tuning/StepTestPanel.tsx#L137-L142)
+- **7.12 in progress.** Added acceptance test 12 for a flight, replay, verification, CSV and PDF, then reopening and verifying after restart and deleting the run and file. The test has not been run. [Test 12](../tests/e2e/phase7-acceptance.spec.ts#L27) · [ADR 0011](adr/0011-telemetry-recording-and-sensor-models.md)
+
+### Catalogue acceptance and performance
+
+| Feedback for a 10 deg/s roll-rate step | Rise time | Overshoot |
+| --- | --- | --- |
+| Modelled gyro | 0.060 s | 13.2 % |
+| Perfect state | 0.069 s | 11.8 % |
+
+Both exceeded the 10 % overshoot limit set before the first run. On 2026-11-25 the user chose to report overshoot without judging it. With 2.8 mdps/√Hz gyro density in hover, tilt RMS was 1.5e-5 rad and body-rate RMS was 2.4e-4 rad/s. [Catalogue test](../tests/unit/scenario-protocol.test.ts#L719-L820)
+
+- **D20 sensor cost.** Compared with sensors off, flying on the gyro cost 1.27× per 1 ms step without samples and 1.35× when sampling every fourth step. Three runs each; without samples only one run is usable, because the other two timed the sensors-off case at about 31 µs per step instead of 12, slower than with sensors on (unexplained, probably request round trips). Both ratios are below the 2× limit. [D20](plans/phase-7-telemetry.md#decisions-made-with-you)
+- **Disk use.** A recording at 250 Hz takes about 15 MB per minute. The plan estimated 9.6 MB per minute. [Saved cadence](../electron/main/telemetry/session-recorder.ts#L9-L26)
+- **D18 frame time with recording and live graphs.** PERF-GATE: to be measured. [Gate configuration](../tests/e2e/flight-performance.spec.ts#L270-L272)
+
+### PX4 v1.13.3 source lines
+
+- `src/modules/sensors/vehicle_angular_velocity/VehicleAngularVelocity.cpp:160–190,735–763` supplies the static notch ordering, two-pole rate low-pass and filtered rate difference. Lines 493–526 give PX4's reset inputs and line 916 applies bias after filtering. This implementation primes from the first delivered gyro sample and treats the entered bias as residual. It runs at 1 kHz, without raw FIFO processing, publication throttling or dynamic notches. [Rust cascade](../simulation-engine/engine-core/src/gyro_filters.rs#L1-L195)
+- `src/lib/mathlib/math/filter/NotchFilter.hpp:78–87,133–147,173–187,217–229,267–285`, `LowPassFilter2p.hpp:61–107,128–144` and `AlphaFilter.hpp:67–88,102–119` supply the single-precision equations. `src/modules/mc_rate_control/RateControl/RateControl.cpp:57–68` supplies the rate error and acceleration D-term convention. [Filter port](../simulation-engine/engine-core/src/gyro_filters.rs#L33-L195) · [Rate loop](../simulation-engine/engine-core/src/controller.rs#L347)
+- `src/modules/sensors/vehicle_angular_velocity/imu_gyro_parameters.c:51,66,85,100,118,160,173` supplies the notch, cutoff and dynamic-notch parameter references. `src/modules/ekf2/ekf2_params.c:89` supplies the labelled GPS delay suggestion. [Reference values](../database/reference/physics.v1.json#L1538) · [Delay input](../src/domain/sensors.ts#L198-L229)
+
 ## 2026-11-25 — Phase 6, milestone 6.0b: live-flight measurement; engine pipe crash
 
 **Verdict: the 4.8 lockstep stays (D2(a)).** Three runs of `npm run test:flight-perf`, all valid, all judged cases pass. i7-9750H, 60 Hz primary display, mains power, nothing else running, window 1388 × 785. The app drew on the Intel UHD 630 (ANGLE/D3D11), not on the GTX 1650. 20 s per case, 60 stick changes per case, none unmatched, no recorder overflow.

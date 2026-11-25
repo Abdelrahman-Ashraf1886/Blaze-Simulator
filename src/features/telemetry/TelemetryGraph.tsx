@@ -234,10 +234,11 @@ function GraphPlot({ title, channels, comparison = emptyChannels, cursor, series
 
     function createChart(bounds?: { min: number; max: number }) {
       const options = plotOptions(node, channels, comparison, drawn, width, height, {
-        ready: live ? [() => {
+        // uPlot calls forEach on every hook key present, so an undefined entry throws.
+        ...(live ? { ready: [() => {
           drawingLive = false
           refresh()
-        }] : undefined,
+        }] } : {}),
         setCursor: [(plot) => {
           if (drawingLive) return
           const left = plot.cursor.left

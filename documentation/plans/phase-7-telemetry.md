@@ -161,7 +161,7 @@ delays are refused. [Gyro timing](../../simulation-engine/engine-core/src/gyro_f
 **Status correction (2026-11-25), tests 10–12 and 7.12 dependencies.** Both rate-step runs exceeded
 the original overshoot limit. The user chose to report overshoot without judging it. D18
 PERF-GATE: to be measured. Test 12 covers a restart with the same user data, verifies again,
-then deletes the run and checks the file is gone. Its e2e execution is pending. Acceptance
+then deletes the run and checks the file is gone. It passes. Acceptance
 depends on the merged core milestones. [Results](../DEVLOG.md#catalogue-acceptance-and-performance) · [Test 12](../../tests/e2e/phase7-acceptance.spec.ts#L27)
 
 ## Risks

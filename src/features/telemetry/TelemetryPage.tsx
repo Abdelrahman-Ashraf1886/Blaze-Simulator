@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import type { DesktopApi, RecordingRun, RecordingSummary } from '../../../electron/ipc/contract'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
@@ -42,7 +43,39 @@ async function loadRuns(api: DesktopApi, list: NonNullable<DesktopApi['runs']['l
   return { runs, errors }
 }
 
-function RunDetail({ run: listed, api, onClose }: { run: RecordingRun; api: DesktopApi; onClose: () => void }) {
+function CsvExport({ id, api }: { id: string; api: NonNullable<DesktopApi['recording']> }) {
+  const [enumNames, setEnumNames] = useState(false)
+  const [comments, setComments] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [outcome, setOutcome] = useState<{ text: string; failed: boolean }>()
+
+  async function save() {
+    setSaving(true)
+    setOutcome(undefined)
+    try {
+      const result = await api.exportCsv({ id, enumNames, comments })
+      if (!result.ok) setOutcome({ text: result.error.message, failed: true })
+      else if (result.data) setOutcome({ text: 'CSV saved.', failed: false })
+    } catch (error) {
+      setOutcome({ text: String(error), failed: true })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div role="group" aria-label="CSV export" className="flex flex-wrap items-center gap-3">
+      <Button size="sm" disabled={saving} onClick={() => void save()}>{saving ? 'Saving CSV…' : 'Export CSV'}</Button>
+      <label className="flex items-center gap-2"><input type="checkbox" checked={enumNames}
+        onChange={(event) => setEnumNames(event.target.checked)} /> Mode names instead of codes</label>
+      <label className="flex items-center gap-2"><input type="checkbox" checked={comments}
+        onChange={(event) => setComments(event.target.checked)} /> Run details as comment lines</label>
+      {outcome && <span role={outcome.failed ? 'alert' : 'status'} className={outcome.failed ? 'text-fault' : undefined}>{outcome.text}</span>}
+    </div>
+  )
+}
+
+function RunDetail({ run: listed, runs, api, onClose }: { run: RecordingRun; runs: readonly RecordingRun[]; api: DesktopApi; onClose: () => void }) {
   const [detail, setDetail] = useState<{ run: RecordingRun; summary?: RecordingSummary; error?: string }>()
   const heading = useRef<HTMLHeadingElement>(null)
   useEffect(() => { heading.current?.focus() }, [])
@@ -97,7 +130,10 @@ function RunDetail({ run: listed, api, onClose }: { run: RecordingRun; api: Desk
     <section aria-label="Selected run" className="grid min-w-0 gap-3 border-t border-line pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 ref={heading} tabIndex={-1} className="min-w-0 break-words text-base font-semibold">{header?.title ?? title(run)}</h2>
-        <Button size="sm" onClick={onClose}>Back to runs</Button>
+        <div className="flex flex-wrap items-center gap-3">
+          {summary && header && <Link className="text-accent" to={`/telemetry/report/${run.id}`}>Report</Link>}
+          <Button size="sm" onClick={onClose}>Back to runs</Button>
+        </div>
       </div>
       <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-2">
         {facts.map(([label, value]) => value != null && (
@@ -114,7 +150,8 @@ function RunDetail({ run: listed, api, onClose }: { run: RecordingRun; api: Desk
       {summary?.integrityError && <p role="alert" className="text-warn">{summary.integrityError}</p>}
       {summary?.end?.engineError && <p role="alert" className="text-fault">{summary.end.engineError}</p>}
       {detail?.error && <p role="alert" className="text-fault">{detail.error}</p>}
-      {summary && header && api.recording && <RunGraphs id={run.id} api={api.recording} summary={summary} />}
+      {summary && header && api.recording && <CsvExport id={run.id} api={api.recording} />}
+      {summary && header && api.recording && <RunGraphs id={run.id} api={api.recording} summary={summary} runs={runs} />}
     </section>
   )
 }
@@ -180,7 +217,7 @@ export default function TelemetryPage() {
         {!list && <p role="status">Loading runs…</p>}
         {list?.errors.map((error, i) => <p key={i} role="alert" className="text-fault">{error}</p>)}
         {list?.runs.length === 0 && list.errors.length === 0 && <p className="text-fg-muted">No runs yet.</p>}
-        {opened ? <RunDetail key={opened.id} run={opened} api={window.api} onClose={() => {
+        {opened ? <RunDetail key={opened.id} run={opened} runs={list?.runs ?? []} api={window.api} onClose={() => {
           returnFocus.current = opened.id
           setOpenedId(undefined)
         }} /> : !!list?.runs.length && (

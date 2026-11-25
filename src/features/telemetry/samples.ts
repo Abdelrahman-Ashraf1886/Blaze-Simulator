@@ -6,6 +6,20 @@ export interface TimeRange {
   toS: number
 }
 
+export function comparisonOffset(primary: TimeRange, comparison: TimeRange, anchors?: { primaryS: number; comparisonS: number }): number {
+  return anchors ? anchors.primaryS - anchors.comparisonS : primary.fromS - comparison.fromS
+}
+
+export function shiftedRange(range: TimeRange, offset: number): TimeRange {
+  return { fromS: range.fromS + offset, toS: range.toS + offset }
+}
+
+export function intersectRanges(a: TimeRange, b: TimeRange): TimeRange | undefined {
+  const fromS = Math.max(a.fromS, b.fromS)
+  const toS = Math.min(a.toS, b.toS)
+  if (fromS <= toS) return { fromS, toS }
+}
+
 export function recordingRange(header: RecordingHeader, count: number): TimeRange | undefined {
   if (!count) return
   // Same sample clock as electron/main/telemetry/reader.ts:132–134.

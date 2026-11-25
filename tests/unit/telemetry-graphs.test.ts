@@ -6,7 +6,8 @@ import react from '@vitejs/plugin-react'
 import { createServer, type ViteDevServer } from 'vite'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { channelDefinition, describeChannel, groupAxes, isTelemetryLayout, STARTER_LAYOUTS, starterLayout, type PlotChannel, type TelemetryLayout } from '../../src/features/telemetry/layout'
-import { alignSamples, pointAt, recordingRange, sampleQuery, valueLabel } from '../../src/features/telemetry/samples'
+import { alignSamples, comparisonOffset, intersectRanges, pointAt, recordingRange, sampleQuery, shiftedRange, valueLabel } from '../../src/features/telemetry/samples'
+import { replayIndexAt, replayTimeAt, replayWindowAt } from '../../src/features/flight/replay-frame'
 import type { RecordingHeader } from '../../electron/ipc/contract'
 import { telemetryChannels } from '../../src/domain/telemetry-channels'
 
@@ -106,6 +107,26 @@ describe('telemetry samples', () => {
     expect(sampleQuery('run', [], 20)).toBeUndefined()
     expect(sampleQuery('run', ['a'], 20, { fromS: 3, toS: 2 })).toBeUndefined()
     expect(sampleQuery('run', ['a'], 20, { fromS: 1, toS: Infinity })).toBeUndefined()
+  })
+
+  it('holds the previous replay sample and maps exact edges across bounded windows', () => {
+    const header = { firstSampleStep: 4, samplePeriodSteps: 4, stepLengthS: 0.001 } as RecordingHeader
+    expect(replayIndexAt(header, 501, 0)).toBe(0)
+    expect(replayIndexAt(header, 501, 1.003)).toBe(249)
+    expect(replayIndexAt(header, 501, replayTimeAt(header, 250))).toBe(250)
+    expect(replayIndexAt(header, 501, 3)).toBe(500)
+    expect(replayWindowAt(header, 501, 249)).toEqual({ first: 0, fromS: 0.004, toS: 1 })
+    expect(replayWindowAt(header, 501, 250)).toEqual({ first: 250, fromS: 1.004, toS: 2 })
+    expect(replayWindowAt(header, 501, 500)).toEqual({ first: 500, fromS: 2.004, toS: 2.004 })
+  })
+
+  it('aligns starts and selected moments and maps a negative visible range back to the comparison file', () => {
+    const primary = { fromS: 0, toS: 3 }
+    const comparison = { fromS: 0.5, toS: 4.5 }
+    expect(shiftedRange(comparison, comparisonOffset(primary, comparison))).toEqual({ fromS: 0, toS: 4 })
+    const offset = comparisonOffset(primary, comparison, { primaryS: 1, comparisonS: 3 })
+    expect(shiftedRange(comparison, offset)).toEqual({ fromS: -1.5, toS: 2.5 })
+    expect(intersectRanges(shiftedRange({ fromS: -2, toS: 1 }, -offset), comparison)).toEqual({ fromS: 0.5, toS: 3 })
   })
 })
 

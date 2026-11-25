@@ -8,6 +8,7 @@
  * the 1 kHz step stream.
  */
 import type { DesktopApi, FlightStartInput, FlightStepInput, FlightStepResult, RecordingProgress } from '../../../electron/ipc/contract'
+import { telemetryChannels } from '../../domain/telemetry-channels'
 import { flightTiming } from './flight-timing'
 import type { AxisVector, FlightFrame, FlightSource, SetpointProvider, Vec3 } from './frame'
 
@@ -137,6 +138,11 @@ const engineOwners = new WeakMap<EngineApi, object>()
 
 export interface EngineFlightSourceOptions {
   onRecording?: (progress: RecordingProgress) => void
+  liveTelemetry?: {
+    isOpen(): boolean
+    begin(channels: readonly string[]): void
+    append(rows: NonNullable<FlightStepResult['samples']>['rows']): void
+  }
   /** Milliseconds, monotonic. */
   now?: () => number
   /** Runs `callback` on the next animation frame; returns its cancel function. */
@@ -237,7 +243,12 @@ export class EngineFlightSource implements FlightSource {
 
   private async run(generation: number, owner: object, setpoint: () => ReturnType<SetpointProvider> | null) {
     try {
-      const started = await this.api.flightStart(this.input)
+      const live = this.options.liveTelemetry
+      const started = await this.api.flightStart(live?.isOpen()
+        ? this.input.recording
+          ? { ...this.input, recording: { ...this.input.recording, live: true } }
+          : { ...this.input, live: true }
+        : this.input)
       if (generation !== this.generation) {
         // Stopped while the engine was starting: do not leave its session behind.
         if (started.ok && engineOwners.get(this.api) === owner) this.endSession()
@@ -246,6 +257,23 @@ export class EngineFlightSource implements FlightSource {
       if (!started.ok) return this.fail(generation, started.error.message)
       this.sessionOpen = true
       this.reportRecording(started.data)
+      const channels = started.data.channels ?? (live ? telemetryChannels(
+        started.data.diagnostic.motors.length, this.input.controller ? 'flightLoop' : 'attitudeHold',
+      ).map(({ name }) => name) : [])
+      let forwarding = false
+      function reportSamples(samples?: FlightStepResult['samples']) {
+        if (!live?.isOpen()) {
+          forwarding = false
+          return
+        }
+        if (!samples?.rows.length) return
+        if (!forwarding) {
+          live.begin(channels)
+          forwarding = true
+        }
+        live.append(samples.rows)
+      }
+      reportSamples(started.data.samples)
       this.publish(generation, toFlightFrame(started.data.diagnostic, null, []))
       let last = this.now()
       let owedMs = 0
@@ -268,12 +296,15 @@ export class EngineFlightSource implements FlightSource {
               owedMs = 0
             } else {
               const command = toEngineSetpoint(input)
+              const showingLive = live?.isOpen()
+              if (!showingLive) forwarding = false
               const result = await (flightTiming
-                ? flightTiming.step(this.api, due.steps, command)
-                : this.api.flightStep({ steps: due.steps, setpoint: command }))
+                ? flightTiming.step(showingLive ? { flightStep: (step) => this.api.flightStep({ ...step, live: true }) } : this.api, due.steps, command)
+                : this.api.flightStep({ steps: due.steps, setpoint: command, ...(showingLive ? { live: true } : {}) }))
               if (generation !== this.generation) return
               if (!result.ok) return this.fail(generation, result.error.message)
               this.reportRecording(result.data)
+              reportSamples(result.data.samples)
               for (const c of result.data.contacts) this.contacts.set(`${c.partId}|${c.with}|${c.startS}`, c)
               this.publish(generation, toFlightFrame(result.data.diagnostic, result.data.endReason, [...this.contacts.values()], command.mode))
               // A cut-off ended the run: sources stop themselves after publishing an ended frame.

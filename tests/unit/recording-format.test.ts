@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -61,15 +61,15 @@ describe('recording file format', () => {
     expect(await reader.summary()).toEqual({
       header, end, bytes: file.length, sampleCount: 2, requestCount: 1, incomplete: false, integrityError: null,
     })
-    expect(await reader.readRequests()).toEqual([line])
-    expect(await reader.readSamples({ channels: ['y', 'x'] })).toEqual([
+    expect(await reader.readRequests()).toEqual({ lines: [line], integrityError: null })
+    expect((await reader.readSamples({ channels: ['y', 'x'] })).series).toEqual([
       { channel: 'y', points: [{ timeS: 0.004, value: null }, { timeS: 0.008, value: Number.MIN_VALUE }] },
       { channel: 'x', points: [{ timeS: 0.004, value: -0 }, { timeS: 0.008, value: Math.PI }] },
     ])
-    expect(await reader.readSamples({ channels: ['x'], fromS: 0.008, toS: 0.008 })).toEqual([
+    expect((await reader.readSamples({ channels: ['x'], fromS: 0.008, toS: 0.008 })).series).toEqual([
       { channel: 'x', points: [{ timeS: 0.008, value: Math.PI }] },
     ])
-    expect(await reader.readSamples({ channels: ['x'], fromS: 1 })).toEqual([{ channel: 'x', points: [] }])
+    expect((await reader.readSamples({ channels: ['x'], fromS: 1 })).series).toEqual([{ channel: 'x', points: [] }])
   })
 
   it('opens every byte prefix at its last whole frame', async () => {
@@ -92,11 +92,10 @@ describe('recording file format', () => {
     }
   })
 
-  it('refuses bad magic, unknown versions and changed replay bytes or frame lengths', async () => {
+  it('refuses bad magic, unknown versions and an invalid header', async () => {
     const file = await fixture()
     const reader = new RecordingReader(path)
     const headerPayload = PREAMBLE_BYTES + FRAME_BYTES
-    const request = headerPayload + file.readUInt32LE(PREAMBLE_BYTES + 1)
     const changed = Buffer.from(file)
     changed.writeUInt32LE(VERSION + 1, MAGIC.length)
     await writeFile(path, changed)
@@ -105,15 +104,52 @@ describe('recording file format', () => {
     for (const [at, error] of [
       [0, /bad recording magic/i],
       [headerPayload, /payload CRC-32 mismatch/],
-      [request + 1, /header CRC-32 mismatch/],
-      [request + FRAME_BYTES, /payload CRC-32 mismatch/],
     ] as const) {
       const changed = Buffer.from(file)
       changed[at] = changed[at]! ^ 1
       await writeFile(path, changed)
       await expect(reader.summary()).rejects.toThrow(error)
       await expect(reader.readRequests()).rejects.toThrow(error)
+      await expect(reader.readSamples({ channels: ['x'] })).rejects.toThrow(error)
     }
+  })
+
+  it('keeps the verified prefix after a flipped byte in any data or end chunk, or a zero-filled tail', async () => {
+    const file = await fixture()
+    const next = (offset: number) => offset + FRAME_BYTES + file.readUInt32LE(offset + 1)
+    const request = next(PREAMBLE_BYTES)
+    const samples = next(request)
+    const end = next(samples)
+    for (const [offset, requestCount, sampleCount] of [[request, 0, 0], [samples, 1, 0], [end, 1, 2]] as const) {
+      for (const byte of [offset + 1, offset + FRAME_BYTES]) {
+        const changed = Buffer.from(file)
+        changed[byte] = changed[byte]! ^ 1
+        await writeFile(path, changed)
+        const reader = new RecordingReader(path)
+        const summary = await reader.summary()
+        expect(summary).toMatchObject({ header, end: null, requestCount, sampleCount, incomplete: true, integrityError: expect.stringContaining('CRC-32 mismatch') })
+        expect(await reader.readRequests()).toEqual({ lines: requestCount ? [line] : [], integrityError: summary.integrityError })
+        const saved = await reader.readSamples({ channels: ['x'] })
+        expect(saved.integrityError).toBe(summary.integrityError)
+        expect(saved.series[0]!.points).toHaveLength(sampleCount)
+      }
+    }
+    const interrupted = Buffer.from(file)
+    interrupted.fill(0, end)
+    await writeFile(path, interrupted)
+    const reader = new RecordingReader(path)
+    await expect(reader.summary()).resolves.toMatchObject({ sampleCount: 2, requestCount: 1, incomplete: true, integrityError: expect.stringContaining('CRC-32 mismatch') })
+  })
+
+  it('invalidates the verified index as the same file grows', async () => {
+    const file = await fixture()
+    const request = PREAMBLE_BYTES + FRAME_BYTES + file.readUInt32LE(PREAMBLE_BYTES + 1)
+    await writeFile(path, file.subarray(0, request))
+    const reader = new RecordingReader(path)
+    expect((await reader.readSamples({ channels: ['x'] })).series[0]!.points).toHaveLength(0)
+    await appendFile(path, file.subarray(request))
+    expect((await new RecordingReader(path).readSamples({ channels: ['x'] })).series[0]!.points).toHaveLength(2)
+    await expect(reader.summary()).resolves.toMatchObject({ bytes: file.length, incomplete: false })
   })
 
   it('writes many small appends in order and snapshots mutable input rows', async () => {
@@ -128,8 +164,8 @@ describe('recording file format', () => {
     })
     expect(await writer.finish(end)).toMatchObject({ failure: null, sampleCount: count })
     const reader = new RecordingReader(path)
-    expect(await reader.readRequests()).toEqual(requests)
-    const [series] = await reader.readSamples({ channels: ['x'] })
+    expect((await reader.readRequests()).lines).toEqual(requests)
+    const { series: [series] } = await reader.readSamples({ channels: ['x'] })
     expect(series!.points.map((p) => p.value)).toEqual(requests.map((_, i) => i))
   })
 
@@ -170,14 +206,15 @@ describe('recording file format', () => {
 })
 
 describe('recording min/max decimation', () => {
-  it('keeps peaks and chronological order, retaining a marker for an all-missing bucket', async () => {
-    const source = [null, 8, -3, 2, null, null, null, null]
+  it('keeps peaks and a brief mixed-bucket gap in order, plus an all-missing bucket', async () => {
+    const source = [8, null, -3, 2, null, null, null, null]
     async function* rows(): AsyncGenerator<RecordingPoint[]> {
       for (const [timeS, value] of source.entries()) yield [{ timeS, value }]
     }
     expect(await minMaxBuckets(rows(), source.length, 1, 5)).toEqual([
-      [{ timeS: 1, value: 8 }, { timeS: 2, value: -3 }, { timeS: 4, value: null }],
+      [{ timeS: 0, value: 8 }, { timeS: 1, value: null }, { timeS: 2, value: -3 }, { timeS: 4, value: null }],
     ])
-    expect(await minMaxBuckets(rows(), source.length, 1, 1)).toEqual([[{ timeS: 0, value: null }]])
+    expect(await minMaxBuckets(rows(), source.length, 1, 2)).toEqual([[{ timeS: 1, value: null }, { timeS: 2, value: -3 }]])
+    expect(await minMaxBuckets(rows(), source.length, 1, 1)).toEqual([[{ timeS: 0, value: 8 }]])
   })
 })

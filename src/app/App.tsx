@@ -10,6 +10,7 @@ import { AppShell } from './AppShell'
 const WorkshopPage = lazy(() => import('@/features/workshop/WorkshopPage'))
 const FlightPage = lazy(() => import('@/features/flight/FlightPage'))
 const TelemetryPage = lazy(() => import('@/features/telemetry/TelemetryPage'))
+const ReportPage = lazy(() => import('@/features/telemetry/report/ReportPage'))
 const ScenariosPage = lazy(() => import('@/features/scenarios/ScenariosPage'))
 const flight = (
   <Suspense fallback={<p className="px-6 pt-5 text-[12.5px] text-fg-subtle">Loading flight simulator…</p>}>
@@ -68,6 +69,7 @@ export function App() {
           <Route path="tuning" element={tuning} />
           <Route path="tuning/:projectId" element={tuning} />
           <Route path="telemetry" element={<Suspense fallback={<p className="px-6 pt-5 text-fg-muted">Loading telemetry…</p>}><TelemetryPage /></Suspense>} />
+          <Route path="telemetry/report/:id" element={<Suspense fallback={<p className="px-6 pt-5 text-fg-muted">Loading report…</p>}><ReportPage /></Suspense>} />
           <Route path="input" element={<InputPage />} />
           <Route path="components" element={<ComponentsPage />} />
           <Route path="electrical" element={electrical} />

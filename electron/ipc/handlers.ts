@@ -1,13 +1,19 @@
 import { z } from 'zod'
 import { CONTROLLER_PARAMS, effectiveParams } from '../../src/domain/controller-params'
-import { Channels, type IpcResult, type SystemStatus, type TerrainAssetInfo } from './contract'
+import type { WebContents } from 'electron'
+import { Channels, type FlightStartResult, type FlightStepResult, type IpcResult, type SystemStatus, type TerrainAssetInfo } from './contract'
 import {
   assetIdSchema,
   createProjectSchema,
+  flightLiveViewSchema,
   listRunsSchema,
   projectIdSchema,
+  printReportPdfSchema,
+  recordingCsvSchema,
   recordingIdSchema,
   recordingSampleSchema,
+  recordingVerifyCancelSchema,
+  recordingVerifySchema,
   renameProjectSchema,
   saveAssemblySchema,
   setTuningSchema,
@@ -25,9 +31,18 @@ import {
 import { fieldDef, isOverridable, type SpecValue } from './component-fields'
 import { ConflictError, NotFoundError, TuningValidationError, ValidationError, type Repositories } from '../main/db/repositories'
 import { importTerrainFile, readTerrainFile } from '../main/assets/terrain-store'
+import type { createRecordingCsvExporter, PickCsvPath } from '../main/telemetry/csv'
 import { RecordingFormatError } from '../main/telemetry/format'
 import { RecordingQueryError } from '../main/telemetry/reader'
 import type { RecordingStore } from '../main/telemetry/store'
+import { verifyRecording } from '../main/telemetry/verify'
+import { flightStart, flightStartSchema, flightStep, type EngineForFlight } from '../main/engine/flight-session'
+import { RECORD_EVERY_STEPS, type SessionRecorder } from '../main/telemetry/session-recorder'
+
+export function createRecordingCsvHandler(exporter: Pick<ReturnType<typeof createRecordingCsvExporter>, 'export'>) {
+  return (payload: unknown, pickPath: PickCsvPath) =>
+    validatedAsync(recordingCsvSchema, payload, (query) => exporter.export(query, pickPath))
+}
 
 export function createRecordingHandlers(store: RecordingStore) {
   return {
@@ -42,6 +57,72 @@ export function createRecordingHandlers(store: RecordingStore) {
     [Channels.recordingReadRequests]: (p: unknown) =>
       validatedAsync(recordingIdSchema, p, (i) => store.read(i.id, (reader) => reader.readRequests())),
     [Channels.recordingTotalSize]: (p: unknown) => validatedAsync(z.undefined(), p, () => store.totalSize()),
+  }
+}
+
+export function createRecordingVerifyHandlers(store: RecordingStore, binaryPath: string) {
+  const active = new Map<string, { sender: WebContents; controller: AbortController }>()
+  return {
+    [Channels.recordingVerify]: (sender: WebContents, payload: unknown) =>
+      validatedAsync(recordingVerifySchema, payload, async ({ id, requestId }) => {
+        if (active.has(requestId)) throw new ValidationError('Verification already active')
+        const controller = new AbortController()
+        const cancel = () => controller.abort()
+        active.set(requestId, { sender, controller })
+        sender.once('destroyed', cancel)
+        try {
+          return await store.read(id, (reader) => verifyRecording(reader, binaryPath, controller.signal, (step, totalSteps) => {
+            if (!sender.isDestroyed()) sender.send(Channels.recordingVerifyProgress, { requestId, step, totalSteps })
+          }))
+        } finally {
+          sender.removeListener('destroyed', cancel)
+          active.delete(requestId)
+        }
+      }),
+    [Channels.recordingVerifyCancel]: (sender: WebContents, payload: unknown) =>
+      validated(recordingVerifyCancelSchema, payload, ({ requestId }) => {
+        const job = active.get(requestId)
+        if (job?.sender === sender) job.controller.abort()
+        return null
+      }),
+  }
+}
+
+/** The renderer's view flag is never part of an engine step or recorded request line. */
+export async function flightStepForView(engine: EngineForFlight, payload: unknown, recorder?: SessionRecorder): Promise<IpcResult<FlightStepResult>> {
+  const view = flightLiveViewSchema.safeParse(payload)
+  if (!view.success) return flightStep(engine, payload, recorder)
+  const { live, ...step } = view.data
+  const result = await flightStep(engine, step, recorder)
+  if (result.ok && !live) delete result.data.samples
+  return result
+}
+
+export async function flightStartForView(engine: EngineForFlight, payload: unknown, recorder?: SessionRecorder): Promise<IpcResult<FlightStartResult>> {
+  const view = flightLiveViewSchema.safeParse(payload)
+  if (!view.success) return flightStart(engine, payload, recorder)
+  const { live, ...start } = view.data
+  const parsed = flightStartSchema.safeParse(start)
+  if (!parsed.success) return flightStart(engine, start, recorder)
+  const { recording } = parsed.data
+  const input = recording ? { ...start, recording: { ...recording, live: true } }
+    : live ? { ...start, sampleEverySteps: RECORD_EVERY_STEPS } : start
+  const result = await flightStart(engine, input, recorder)
+  if (result.ok && !(live || recording?.live)) {
+    delete result.data.channels
+    delete result.data.samples
+  }
+  return result
+}
+
+export async function handlePrintReportPdf(payload: unknown, print: () => Promise<{ path: string } | null>): Promise<IpcResult<{ path: string } | null>> {
+  const parsed = printReportPdfSchema.safeParse(payload)
+  if (!parsed.success) return { ok: false, error: { code: 'VALIDATION', message: 'Printing takes no arguments.' } }
+  try {
+    return { ok: true, data: await print() }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { ok: false, error: { code: 'INTERNAL', message: 'Could not save the report PDF. ' + message } }
   }
 }
 

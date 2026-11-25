@@ -73,6 +73,10 @@ pub struct ReturnParams {
     land_delay: f64,
     min_dist: f64,
     cone_angle: f64,
+    xy_radius: f64,
+    z_radius: f64,
+    yaw_tolerance: f64,
+    cruise_speed: f64,
 }
 
 #[derive(Deserialize)]
@@ -95,7 +99,7 @@ fn return_reference(key: &str) -> Result<&'static ReferenceParameter, String> {
 }
 
 impl ReturnParams {
-    /// Consume the exact RTL names before the existing session gain parser runs.
+    /// Consume the exact return and navigation names before the session gain parser runs.
     pub fn take_overrides(gains: &mut Map<String, Value>) -> Result<Self, String> {
         let mut get = |key| {
             let parameter = return_reference(key)?;
@@ -113,6 +117,10 @@ impl ReturnParams {
             land_delay: get("RTL_LAND_DELAY")?,
             min_dist: get("RTL_MIN_DIST")?,
             cone_angle: get("RTL_CONE_ANG")?,
+            xy_radius: get("NAV_ACC_RAD")?,
+            z_radius: get("NAV_MC_ALT_RAD")?,
+            yaw_tolerance: get("MIS_YAW_ERR")?.to_radians(),
+            cruise_speed: get("MPC_XY_CRUISE")?,
         };
         // rtl_params.c:138,176 are INT32 parameters. Heading mode 0 is fixed.
         if params.cone_angle.fract() != 0.0 {
@@ -156,7 +164,7 @@ impl AutoFlight {
     pub(crate) fn new(command: AutoCommand, estimate: &PositionInput, home: Home,
         landed: bool, params: ReturnParams) -> Result<Self, String> {
         if command == AutoCommand::Return {
-            return Ok(Self::Return(ReturnFlight::new(estimate, home, landed, params)?));
+            return Ok(Self::Return(ReturnFlight::new(estimate, home, landed, params)));
         }
         Ok(Self::Vertical(VerticalFlight::new(command, estimate, home.position[2])?))
     }
@@ -330,34 +338,11 @@ fn landing_target(sp: &mut PositionSetpoint, height: f64, g: &PositionGains) -> 
 // rtl.cpp:51,608.
 const DELAY_SIGMA: f32 = 0.01;
 
-#[derive(Clone, Copy, Debug)]
-struct ReturnNavigation {
-    xy_radius: f64,
-    z_radius: f64,
-    yaw_tolerance: f64,
-    yaw_rate: f64,
-    cruise_speed: f64,
-}
-
-impl ReturnNavigation {
-    fn px4() -> Result<&'static Self, String> {
-        static NAVIGATION: OnceLock<Result<ReturnNavigation, String>> = OnceLock::new();
-        NAVIGATION.get_or_init(|| Ok(Self {
-            xy_radius: return_reference("NAV_ACC_RAD")?.value,
-            z_radius: return_reference("NAV_MC_ALT_RAD")?.value,
-            yaw_tolerance: return_reference("MIS_YAW_ERR")?.value.to_radians(),
-            yaw_rate: 45.0_f64.to_radians(), // physics.v1.json, takeoffLandPx4.MPC_YAWRAUTO_MAX
-            cruise_speed: return_reference("MPC_XY_CRUISE")?.value,
-        })).as_ref().map_err(Clone::clone)
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct ReturnFlight {
     state: ReturnState,
     home: Home,
     params: ReturnParams,
-    navigation: &'static ReturnNavigation,
     return_altitude: f64,
     target: [f64; 3],
     yaw: f64,
@@ -370,15 +355,13 @@ pub(crate) struct ReturnFlight {
 }
 
 impl ReturnFlight {
-    fn new(estimate: &PositionInput, home: Home, landed: bool, params: ReturnParams) -> Result<Self, String> {
-        let navigation = ReturnNavigation::px4()?;
+    fn new(estimate: &PositionInput, home: Home, landed: bool, params: ReturnParams) -> Self {
         let [dx, dy] = difference_xy(home.position, estimate.position);
-        let return_altitude = return_altitude(estimate.position[2], home.position[2], dx.hypot(dy), params, navigation.xy_radius);
+        let return_altitude = return_altitude(estimate.position[2], home.position[2], dx.hypot(dy), params, params.xy_radius);
         let mut active = Self {
             state: ReturnState::Landed,
             home,
             params,
-            navigation,
             return_altitude,
             target: estimate.position,
             yaw: estimate.yaw,
@@ -398,7 +381,7 @@ impl ReturnFlight {
             };
             active.enter(initial, estimate);
         }
-        Ok(active)
+        active
     }
 
     fn enter(&mut self, state: ReturnState, estimate: &PositionInput) {
@@ -452,13 +435,13 @@ impl ReturnFlight {
         // mission_block.cpp:271-280,336-397 latches position before checking yaw
         // and measures the loiter delay from position acceptance.
         let [dx, dy] = difference_xy(self.target, estimate.position);
-        if dx.hypot(dy) <= self.navigation.xy_radius
-            && (self.target[2] - estimate.position[2]).abs() <= self.navigation.z_radius
+        if dx.hypot(dy) <= self.params.xy_radius
+            && (self.target[2] - estimate.position[2]).abs() <= self.params.z_radius
         {
             self.position_reached_us.get_or_insert(now_us);
         }
         let Some(reached) = self.position_reached_us else { return };
-        self.yaw_reached |= wrap_yaw(self.desired_yaw(estimate) - estimate.yaw).abs() < self.navigation.yaw_tolerance;
+        self.yaw_reached |= wrap_yaw(self.desired_yaw(estimate) - estimate.yaw).abs() < self.params.yaw_tolerance;
         if !self.yaw_reached {
             return;
         }
@@ -485,12 +468,12 @@ impl ReturnFlight {
         }
 
         // FlightTaskAuto.cpp:289-305. Use the shortest rotation in world Z-up.
-        let max_change = self.navigation.yaw_rate * input.dt;
+        let max_change = 45.0_f64.to_radians() * input.dt; // physics.v1.json, takeoffLandPx4.MPC_YAWRAUTO_MAX
         let error = wrap_yaw(self.desired_yaw(input.estimate) - self.yaw);
         self.yaw = wrap_yaw(self.yaw + error.clamp(-max_change, max_change));
         sp.yaw = self.yaw;
         if let Some(track) = &mut self.horizontal {
-            track.setpoint(&mut sp, self.home.position, self.navigation.cruise_speed.min(g.mpc_xy_vel_max), g, input.dt);
+            track.setpoint(&mut sp, self.home.position, self.params.cruise_speed.min(g.mpc_xy_vel_max), g, input.dt);
         }
 
         self.vertical.advance(input.dt);
@@ -521,7 +504,8 @@ impl ReturnFlight {
         words.extend(self.home.position.map(f64::to_bits));
         words.extend(self.target.map(f64::to_bits));
         words.extend([self.params.return_alt, self.params.descend_alt, self.params.land_delay,
-            self.params.min_dist, self.params.cone_angle].map(f64::to_bits));
+            self.params.min_dist, self.params.cone_angle, self.params.xy_radius, self.params.z_radius,
+            self.params.yaw_tolerance, self.params.cruise_speed].map(f64::to_bits));
         words.extend(self.vertical.hash_words());
         words.push(self.horizontal.is_some() as u64);
         if let Some(track) = &self.horizontal {

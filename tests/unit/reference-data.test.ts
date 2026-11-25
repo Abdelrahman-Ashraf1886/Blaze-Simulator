@@ -57,7 +57,7 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
         if (v.unit !== undefined) {
           const retainedSourceUnit =
             (s.id.startsWith('px4') && px4SourceUnits[v.key] === v.unit) ||
-            (s.id === 'returnPx4' && v.key === 'RTL_CONE_ANG' && v.unit === 'deg') ||
+            (s.id === 'returnPx4' && ['RTL_CONE_ANG', 'MIS_YAW_ERR'].includes(v.key) && v.unit === 'deg') ||
             (s.id === 'windShear' && windShearSourceUnits[v.key] === v.unit)
           expect(isUnit(v.unit) || retainedSourceUnit, `${where} unit ${v.unit}`).toBe(true)
         }
@@ -81,7 +81,7 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
   })
 
   it('new PX4 sets cite v1.13.3 definition lines and respect every documented bound', () => {
-    const counts = { px4Position: 36, px4Allocation: 1, px4ThrustModel: 1, px4HoverThrust: 6, takeoffLandPx4: 10, returnPx4: 6 }
+    const counts = { px4Position: 36, px4Allocation: 1, px4ThrustModel: 1, px4HoverThrust: 6, takeoffLandPx4: 10, returnPx4: 10 }
     for (const [id, count] of Object.entries(counts)) {
       expect(set(id).values, id).toHaveLength(count)
       for (const v of set(id).values) {
@@ -110,17 +110,25 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
 
   it('records the exact return defaults and override ranges in the dedicated set', () => {
     const expected = [
-      ['RTL_RETURN_ALT', 60, 0, 150, 59],
-      ['RTL_DESCEND_ALT', 30, 2, 100, 75],
-      ['RTL_LAND_DELAY', 0, -1, 300, 90],
-      ['RTL_MIN_DIST', 10, 0.5, 100, 106],
-      ['RTL_CONE_ANG', 45, 0, 90, 138],
-      ['RTL_HDG_MD', 0, undefined, undefined, 176],
+      ['RTL_RETURN_ALT', 30, 0, 150, 'navigator/rtl_params.c#L59', 'rc.mc_defaults:20', '60 m'],
+      ['RTL_DESCEND_ALT', 10, 2, 100, 'navigator/rtl_params.c#L75', 'rc.mc_defaults:21', '30 m'],
+      ['RTL_LAND_DELAY', 0, -1, 300, 'navigator/rtl_params.c#L90'],
+      ['RTL_MIN_DIST', 10, 0.5, 100, 'navigator/rtl_params.c#L106'],
+      ['RTL_CONE_ANG', 45, 0, 90, 'navigator/rtl_params.c#L138'],
+      ['RTL_HDG_MD', 0, undefined, undefined, 'navigator/rtl_params.c#L176'],
+      ['NAV_ACC_RAD', 2, 0.05, 200, 'navigator/navigator_params.c#L70', 'rc.mc_defaults:18', '10 m'],
+      ['NAV_MC_ALT_RAD', 0.8, 0.05, 200, 'navigator/navigator_params.c#L112'],
+      ['MIS_YAW_ERR', 12, 0, 90, 'navigator/mission_params.c#L158'],
+      ['MPC_XY_CRUISE', 5, 3, 20, 'mc_pos_control/mc_pos_control_params.c#L321'],
     ] as const
-    for (const [key, value, min, max, line] of expected) {
+    for (const [key, value, min, max, source, mcSource, generic] of expected) {
       const entry = get('returnPx4', key)
       expect([entry.value, entry.min, entry.max], key).toEqual([value, min, max])
-      expect(entry.reference?.url, key).toMatch(new RegExp(`/navigator/rtl_params.c#L${line}$`))
+      expect(entry.reference?.url, key).toBe(`https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/${source}`)
+      if (mcSource) {
+        expect(entry.condition, key).toContain(mcSource)
+        expect(entry.condition, key).toContain(generic)
+      }
     }
   })
 

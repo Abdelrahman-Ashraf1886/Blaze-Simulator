@@ -36,19 +36,16 @@ fn estimate(position: [f64; 3], yaw: f64) -> PositionInput {
 #[test]
 fn return_altitude_uses_the_radius_cone_and_outer_altitude() {
     let p = ReturnParams::default();
-    // Use a fixture acceptance radius smaller than RTL_MIN_DIST so both
-    // branches of the cone can be exercised independently of navigation gains.
-    let radius = p.min_dist / 2.0;
+    let radius = p.xy_radius;
     let home = MIS_TAKEOFF_ALT;
     // Inside the acceptance radius, the altitude is twice the distance.
     assert_eq!(return_altitude(home, home, radius / 2.0, p, radius), home + radius);
     assert_eq!(return_altitude(home, home, radius, p, radius), home + 2.0 * radius);
-    // At 45°, tan(angle) = 1. Extend the cone to test both sides of the 2R floor.
-    let cone = ReturnParams { min_dist: 3.0 * radius, ..p };
-    assert_eq!(return_altitude(home, home, 1.5 * radius, cone, radius), home + 2.0 * radius);
-    let edge = return_altitude(home, home, cone.min_dist, cone, radius);
-    assert!((edge - (home + cone.min_dist)).abs() <= EPS, "{edge}");
-    assert_eq!(return_altitude(home, home, cone.min_dist + radius, cone, radius), home + p.return_alt);
+    // At the default 45°, tan(angle) = 1. Check both sides of the 2R floor.
+    assert_eq!(return_altitude(home, home, 1.5 * radius, p, radius), home + 2.0 * radius);
+    let edge = return_altitude(home, home, p.min_dist, p, radius);
+    assert!((edge - (home + p.min_dist)).abs() <= EPS, "{edge}");
+    assert_eq!(return_altitude(home, home, p.min_dist + radius, p, radius), home + p.return_alt);
     // The cone never commands descent during climb/return.
     assert_eq!(return_altitude(home + p.return_alt, home, 0.0, p, radius), home + p.return_alt);
 }
@@ -59,11 +56,13 @@ fn return_gains_override_only_the_supplied_exact_names() {
     let mut gains = serde_json::json!({
         "RTL_RETURN_ALT": 0, "RTL_DESCEND_ALT": 2, "RTL_LAND_DELAY": -1,
         "RTL_MIN_DIST": 0.5, "RTL_CONE_ANG": 0, "RTL_HDG_MD": 0,
+        "NAV_ACC_RAD": 0.05, "NAV_MC_ALT_RAD": 200, "MIS_YAW_ERR": 90, "MPC_XY_CRUISE": 3,
         "MPC_ACC_HOR": PositionGains::px4_v1_13_3().mpc_acc_hor,
     });
     let gains = gains.as_object_mut().unwrap();
     let p = ReturnParams::take_overrides(gains).unwrap();
     assert_eq!([p.return_alt, p.descend_alt, p.land_delay, p.min_dist, p.cone_angle], [0.0, 2.0, -1.0, 0.5, 0.0]);
+    assert_eq!([p.xy_radius, p.z_radius, p.yaw_tolerance, p.cruise_speed], [0.05, 200.0, PI / 2.0, 3.0]);
     assert_eq!(gains.keys().collect::<Vec<_>>(), ["MPC_ACC_HOR"]);
 }
 
@@ -73,7 +72,7 @@ fn multicopter_return_advances_only_after_position_altitude_yaw_and_delay() {
     let p = ReturnParams { land_delay: 1.0, ..ReturnParams::default() };
     let home = Home { position: [p.min_dist, p.min_dist, MIS_TAKEOFF_ALT], yaw: PI / 2.0 };
     let away = estimate([home.position[0] + p.return_alt, home.position[1], home.position[2]], 0.0);
-    let mut rtl = ReturnFlight::new(&away, home, false, p).unwrap();
+    let mut rtl = ReturnFlight::new(&away, home, false, p);
     assert_eq!(rtl.state, Climb);
     assert_eq!(rtl.target, [away.position[0], away.position[1], home.position[2] + p.return_alt]);
     let second = MICROS_PER_SECOND;
@@ -85,7 +84,7 @@ fn multicopter_return_advances_only_after_position_altitude_yaw_and_delay() {
     assert_eq!(wrap_yaw(rtl.desired_yaw(&climbed)), -PI);
     rtl.advance_state(&climbed, false, 2 * second);
     assert_eq!(rtl.state, Return);
-    let wrong_yaw = estimate(rtl.target, home.yaw + 2.0 * rtl.navigation.yaw_tolerance);
+    let wrong_yaw = estimate(rtl.target, home.yaw + 2.0 * p.yaw_tolerance);
     rtl.advance_state(&wrong_yaw, false, 2 * second);
     assert_eq!(rtl.state, Return);
     let over_home = estimate(rtl.target, home.yaw);
@@ -114,18 +113,18 @@ fn return_handles_direct_landing_unlimited_loiter_and_activation_already_landed(
     let p = ReturnParams::default();
     let home = Home { position: [0.0; 3], yaw: 0.0 };
     let low_at_home = estimate([0.0, 0.0, MIS_TAKEOFF_ALT], home.yaw);
-    let mut rtl = ReturnFlight::new(&low_at_home, home, false, p).unwrap();
+    let mut rtl = ReturnFlight::new(&low_at_home, home, false, p);
     assert_eq!(rtl.state, Climb);
     assert_eq!(rtl.target, low_at_home.position);
     rtl.advance_state(&low_at_home, false, 0);
     assert_eq!(rtl.state, Return);
     rtl.advance_state(&low_at_home, false, 1);
     assert_eq!(rtl.state, Land);
-    assert_eq!(ReturnFlight::new(&low_at_home, home, true, p).unwrap().state, Landed);
+    assert_eq!(ReturnFlight::new(&low_at_home, home, true, p).state, Landed);
 
     let high_at_home = estimate([0.0, 0.0, p.return_alt], home.yaw);
     for (delay, after_return) in [(0.01, Land), (-1.0, Descend)] {
-        let mut rtl = ReturnFlight::new(&high_at_home, home, false, ReturnParams { land_delay: delay, ..p }).unwrap();
+        let mut rtl = ReturnFlight::new(&high_at_home, home, false, ReturnParams { land_delay: delay, ..p });
         assert_eq!(rtl.state, Return);
         rtl.advance_state(&high_at_home, false, 0);
         assert_eq!(rtl.state, after_return);
@@ -147,7 +146,7 @@ fn straight_return_track_respects_speed_acceleration_and_jerk_and_stops() {
     let radius = ReturnParams::default().descend_alt;
     let state = estimate([radius, radius, 0.0], 0.0);
     let mut track = ReturnTrack::new(&state, origin).unwrap();
-    let cruise = ReturnNavigation::px4().unwrap().cruise_speed;
+    let cruise = ReturnParams::default().cruise_speed;
     let mut sp = PositionSetpoint::default();
     let mut preceding_acceleration = 0.0;
     let duration = ReturnParams::default().return_alt / MPC_Z_V_AUTO_DN;

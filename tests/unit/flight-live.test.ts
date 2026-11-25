@@ -507,6 +507,15 @@ describe('IPC validation', () => {
     expect(FlightSessionStartParamsSchema.safeParse(sent).success).toBe(true)
   })
 
+  it('forwards exact Return gains through Flight Start', async () => {
+    const { engine } = fakeEngine()
+    const gains = { RTL_RETURN_ALT: 30, RTL_DESCEND_ALT: 10, NAV_ACC_RAD: 2, NAV_MC_ALT_RAD: 0.8, MIS_YAW_ERR: 12, MPC_XY_CRUISE: 5 }
+    const controller = { mode: 'position' }
+    const started = await flightStart(engine, { ...startInput(), controller, gains })
+    expect(started.ok).toBe(true)
+    expect(engine.startFlightSession).toHaveBeenCalledWith(expect.objectContaining({ controller, gains }))
+  })
+
   it.each([
     ['an unknown controller mode', (p: Record<string, unknown>) => { p.controller = { mode: 'attitudeHold' } }],
     ['no cut-off', (p: Record<string, unknown>) => { delete p.cutoff }],
@@ -992,24 +1001,28 @@ describe('6.5 on the real NDJSON engine', () => {
     ])
   }), 20_000)
 
-  it('validates exact RTL session gains, including integer cone and fixed heading mode', async () => withProtocol(async ({ result, request }) => {
+  it('validates exact Return session gains, including integer cone and fixed heading mode', async () => withProtocol(async ({ result, request }) => {
     await result(load)
     // Boundary inputs from rtl_params.c:47–138,166–176.
-    const gains = { RTL_RETURN_ALT: 0, RTL_DESCEND_ALT: 2, RTL_LAND_DELAY: -1, RTL_MIN_DIST: 0.5, RTL_CONE_ANG: 90, RTL_HDG_MD: 0 }
+    const gains = {
+      RTL_RETURN_ALT: 0, RTL_DESCEND_ALT: 2, RTL_LAND_DELAY: -1, RTL_MIN_DIST: 0.5, RTL_CONE_ANG: 90, RTL_HDG_MD: 0,
+      NAV_ACC_RAD: 0.05, NAV_MC_ALT_RAD: 200, MIS_YAW_ERR: 90, MPC_XY_CRUISE: 3,
+    }
     expect(FlightSessionStartResultSchema.parse(await result(start({ ...baseStart, gains }))).dtS).toBe(dtS)
+    const grounded = FlightSessionStepResultSchema.parse(await result(step(1, { command: { type: 'return' } })))
+    expect(grounded.diagnostic.flightLoop).toMatchObject({ autoMode: 'return', returnState: 'landed', commandFinished: true })
     for (const [name, value] of Object.entries({
       RTL_RETURN_ALT: -1, RTL_DESCEND_ALT: 1, RTL_LAND_DELAY: 301, RTL_MIN_DIST: 0,
-      RTL_CONE_ANG: 45.5, RTL_HDG_MD: 1, rtl_return_alt: 60, RTL_TYPE: 0,
+      RTL_CONE_ANG: 45.5, RTL_HDG_MD: 1, rtl_return_alt: 30, RTL_TYPE: 0,
+      NAV_ACC_RAD: 0, NAV_MC_ALT_RAD: 201, MIS_YAW_ERR: -1, MPC_XY_CRUISE: 21, nav_acc_rad: 2,
     })) {
       expect(await request({ ...start(baseStart), gains: { [name]: value } })).toMatchObject({
         ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining(name) },
       })
     }
-    expect(await request({ ...start(baseStart), gains: { RTL_RETURN_ALT: '60' } })).toMatchObject({
+    expect(await request({ ...start(baseStart), gains: { RTL_RETURN_ALT: '30' } })).toMatchObject({
       ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('RTL_RETURN_ALT') },
     })
-    const grounded = FlightSessionStepResultSchema.parse(await result(step(1, { command: { type: 'return' } })))
-    expect(grounded.diagnostic.flightLoop).toMatchObject({ autoMode: 'return', returnState: 'landed', commandFinished: true })
   }))
 
   it('returns from low altitude at home without an additional climb', async () => withProtocol(async ({ result }) => {

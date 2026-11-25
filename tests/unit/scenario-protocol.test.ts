@@ -551,10 +551,10 @@ describe('a real engine', () => {
     expect([...states]).toEqual(['climb', 'return', 'land', 'landed'])
     expect(current.flightLoop).toMatchObject({ autoMode: 'return', commandFinished: true, landState: { landed: true } })
     const errorM = [distance(), Math.abs(current.state.comM[2] - home[2])]
+    recordAcceptance(`RETURN landing errors [XY, Z] m: ${errorM}`)
     // Acceptance limits fixed before running, from flight_loop/tests.rs:303–306.
     expect(errorM[0], `landing errors [XY, Z] m: ${errorM}`).toBeLessThan(0.01)
     expect(errorM[1], `landing errors [XY, Z] m: ${errorM}`).toBeLessThanOrEqual(1.2e-4)
-    recordAcceptance(`RETURN landing errors [XY, Z] m: ${errorM}`)
   }, 20_000)
 
   it('refuses FlightLoop built-ins with missing project inputs', async () => {

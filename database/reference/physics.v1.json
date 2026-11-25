@@ -1351,7 +1351,7 @@
       "values": [
         {
           "key": "RTL_RETURN_ALT",
-          "value": 60,
+          "value": 30,
           "unit": "m",
           "min": 0,
           "max": 150,
@@ -1361,11 +1361,11 @@
             "locator": "rtl_params.c line 59: PARAM_DEFINE_FLOAT(RTL_RETURN_ALT, 60);",
             "retrieved": "2026-11-25"
           },
-          "condition": "Minimum altitude above destination before the multicopter cone adjustment."
+          "condition": "Minimum altitude above destination before the multicopter cone adjustment. ROMFS/px4fmu_common/init.d/rc.mc_defaults:20 sets 30 m for multicopters. The generic rtl_params.c:59 default is 60 m."
         },
         {
           "key": "RTL_DESCEND_ALT",
-          "value": 30,
+          "value": 10,
           "unit": "m",
           "min": 2,
           "max": 100,
@@ -1375,7 +1375,7 @@
             "locator": "rtl_params.c line 75: PARAM_DEFINE_FLOAT(RTL_DESCEND_ALT, 30);",
             "retrieved": "2026-11-25"
           },
-          "condition": "Altitude above destination for the descent and loiter before landing."
+          "condition": "Altitude above destination for the descent and loiter before landing. ROMFS/px4fmu_common/init.d/rc.mc_defaults:21 sets 10 m for multicopters. The generic rtl_params.c:75 default is 30 m."
         },
         {
           "key": "RTL_LAND_DELAY",
@@ -1429,6 +1429,62 @@
             "retrieved": "2026-11-25"
           },
           "condition": "Heading toward the next waypoint. The simulator supports only mode 0."
+        },
+        {
+          "key": "NAV_ACC_RAD",
+          "value": 2,
+          "unit": "m",
+          "min": 0.05,
+          "max": 200,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/navigator/navigator_params.c#L70",
+            "locator": "navigator_params.c line 70: PARAM_DEFINE_FLOAT(NAV_ACC_RAD, 10.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Horizontal waypoint acceptance radius. ROMFS/px4fmu_common/init.d/rc.mc_defaults:18 sets 2 m for multicopters. The generic navigator_params.c:70 default is 10 m."
+        },
+        {
+          "key": "NAV_MC_ALT_RAD",
+          "value": 0.8,
+          "unit": "m",
+          "min": 0.05,
+          "max": 200,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/navigator/navigator_params.c#L112",
+            "locator": "navigator_params.c line 112: PARAM_DEFINE_FLOAT(NAV_MC_ALT_RAD, 0.8f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Multicopter altitude acceptance radius used by get_default_altitude_acceptance_radius (navigator_main.cpp:995–1014). The simulator uses the parameter directly and omits position_controller_status widening."
+        },
+        {
+          "key": "MIS_YAW_ERR",
+          "value": 12,
+          "unit": "deg",
+          "min": 0,
+          "max": 90,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/navigator/mission_params.c#L158",
+            "locator": "mission_params.c line 158: PARAM_DEFINE_FLOAT(MIS_YAW_ERR, 12.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Maximum heading error for waypoint acceptance."
+        },
+        {
+          "key": "MPC_XY_CRUISE",
+          "value": 5,
+          "unit": "m/s",
+          "min": 3,
+          "max": 20,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/mc_pos_control/mc_pos_control_params.c#L321",
+            "locator": "mc_pos_control_params.c line 321: PARAM_DEFINE_FLOAT(MPC_XY_CRUISE, 5.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Horizontal cruise speed for autonomous flight, limited in Return by MPC_XY_VEL_MAX."
         }
       ]
     },

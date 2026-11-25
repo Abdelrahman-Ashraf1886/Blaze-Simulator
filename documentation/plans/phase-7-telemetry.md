@@ -1,6 +1,6 @@
 # Phase 7 plan: telemetry
 
-Status (2026-11-25): **7.0–7.9 built and merged. 7.12 in progress. 7.10 (attitude estimator) and
+Status (2026-11-25): **Done, awaiting review: 7.0–7.9 and 7.12 built and merged. 7.10 (attitude estimator) and
 7.11 (ULog) not chosen.** This plan was approved against `blaze-sim` at d6f79ca (Phase 6 done).
 Earlier phases' decisions are written "P5-D6", "P6-D18".
 
@@ -117,7 +117,7 @@ File fences are for parallel work; one milestone per worktree.
 | 7.9 Flying on the gyro | PX4 filters in front of the rate loop, D term on filtered acceleration; switch; tuning page says which signal is used; step tests with sensors | `engine-core/src/gyro_filters.rs`, `controller.rs`, `flight_loop.rs`, `step_test.rs` | 7.8 | Built / merged |
 | 7.10 (optional) Attitude estimator | `attitude_estimator_q` with the modelled IMU and a magnetometer (your field) | `engine-core/src/attitude_estimator.rs` | 7.9, D1 | Not chosen |
 | 7.11 (optional) ULog export | ULog file of a recording | `src/domain/ulog.ts` | 7.2, D16 | Not chosen |
-| 7.12 Acceptance and docs | Record, verify, export and report a flight end to end; the same step test on perfect and modelled gyro with both results in the DEVLOG; ROADMAP, ARCHITECTURE, ADR for the sensor boundary and the recording format | docs, e2e | All above | In progress |
+| 7.12 Acceptance and docs | Record, verify, export and report a flight end to end; the same step test on perfect and modelled gyro with both results in the DEVLOG; ROADMAP, ARCHITECTURE, ADR for the sensor boundary and the recording format | docs, e2e | All above | Done |
 
 **Waves.** 1: 7.0, 7.1 and 7.2 in parallel. 2: 7.3, 7.4, 7.6 and 7.8. 3: 7.5, 7.7 and 7.9 (7.9 alone
 in `controller.rs` and `flight_loop.rs`). 4: 7.10 and 7.11 if chosen, then 7.12.
@@ -160,7 +160,7 @@ delays are refused. [Gyro timing](../../simulation-engine/engine-core/src/gyro_f
 
 **Status correction (2026-11-25), tests 10–12 and 7.12 dependencies.** Both rate-step runs exceeded
 the original overshoot limit. The user chose to report overshoot without judging it. D18
-PERF-GATE: to be measured. Test 12 covers a restart with the same user data, verifies again,
+passes with recording and live graphs on (DEVLOG). Test 12 covers a restart with the same user data, verifies again,
 then deletes the run and checks the file is gone. It passes. Acceptance
 depends on the merged core milestones. [Results](../DEVLOG.md#catalogue-acceptance-and-performance) · [Test 12](../../tests/e2e/phase7-acceptance.spec.ts#L27)
 

@@ -41,7 +41,7 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
     expect(ref.sets.map((s) => s.id)).toEqual([
       'isa', 'carbonFibrePlate', 'px4',
       'px4Position', 'px4Allocation', 'px4ThrustModel', 'px4HoverThrust',
-      'takeoffLandPx4', 'landDetectorConstantsPx4', 'windShear',
+      'takeoffLandPx4', 'returnPx4', 'landDetectorConstantsPx4', 'windShear',
     ])
     for (const s of ref.sets) {
       const keys = s.values.map((v) => v.key)
@@ -57,6 +57,7 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
         if (v.unit !== undefined) {
           const retainedSourceUnit =
             (s.id.startsWith('px4') && px4SourceUnits[v.key] === v.unit) ||
+            (s.id === 'returnPx4' && v.key === 'RTL_CONE_ANG' && v.unit === 'deg') ||
             (s.id === 'windShear' && windShearSourceUnits[v.key] === v.unit)
           expect(isUnit(v.unit) || retainedSourceUnit, `${where} unit ${v.unit}`).toBe(true)
         }
@@ -80,13 +81,13 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
   })
 
   it('new PX4 sets cite v1.13.3 definition lines and respect every documented bound', () => {
-    const counts = { px4Position: 36, px4Allocation: 1, px4ThrustModel: 1, px4HoverThrust: 6, takeoffLandPx4: 10 }
+    const counts = { px4Position: 36, px4Allocation: 1, px4ThrustModel: 1, px4HoverThrust: 6, takeoffLandPx4: 10, returnPx4: 6 }
     for (const [id, count] of Object.entries(counts)) {
       expect(set(id).values, id).toHaveLength(count)
       for (const v of set(id).values) {
         const where = `${id}.${v.key}`
         expect(v.source, where).toBe('software-default')
-        expect(v.key, where).toMatch(/^(MC|MPC|HTE|THR|LNDMC|MIS)_[A-Z0-9_]+$/)
+        expect(v.key, where).toMatch(/^(MC|MPC|HTE|THR|LNDMC|MIS|RTL|NAV)_[A-Z0-9_]+$/)
         expect(v.reference?.url, where).toMatch(
           /^https:\/\/github\.com\/PX4\/PX4-Autopilot\/blob\/v1\.13\.3\/src\/.+\.c#L[1-9]\d*$/,
         )
@@ -104,6 +105,22 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
         }
         if (v.min !== undefined && v.max !== undefined) expect(v.min, where).toBeLessThanOrEqual(v.max)
       }
+    }
+  })
+
+  it('records the exact return defaults and override ranges in the dedicated set', () => {
+    const expected = [
+      ['RTL_RETURN_ALT', 60, 0, 150, 59],
+      ['RTL_DESCEND_ALT', 30, 2, 100, 75],
+      ['RTL_LAND_DELAY', 0, -1, 300, 90],
+      ['RTL_MIN_DIST', 10, 0.5, 100, 106],
+      ['RTL_CONE_ANG', 45, 0, 90, 138],
+      ['RTL_HDG_MD', 0, undefined, undefined, 176],
+    ] as const
+    for (const [key, value, min, max, line] of expected) {
+      const entry = get('returnPx4', key)
+      expect([entry.value, entry.min, entry.max], key).toEqual([value, min, max])
+      expect(entry.reference?.url, key).toMatch(new RegExp(`/navigator/rtl_params.c#L${line}$`))
     }
   })
 

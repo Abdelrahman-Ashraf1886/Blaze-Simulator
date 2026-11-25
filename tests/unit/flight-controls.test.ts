@@ -42,10 +42,12 @@ describe('flight command selection and requests', () => {
     expect(selectFlightCommand(takeoff, null, 'position', 'manual')).toBe(takeoff)
     expect(selectFlightCommand(takeoff, null, 'position', null)).toBeNull()
     expect(selectFlightCommand(null, takeoff, 'attitudeHold', null)).toBeNull()
+    expect(selectFlightCommand(takeoff, { type: 'return' }, 'position', 'manual')).toBe(takeoff)
+    expect(selectFlightCommand(null, { type: 'return' }, 'attitudeHold', null)).toBeNull()
   })
 
   it('builds command-only requests and preserves exact calibrated sticks in manual mode', () => {
-    for (const command of [takeoffCommand(''), takeoffCommand('3.25'), { type: 'land' }, { type: 'hold' }] as const) {
+    for (const command of [takeoffCommand(''), takeoffCommand('3.25'), { type: 'land' }, { type: 'return' }, { type: 'hold' }] as const) {
       if (!command) throw new Error('Expected valid command')
       const request = toEngineSetpoint({ command })
       expect(FlightSessionSetpointSchema.parse(request)).toEqual({ command })
@@ -72,9 +74,9 @@ it('fires only fresh PlayStation button presses across start, pause, resume, and
   expect(edges(buttons(0, 9), true)).toEqual([]) // Resume transition.
   expect(edges(buttons(0, 9))).toEqual([])
   expect(edges(undefined)).toEqual([]) // Disconnect or keyboard.
-  expect(edges(buttons(0, 9, 1))).toEqual([]) // Reconnect with buttons held.
+  expect(edges(buttons(0, 9, 1, 4))).toEqual([]) // Reconnect with buttons held.
   expect(edges(buttons())).toEqual([])
-  expect(edges(buttons(1, 2, 3, 14, 15))).toEqual(['land', 'hold', 'manual', 'previous', 'next'])
+  expect(edges(buttons(1, 2, 3, 4, 14, 15))).toEqual(['land', 'hold', 'manual', 'return', 'previous', 'next'])
 })
 
 it('routes all bindings through the on-screen actions and honours disabled controls', () => {
@@ -83,10 +85,11 @@ it('routes all bindings through the on-screen actions and honours disabled contr
   const onMode = vi.fn()
   const command = { type: 'hold' } as const
   const controls = { ...flightCommandActions(command, '3.4', false, onCommand).actions, pause: flightPauseAction(null, null, onToggle) }
-  for (const action of ['takeoff', 'land', 'hold', 'manual', 'pause'] as const) {
+  expect(Object.keys(controls).slice(0, 5)).toEqual(['takeoff', 'hold', 'land', 'return', 'manual'])
+  for (const action of ['takeoff', 'land', 'return', 'hold', 'manual', 'pause'] as const) {
     runDeviceButton(action, controls, 'position', onMode)
   }
-  expect(onCommand.mock.calls).toEqual([[{ type: 'takeoff', altitudeM: 3.4 }], [{ type: 'land' }], [{ type: 'hold' }], [null]])
+  expect(onCommand.mock.calls).toEqual([[{ type: 'takeoff', altitudeM: 3.4 }], [{ type: 'land' }], [{ type: 'return' }], [{ type: 'hold' }], [null]])
   expect(onToggle).toHaveBeenCalledOnce()
 
   runDeviceButton('previous', controls, 'stabilized', onMode)
@@ -101,7 +104,7 @@ it('routes all bindings through the on-screen actions and honours disabled contr
   onCommand.mockClear()
   onToggle.mockClear()
   const paused = { ...flightCommandActions(command, '3.4', true, onCommand).actions, pause: flightPauseAction('manual', 'disconnect', onToggle) }
-  for (const action of ['takeoff', 'land', 'hold', 'manual', 'pause'] as const) {
+  for (const action of ['takeoff', 'land', 'return', 'hold', 'manual', 'pause'] as const) {
     runDeviceButton(action, paused, 'position', onMode)
     runDeviceButton(action, controls, 'attitudeHold', onMode)
   }

@@ -1207,7 +1207,7 @@
     {
       "id": "takeoffLandPx4",
       "title": "PX4 v1.13.3 takeoff, landing and land-detector parameters (Phase 6)",
-      "note": "Parameters read for the takeoff ramp, spool-up, automatic descent/ascent limits and the multicopter land detector. MPC_TKO_SPEED, MPC_LAND_SPEED, MPC_LAND_ALT1, MPC_LAND_ALT2, MPC_TILTMAX_LND and MPC_JERK_AUTO are already in px4Position and are not repeated. MPC_LAND_CRWL and MPC_LAND_ALT3 are not recorded: they apply only with a range sensor, which the vehicle does not have. Return (RTL) parameters are not recorded.",
+      "note": "Parameters read for the takeoff ramp, spool-up, automatic descent/ascent limits and the multicopter land detector. MPC_TKO_SPEED, MPC_LAND_SPEED, MPC_LAND_ALT1, MPC_LAND_ALT2, MPC_TILTMAX_LND and MPC_JERK_AUTO are already in px4Position and are not repeated. MPC_LAND_CRWL and MPC_LAND_ALT3 apply only with a range sensor. Return parameters live in returnPx4.",
       "values": [
         {
           "key": "MPC_TKO_RAMP_T",
@@ -1341,6 +1341,94 @@
             "retrieved": "2026-11-23"
           },
           "condition": "Take-off altitude. This is the minimum altitude the system will take off to."
+        }
+      ]
+    },
+    {
+      "id": "returnPx4",
+      "title": "PX4 v1.13.3 multicopter return to start",
+      "note": "RTL_TYPE 0 with home as destination. RTL_HDG_MD is fixed to mode 0. The automatic yaw-rate limit is already recorded in takeoffLandPx4.",
+      "values": [
+        {
+          "key": "RTL_RETURN_ALT",
+          "value": 60,
+          "unit": "m",
+          "min": 0,
+          "max": 150,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/navigator/rtl_params.c#L59",
+            "locator": "rtl_params.c line 59: PARAM_DEFINE_FLOAT(RTL_RETURN_ALT, 60);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Minimum altitude above destination before the multicopter cone adjustment."
+        },
+        {
+          "key": "RTL_DESCEND_ALT",
+          "value": 30,
+          "unit": "m",
+          "min": 2,
+          "max": 100,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/navigator/rtl_params.c#L75",
+            "locator": "rtl_params.c line 75: PARAM_DEFINE_FLOAT(RTL_DESCEND_ALT, 30);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Altitude above destination for the descent and loiter before landing."
+        },
+        {
+          "key": "RTL_LAND_DELAY",
+          "value": 0,
+          "unit": "s",
+          "min": -1,
+          "max": 300,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/navigator/rtl_params.c#L90",
+            "locator": "rtl_params.c line 90: PARAM_DEFINE_FLOAT(RTL_LAND_DELAY, 0.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Delay before landing. Zero lands directly and -1 loiters indefinitely."
+        },
+        {
+          "key": "RTL_MIN_DIST",
+          "value": 10,
+          "unit": "m",
+          "min": 0.5,
+          "max": 100,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/navigator/rtl_params.c#L106",
+            "locator": "rtl_params.c line 106: PARAM_DEFINE_FLOAT(RTL_MIN_DIST, 10.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Horizontal radius for the cone altitude and destination heading rules."
+        },
+        {
+          "key": "RTL_CONE_ANG",
+          "value": 45,
+          "unit": "deg",
+          "min": 0,
+          "max": 90,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/navigator/rtl_params.c#L138",
+            "locator": "rtl_params.c line 138: PARAM_DEFINE_INT32(RTL_CONE_ANG, 45);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Integer half-angle of the return-altitude cone."
+        },
+        {
+          "key": "RTL_HDG_MD",
+          "value": 0,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/navigator/rtl_params.c#L176",
+            "locator": "rtl_params.c line 176: PARAM_DEFINE_INT32(RTL_HDG_MD, 0);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Heading toward the next waypoint. The simulator supports only mode 0."
         }
       ]
     },

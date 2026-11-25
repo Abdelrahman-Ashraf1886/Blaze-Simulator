@@ -416,6 +416,7 @@ const autoSetpoint = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('takeoff'), altitudeM: positive.optional() }),
   z.strictObject({ type: z.literal('hold') }),
   z.strictObject({ type: z.literal('land') }),
+  z.strictObject({ type: z.literal('return') }),
 ])
 
 export const FlightSessionSetpointSchema = z.strictObject({
@@ -483,7 +484,10 @@ export const FlightDiagnosticSchema = z.strictObject({
       saturation,
     })
     .nullable(),
-  flightLoop: FlightLoopDiagnosticSchema.optional(),
+  flightLoop: FlightLoopDiagnosticSchema.extend({
+    autoMode: z.enum(['takeoff', 'hold', 'land', 'return']).nullable().optional(),
+    returnState: z.enum(['climb', 'return', 'descend', 'loiter', 'land', 'landed']).optional(),
+  }).optional(),
 })
 export type FlightDiagnostic = z.infer<typeof FlightDiagnosticSchema>
 

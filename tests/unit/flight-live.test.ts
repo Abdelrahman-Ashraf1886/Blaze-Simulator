@@ -666,6 +666,7 @@ describe('6.5 on the real NDJSON engine', () => {
       step(MAX_SESSION_STEPS, { command: { type: 'takeoff' } }),
       step(MAX_SESSION_STEPS, { command: { type: 'hold' } }),
       step(MAX_SESSION_STEPS, { command: { type: 'land' } }),
+      step(MAX_SESSION_STEPS, { command: { type: 'return' } }),
       step(MAX_SESSION_STEPS, { sticks }),
     ]
     const started = FlightSessionStartResultSchema.parse(await result(initial))
@@ -680,8 +681,8 @@ describe('6.5 on the real NDJSON engine', () => {
       hashes.push(stateHash)
       diagnostics.push(response.diagnostic)
     }
-    const [powered, manual, takeoff, hold, land, resumed] = diagnostics
-    if (!powered || !manual || !takeoff || !hold || !land || !resumed) throw new Error('A step diagnostic is missing')
+    const [powered, manual, takeoff, hold, land, returning, resumed] = diagnostics
+    if (!powered || !manual || !takeoff || !hold || !land || !returning || !resumed) throw new Error('A step diagnostic is missing')
     expect(powered.loads.windComWorldMps[0]).toBeLessThan(-8)
     expect(powered.loads.groundEffectAddedThrustN).toBeGreaterThan(0)
     expect(powered.loads.groundEffectStatus.every(({ type }) => type === 'applied')).toBe(true)
@@ -691,6 +692,7 @@ describe('6.5 on the real NDJSON engine', () => {
     expect(takeoff.flightLoop).toMatchObject({ mode: 'position', autoMode: 'takeoff', commandFinished: false })
     expect(hold.flightLoop).toMatchObject({ mode: 'position', autoMode: 'hold', commandFinished: true })
     expect(land.flightLoop).toMatchObject({ mode: 'position', autoMode: 'land' })
+    expect(returning.flightLoop).toMatchObject({ mode: 'position', autoMode: 'return', returnState: expect.any(String) })
     expect(resumed.flightLoop).toMatchObject({ mode: 'altitude', autoMode: null, commandFinished: false })
 
     const log = FlightSessionLogResultSchema.parse(await result(getLog))
@@ -847,7 +849,7 @@ describe('6.5 on the real NDJSON engine', () => {
       throttle: quad.vehicle.motors.map(() => rates.collective),
     }))
     expect(throttleRun.stateHash).toBe('d7f97eadba824407')
-    for (const type of ['takeoff', 'hold', 'land'] as const) {
+    for (const type of ['takeoff', 'hold', 'land', 'return'] as const) {
       expect(await request(step(1, { command: { type } }))).toMatchObject({
         ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('requires a FlightLoop session') },
       })
@@ -855,7 +857,10 @@ describe('6.5 on the real NDJSON engine', () => {
     const badAuto = { steps: 1, setpoint: { mode: 'position', command: { type: 'takeoff', altitudeM: -A } } }
     expect(FlightSessionStepParamsSchema.safeParse(badAuto).success).toBe(false)
     await result(start(baseStart))
-    for (const setpoint of [badAuto.setpoint, { command: badAuto.setpoint.command }, { command: { type: 'hold', extra: true } }]) {
+    for (const setpoint of [
+      badAuto.setpoint, { command: badAuto.setpoint.command }, { command: { type: 'hold', extra: true } },
+      { command: { type: 'return', altitudeM: 2.5 } }, { command: { type: 'return' }, mode: 'position' },
+    ]) {
       expect(await request({ type: 'flight.session.step', steps: 1, setpoint })).toMatchObject({
         ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('setpoint.command') },
       })
@@ -897,22 +902,76 @@ describe('6.5 on the real NDJSON engine', () => {
   it('reports takeoff completion and the landed detector state after descent', async () => withProtocol(async ({ result }) => {
     await result(load)
     await result(start(baseStart))
-    const advance = async (type: 'takeoff' | 'land', seconds: number) => {
+    const advance = async (type: 'takeoff' | 'hold' | 'land', seconds: number) => {
       let last
       for (let remaining = Math.round(seconds / dtS); remaining > 0; remaining -= MAX_SESSION_STEPS) {
         last = FlightSessionStepResultSchema.parse(await result(step(Math.min(remaining, MAX_SESSION_STEPS), { command: { type } })))
       }
-      return last?.diagnostic.flightLoop
+      if (!last) throw new Error('Expected a completed flight step')
+      return last
     }
     // TakeoffParams::default (takeoff.rs:23–26) and the settling window in flight_loop/tests.rs:307–316.
     const settlingS = 10
     const held = await advance('takeoff', 1 + 3 + settlingS)
-    expect(held).toMatchObject({ takeoffState: 'flight', autoMode: 'hold', commandFinished: true, landState: { landed: false } })
+    expect(held.diagnostic.flightLoop).toMatchObject({ takeoffState: 'flight', autoMode: 'hold', commandFinished: true, landState: { landed: false } })
+    const hold = await advance('hold', settlingS)
     const landed = await advance('land', settlingS)
-    expect(landed).toMatchObject({
+    expect(landed.diagnostic.flightLoop).toMatchObject({
       takeoffState: 'readyForTakeoff', autoMode: 'land', commandFinished: true,
       landState: { freefall: false, groundContact: true, maybeLanded: true, landed: true },
     })
+    // Captured from the pre-6.12 engine with the same 6.7 command sequence.
+    expect([held.stateHash, hold.stateHash, landed.stateHash]).toEqual([
+      'fece47cf35a58a29', '007023cd74b4c922', '0163881fac232154',
+    ])
+  }), 20_000)
+
+  it('validates exact RTL session gains, including integer cone and fixed heading mode', async () => withProtocol(async ({ result, request }) => {
+    await result(load)
+    // Boundary inputs from rtl_params.c:47–138,166–176.
+    const gains = { RTL_RETURN_ALT: 0, RTL_DESCEND_ALT: 2, RTL_LAND_DELAY: -1, RTL_MIN_DIST: 0.5, RTL_CONE_ANG: 90, RTL_HDG_MD: 0 }
+    expect(FlightSessionStartResultSchema.parse(await result(start({ ...baseStart, gains }))).dtS).toBe(dtS)
+    for (const [name, value] of Object.entries({
+      RTL_RETURN_ALT: -1, RTL_DESCEND_ALT: 1, RTL_LAND_DELAY: 301, RTL_MIN_DIST: 0,
+      RTL_CONE_ANG: 45.5, RTL_HDG_MD: 1, rtl_return_alt: 60, RTL_TYPE: 0,
+    })) {
+      expect(await request({ ...start(baseStart), gains: { [name]: value } })).toMatchObject({
+        ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining(name) },
+      })
+    }
+    expect(await request({ ...start(baseStart), gains: { RTL_RETURN_ALT: '60' } })).toMatchObject({
+      ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('RTL_RETURN_ALT') },
+    })
+    const grounded = FlightSessionStepResultSchema.parse(await result(step(1, { command: { type: 'return' } })))
+    expect(grounded.diagnostic.flightLoop).toMatchObject({ autoMode: 'return', returnState: 'landed', commandFinished: true })
+  }))
+
+  it('returns from low altitude at home without an additional climb', async () => withProtocol(async ({ result }) => {
+    await result(load)
+    const initial = FlightSessionStartResultSchema.parse(await result(start(baseStart)))
+    const home = initial.diagnostic.state.comM
+    // Same spool-up, ramp and settling window as the preceding 6.7 regression.
+    let current = initial.diagnostic
+    for (let remaining = (1 + 3 + 10) / dtS; remaining > 0; remaining -= MAX_SESSION_STEPS) {
+      current = FlightSessionStepResultSchema.parse(await result(step(MAX_SESSION_STEPS, { command: { type: 'takeoff' } }))).diagnostic
+    }
+    expect(current.flightLoop?.autoMode).toBe('hold')
+    const activationHeight = current.state.comM[2]
+    const states = new Set<string>()
+    // Keep the first samples small enough to see the two immediate waypoint transitions.
+    for (let tick = 0; tick < 10 / dtS;) {
+      const steps = tick < MAX_SESSION_STEPS ? 1 : MAX_SESSION_STEPS
+      current = FlightSessionStepResultSchema.parse(await result(step(steps, { command: { type: 'return' } }))).diagnostic
+      tick += steps
+      const state = current.flightLoop?.returnState
+      if (!state) throw new Error('Return diagnostic missing')
+      states.add(state)
+      expect(current.state.comM[2]).toBeLessThan(activationHeight + 0.01) // 6.7 hold tolerance.
+      if (current.flightLoop?.commandFinished) break
+    }
+    expect([...states]).toEqual(['climb', 'return', 'land', 'landed'])
+    expect(current.flightLoop).toMatchObject({ autoMode: 'return', commandFinished: true, landState: { landed: true } })
+    expect(Math.abs(current.state.comM[2] - home[2])).toBeLessThanOrEqual(1.2e-4) // 6.7 resting height.
   }), 20_000)
 
   it('reports 100-step latency and passes a large terrain line through stdin', async () => withProtocol(async ({ result, lineBytes }) => {

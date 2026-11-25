@@ -1,7 +1,7 @@
 //! Manual and automatic flight on the propulsion and rigid-body plant. Sampling and motor
 //! order follow closed_loop.rs:100-123 and controller.rs:783-787.
 
-use crate::auto_modes::{AutoCommand, AutoFlight, AutoMode};
+use crate::auto_modes::{AutoCommand, AutoFlight, AutoMode, AutoStep, Home, ReturnParams, ReturnState};
 use crate::closed_loop::{unit_attitude, SaturationDiagnostic};
 use crate::controller::{attitude_rates, Allocator, Gains, RateControl, Saturation};
 use crate::flight::Flight;
@@ -37,6 +37,7 @@ pub enum FlightMode {
 pub struct FlightLoopSnapshot {
     pub mode: FlightMode,
     pub auto_mode: Option<AutoMode>,
+    pub return_state: Option<ReturnState>,
     pub takeoff_state: TakeoffState,
     pub land_state: LandState,
     pub climb_speed_limit_m_s: f64,
@@ -61,7 +62,8 @@ pub struct FlightLoop {
     saturation: Saturation,
     velocity_feedback: Option<[f64; 3]>,
     last_step: Option<FlightLoopSnapshot>,
-    origin_z: Option<f64>,
+    home: Option<Home>,
+    return_params: ReturnParams,
     auto: Option<AutoFlight>,
     takeoff: Takeoff,
     detector: LandDetector,
@@ -162,7 +164,8 @@ impl FlightLoop {
             saturation: Saturation::default(),
             velocity_feedback: None,
             last_step: None,
-            origin_z: None,
+            home: None,
+            return_params: ReturnParams::default(),
             auto: None,
             takeoff: Takeoff::new(TakeoffParams {
                 mpc_z_vel_p_acc: position.mpc_z_vel_p_acc,
@@ -194,6 +197,11 @@ impl FlightLoop {
         Ok(self)
     }
 
+    pub fn with_return_params(mut self, params: ReturnParams) -> Self {
+        self.return_params = params;
+        self
+    }
+
     pub(crate) fn relative_thrust(&self, throttle: f64) -> f64 {
         self.motor_output.relative_thrust(throttle)
     }
@@ -211,9 +219,11 @@ impl FlightLoop {
         let mut words = self.flight.hash_words();
         words.extend(self.takeoff.hash_words());
         words.extend(self.detector.hash_words());
+        // The legacy hash carries start height. Return adds its home XY and yaw
+        // through AutoFlight::hash_words while the return command is active.
         words.extend([
-            self.origin_z.is_some() as u64,
-            self.origin_z.unwrap_or_default().to_bits(),
+            self.home.is_some() as u64,
+            self.home.map_or(0.0, |home| home.position[2]).to_bits(),
             self.tilt_limit_rad.to_bits(),
             self.auto.is_some() as u64,
         ]);
@@ -290,8 +300,9 @@ impl FlightLoop {
         if steps_per_sample == 0 || ESTIMATE_INTERVAL_S / steps_per_sample as f64 != dt {
             return Err("flight loop dt must divide EKF2_PREDICT_US (10000 us)".into());
         }
-        let start = self.origin_z.is_none();
-        let origin_z = self.origin_z.unwrap_or(estimate.position[2]);
+        let start = self.home.is_none();
+        let home = self.home.unwrap_or(Home { position: estimate.position, yaw: estimate.yaw });
+        let origin_z = home.position[2];
         let touching_ground = sim.touching_ground() || (start && sim.initial_ground_contact());
         let land = self.last_step.map_or(LandState {
             freefall: false,
@@ -306,7 +317,7 @@ impl FlightLoop {
         let mut auto = match AutoCommand::from_flight(command)? {
             Some(request) => Some(match self.auto.as_ref().filter(|a| a.accepts(request)) {
                 Some(active) => active.clone(),
-                None => AutoFlight::new(request, &estimate, origin_z)?,
+                None => AutoFlight::new(request, &estimate, home, land.landed, self.return_params)?,
             }),
             None => None,
         };
@@ -330,8 +341,9 @@ impl FlightLoop {
         let landed_for_takeoff = land.landed || (takeoff.state() == TakeoffState::RampUp && touching_ground);
         let takeoff_state = takeoff.update_state(true, landed_for_takeoff, want_takeoff, skip_takeoff, now_us);
         let input_command = match &mut auto {
-            Some(active) => FlightCommand::PositionSetpoint(
-                active.setpoint(&estimate, takeoff_state, origin_z, &g, ramp_s, dt)),
+            Some(active) => FlightCommand::PositionSetpoint(active.setpoint(AutoStep {
+                estimate: &estimate, takeoff: takeoff_state, landed: land.landed, now_us, ramp_s, dt,
+            }, origin_z, &g)),
             None => command,
         };
         let sp = modes.step(input_command, &estimate, self.velocity_feedback, land.landed, dt)?;
@@ -419,7 +431,7 @@ impl FlightLoop {
         }
         self.modes = modes;
         self.auto = auto;
-        self.origin_z = Some(origin_z);
+        self.home = Some(home);
         self.takeoff = takeoff;
         self.tilt_limit_rad = tilt_limit_rad;
         // PX4 MulticopterRateControl.cpp:242. Blocking both directions retains
@@ -490,7 +502,8 @@ impl FlightLoop {
         };
         self.last_step = Some(FlightLoopSnapshot {
             mode,
-            auto_mode: self.auto.as_ref().map(|a| a.mode),
+            auto_mode: self.auto.as_ref().map(AutoFlight::mode),
+            return_state: self.auto.as_ref().and_then(|a| a.return_state(land_state.landed)),
             takeoff_state,
             land_state,
             climb_speed_limit_m_s: climb_limit,

@@ -19,7 +19,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use engine_core::auto_modes::AutoMode;
+use engine_core::auto_modes::{AutoMode, ReturnState};
 use engine_core::closed_loop::SaturationDiagnostic;
 use engine_core::flight_loop::{FlightLoopSnapshot, FlightMode};
 use engine_core::flight_modes::{FlightCommand, Sticks};
@@ -226,6 +226,8 @@ impl ControllerRequest {
 pub(crate) struct FlightLoopDiagnostic {
     mode: FlightModeRequest,
     auto_mode: Option<AutoModeName>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    return_state: Option<ReturnStateWire>,
     #[serde(with = "TakeoffStateWire")]
     takeoff_state: TakeoffState,
     #[serde(with = "LandStateWire")]
@@ -245,6 +247,18 @@ enum AutoModeName {
     Takeoff,
     Hold,
     Land,
+    Return,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ReturnStateWire {
+    Climb,
+    Return,
+    Descend,
+    Loiter,
+    Land,
+    Landed,
 }
 
 #[derive(Serialize)]
@@ -287,6 +301,15 @@ impl From<FlightLoopSnapshot> for FlightLoopDiagnostic {
                 AutoMode::Takeoff => AutoModeName::Takeoff,
                 AutoMode::Hold => AutoModeName::Hold,
                 AutoMode::Land => AutoModeName::Land,
+                AutoMode::Return => AutoModeName::Return,
+            }),
+            return_state: snapshot.return_state.map(|state| match state {
+                ReturnState::Climb => ReturnStateWire::Climb,
+                ReturnState::Return => ReturnStateWire::Return,
+                ReturnState::Descend => ReturnStateWire::Descend,
+                ReturnState::Loiter => ReturnStateWire::Loiter,
+                ReturnState::Land => ReturnStateWire::Land,
+                ReturnState::Landed => ReturnStateWire::Landed,
             }),
             takeoff_state: snapshot.takeoff_state,
             land_state: snapshot.land_state,
@@ -294,6 +317,7 @@ impl From<FlightLoopSnapshot> for FlightLoopDiagnostic {
             command_finished: match snapshot.auto_mode {
                 Some(AutoMode::Hold) => true,
                 Some(AutoMode::Land) => snapshot.land_state.landed,
+                Some(AutoMode::Return) => snapshot.return_state == Some(ReturnState::Landed),
                 _ => false,
             },
             position_setpoint_m: snapshot.position_setpoint.map(finite),

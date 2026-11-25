@@ -91,7 +91,7 @@ async function setPad(page: Page, present: boolean, pressed?: keyof typeof DEVIC
   }, { id: padId, present, pressed, buttonCount: playStationButtons('DualSense').length })
 }
 
-test('flies a calibrated device, pauses on disconnect, resumes, and lands', async () => {
+test('flies a calibrated device, pauses on disconnect, resumes, lands, and accepts Return', async () => {
   test.setTimeout(180_000)
   const userData = mkdtempSync(join(tmpdir(), 'blazeuav-flight-device-'))
   const { app, page } = await launchApp(userData)
@@ -124,6 +124,10 @@ test('flies a calibrated device, pauses on disconnect, resumes, and lands', asyn
 
     await setPad(page, true, 9) // Options (gamepad_standard_mappings.h:64)
     await expect(status).toContainText('Paused manually')
+    const returnButton = page.getByRole('button', { name: 'Return', exact: true })
+    await expect(returnButton).toBeDisabled()
+    await setPad(page, true, 4) // L1 (playstation.ts:19–23)
+    await expect(automatic).toContainText('Hold · Finished')
     await setPad(page, true)
     await page.getByRole('button', { name: 'Resume', exact: true }).click()
     await expect(status).toHaveText('Running')
@@ -146,6 +150,10 @@ test('flies a calibrated device, pauses on disconnect, resumes, and lands', asyn
     await setPad(page, true, 1) // Circle (gamepad_standard_mappings.h:56)
     await expect(automatic).toContainText('Land · Finished', { timeout: 30_000 })
     await expect(page.getByRole('list', { name: 'Land detection' })).toContainText('Landed yes')
+    await expect(returnButton).toBeEnabled()
+    await setPad(page, true, 4) // L1 (playstation.ts:19–23)
+    await expect(automatic).toContainText('Return · Finished')
+    await expect(page.getByTestId('flight-return-state')).toContainText('Landed')
     await page.getByTestId('flight-stop').click()
     await expect(status).toHaveText('Stopped')
   } finally {

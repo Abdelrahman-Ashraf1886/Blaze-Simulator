@@ -68,6 +68,9 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
     expect(renderMode()).toContain('Finished')
     expect(renderMode()).toContain('Ramping up')
     expect(renderMode()).toContain('Landed no')
+    frame.flightLoop = { ...frame.flightLoop, autoMode: 'return', returnState: 'descend', commandFinished: false }
+    expect(renderMode()).toContain('>Return</span> · In progress')
+    expect(renderMode()).toContain('>Descend</span>')
 
     const controls = await server.ssrLoadModule('/src/features/flight/FlightControls.tsx') as {
       FlightInputSelector: ComponentType<typeof selectorProps>
@@ -101,7 +104,7 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
       command: { type: 'land' }, height: '', paused: false, onHeight: () => {}, onCommand: () => {},
     }
     const commands = renderToStaticMarkup(createElement(controls.FlightCommandControls, commandProps))
-    for (const text of ['MIS_TAKEOFF_ALT (2.5 m)', 'm above start', '>Takeoff<', '>Hold<', '>Land<', '>Manual<']) {
+    for (const text of ['MIS_TAKEOFF_ALT (2.5 m)', 'm above start', '>Takeoff<', '>Hold<', '>Land<', '>Return<', '>Manual<']) {
       expect(commands).toContain(text)
     }
     const loop = render()

@@ -71,6 +71,20 @@ export function pointAt(points: readonly RecordingPoint[], timeS: number, steppe
   return sampleValue(after.value)
 }
 
+export function livePointIndex(times: Float64Array, timeS: number, stepped: boolean): number {
+  let first = 0
+  let stop = times.length
+  while (first < stop) {
+    const mid = Math.floor((first + stop) / 2)
+    if (times[mid]! <= timeS) first = mid + 1
+    else stop = mid
+  }
+  const before = times[first - 1]
+  const after = times[first]
+  if (before === undefined || (after === undefined && before !== timeS)) return -1
+  return stepped || after === undefined || timeS - before <= after - timeS ? first - 1 : first
+}
+
 export function valueLabel(channel: PlotChannel, value: SampleValue): string {
   if (value === null) return '—'
   if (channel.kind === 'enum') return channel.values[value] ?? String(value)

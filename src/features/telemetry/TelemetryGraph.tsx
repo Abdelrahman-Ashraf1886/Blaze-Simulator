@@ -3,14 +3,9 @@ import uPlot from 'uplot'
 import type { RecordingSeries } from '../../../electron/ipc/contract'
 import { Button } from '@/components/ui/button'
 import { groupAxes, MAX_AXES, type PlotChannel } from './layout'
-import { alignSamples, pointAt, valueLabel, type TimeRange } from './samples'
-
-type Listener = () => void
-
-export interface LiveGraphSource {
-  subscribe(listener: Listener): () => void
-  read(names: readonly string[], fromS: number): RecordingSeries[]
-}
+import type { LiveData } from './live-buffer'
+import { alignSamples, livePointIndex, pointAt, sampleValue, valueLabel, type TimeRange } from './samples'
+import type { LiveGraphSource } from './use-live-telemetry'
 
 export function createGraphCursor(retainOnLeave = false) {
   let time: number | null = null
@@ -116,9 +111,16 @@ interface GraphProps {
 
 interface GraphRuntime {
   draw(series: readonly RecordingSeries[], range?: TimeRange): void
-  times(): readonly number[]
+  times(): GraphTimes
 }
 
+interface GraphTimes {
+  readonly [index: number]: number
+  find(predicate: (time: number) => boolean): number | undefined
+  findLast(predicate: (time: number) => boolean): number | undefined
+}
+
+type Readout = { time: number; values: string[] }
 const emptySeries: RecordingSeries[] = []
 const emptyChannels: PlotChannel[] = []
 
@@ -135,7 +137,8 @@ function GraphPlot({ title, channels, comparison = emptyChannels, cursor, series
   const host = useRef<HTMLDivElement>(null)
   const runtime = useRef<GraphRuntime | null>(null)
   const anchor = useRef<number | null>(null)
-  const [readout, setReadout] = useState<{ time: number; values: string[] } | null>(null)
+  const [readout, setReadout] = useState<Readout | null>(null)
+  const lastLiveReadout = useRef<Readout | null>(null)
   const reportWidth = useEffectEvent((width: number) => onWidth?.(width))
   const reportZoom = useEffectEvent((next: TimeRange) => onZoom?.(next))
 
@@ -144,17 +147,47 @@ function GraphPlot({ title, channels, comparison = emptyChannels, cursor, series
     const drawn = [...channels, ...comparison.map((channel) => ({
       ...channel, name: comparisonChannelName(channel.name), label: `${channel.label} · comparison`,
     }))]
+    const hasStepped = live && drawn.some(({ kind }) => kind !== 'number')
     let chart: uPlot | undefined
     let ordered = emptySeries
-    let data = alignSamples([])
+    let data: ReturnType<typeof alignSamples> = [[]]
     let drawnRange: TimeRange | undefined
+    let liveData: LiveData | undefined
+    let drawingLive = false
 
     function refresh(source?: uPlot) {
       if (!chart) return
       const time = cursor.get()
       const scale = chart.scales.x!
       const visible = time !== null && scale.min != null && scale.max != null && time >= scale.min && time <= scale.max
-      if (source !== chart) chart.setCursor({ left: visible ? chart.valToPos(time, 'x') : -1, top: -1 }, false)
+      if (source !== chart) {
+        const left = visible ? chart.valToPos(time, 'x') : -1
+        if (!live || chart.cursor.left !== left) chart.setCursor({ left, top: -1 }, false)
+      }
+      if (live) {
+        const previous = lastLiveReadout.current
+        if (time === null) {
+          if (previous) setReadout(lastLiveReadout.current = null)
+          return
+        }
+        const times = liveData?.[0]
+        const nearest = visible && times ? livePointIndex(times, time, false) : -1
+        const stepped = hasStepped && visible && times ? livePointIndex(times, time, true) : -1
+        let values = previous?.values
+        if (values?.length !== drawn.length) values = new Array<string>(drawn.length)
+        for (let i = 0; i < drawn.length; i++) {
+          const channel = drawn[i]!
+          const index = channel.kind === 'number' ? nearest : stepped
+          const value = valueLabel(channel, sampleValue(liveData?.[i + 1]?.[index]))
+          if (values[i] === value) continue
+          if (values === previous?.values) values = values.slice()
+          values[i] = value
+        }
+        if (time !== previous?.time || values !== previous.values) {
+          setReadout(lastLiveReadout.current = { time, values })
+        }
+        return
+      }
       setReadout(time === null ? null : {
         time,
         values: drawn.map((channel, index) =>
@@ -181,32 +214,87 @@ function GraphPlot({ title, channels, comparison = emptyChannels, cursor, series
         drawnRange = visible
         applyData()
       },
-      times: () => data[0],
+      times: () => liveData?.[0] ?? data[0],
     }
 
+    let width = 0
+    let height = 0
+    let hasLatest = false
+    const bounds = { min: 0, max: 0 }
+    const size = { width: 0, height: 0 }
+    function applyLiveData(plot: uPlot) {
+      if (plot.width !== width || plot.height !== height) {
+        size.width = width
+        size.height = height
+        plot.setSize(size)
+      }
+      plot.setData(liveData!, !hasLatest)
+      if (hasLatest) plot.setScale('x', bounds)
+    }
+
+    function createChart(bounds?: { min: number; max: number }) {
+      const options = plotOptions(node, channels, comparison, drawn, width, height, {
+        // uPlot calls forEach on every hook key present, so an undefined entry throws.
+        ...(live ? { ready: [() => {
+          drawingLive = false
+          refresh()
+        }] } : {}),
+        setCursor: [(plot) => {
+          if (drawingLive) return
+          const left = plot.cursor.left
+          const next = left === undefined || left < 0 ? null : plot.posToVal(left, 'x')
+          cursor.set(next !== null && Number.isFinite(next) ? next : null, plot)
+        }],
+        setSelect: [(plot) => {
+          const { left, width: selected } = plot.select
+          const fromS = plot.posToVal(left, 'x')
+          const toS = plot.posToVal(left + selected, 'x')
+          if (selected > 0 && Number.isFinite(fromS) && Number.isFinite(toS) && fromS < toS) reportZoom({ fromS, toS })
+        }],
+      })
+      if (live) {
+        Object.assign(options.scales!.x!, bounds)
+        options.cursor!.drag = { x: false, y: false }
+      }
+      return new uPlot(options, liveData ?? data, node)
+    }
+
+    const readLive = live?.createReader(drawn.map(({ name }) => name))
+    const subscription = live?.subscribe(() => {
+      if (!readLive || document.hidden || !node.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return
+      liveData = readLive()
+      const latest = liveData[0].at(-1)
+      hasLatest = latest !== undefined
+      if (latest !== undefined) {
+        bounds.min = latest - live.durationS
+        bounds.max = latest
+      }
+      drawingLive = true
+      if (!chart) {
+        chart = createChart(hasLatest ? bounds : undefined)
+        return
+      }
+      chart.batch(applyLiveData)
+      drawingLive = false
+      refresh()
+    })
+    const updateVisibility = () => subscription?.setVisible(!document.hidden && width > 0 && height > 0)
+    if (subscription) document.addEventListener('visibilitychange', updateVisibility)
+
     const observer = new ResizeObserver(([entry]) => {
-      const width = Math.floor(entry!.contentRect.width)
-      const height = Math.floor(entry!.contentRect.height)
-      if (width < 1 || height < 1) return
-      if (chart) {
+      width = Math.floor(entry!.contentRect.width)
+      height = Math.floor(entry!.contentRect.height)
+      if (subscription) {
+        updateVisibility()
+        if (width < 1 || height < 1) return
+      } else if (width < 1 || height < 1) return
+      else if (chart) {
         if (chart.width !== width || chart.height !== height) {
           chart.setSize({ width, height })
           refresh()
         }
       } else {
-        chart = new uPlot(plotOptions(node, channels, comparison, drawn, width, height, {
-          setCursor: [(plot) => {
-            const left = plot.cursor.left
-            const next = left === undefined || left < 0 ? null : plot.posToVal(left, 'x')
-            cursor.set(next !== null && Number.isFinite(next) ? next : null, plot)
-          }],
-          setSelect: [(plot) => {
-            const { left, width: selected } = plot.select
-            const fromS = plot.posToVal(left, 'x')
-            const toS = plot.posToVal(left + selected, 'x')
-            if (selected > 0 && Number.isFinite(fromS) && Number.isFinite(toS) && fromS < toS) reportZoom({ fromS, toS })
-          }],
-        }), data, node)
+        chart = createChart()
         applyData()
       }
       reportWidth(width)
@@ -215,36 +303,20 @@ function GraphPlot({ title, channels, comparison = emptyChannels, cursor, series
     const unsubscribe = cursor.subscribe(refresh)
     return () => {
       unsubscribe()
+      subscription?.unsubscribe()
+      if (subscription) document.removeEventListener('visibilitychange', updateVisibility)
       observer.disconnect()
       chart?.destroy()
       runtime.current = null
     }
-  }, [channels, comparison, cursor])
+  }, [channels, comparison, cursor, live])
 
   useEffect(() => {
-    if (!live) {
-      runtime.current?.draw(series, range)
-      return
-    }
-    const names = channels.map(({ name }) => name)
-    let frame: number | undefined
-    function schedule() {
-      if (frame !== undefined) return
-      frame = requestAnimationFrame(() => {
-        frame = undefined
-        runtime.current?.draw(live!.read(names, range?.fromS ?? 0), range)
-      })
-    }
-    const unsubscribe = live.subscribe(schedule)
-    schedule()
-    return () => {
-      unsubscribe()
-      if (frame !== undefined) cancelAnimationFrame(frame)
-    }
+    if (!live) runtime.current?.draw(series, range)
   }, [channels, comparison, cursor, live, range, series])
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const times = runtime.current?.times() ?? []
+    const times: GraphTimes = runtime.current?.times() ?? []
     const time = cursor.get()
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault()

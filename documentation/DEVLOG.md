@@ -7,7 +7,7 @@
 - **7.5.** Added run history, 3D replay, a shared graph cursor, a second-run overlay and Verify in a separate engine. Range reads on a 100 MB file took 1446 ms for a one-second query before the chunk index cache. With the cache they took 710 ms cold and 3–4 ms repeated. Main now reuses the validated offsets and reads the requested window. [Run graphs](../src/features/telemetry/RunGraphs.tsx#L140-L249) · [Verify](../electron/main/telemetry/verify.ts#L80-L166) · [Index](../electron/main/telemetry/reader.ts#L221-L280)
 - **7.6–7.7.** Added CSV export by channel and time range, and reports for flights, scenarios and step tests. Grouped propulsion rows by motor group and kept tables together in print. A 3 s report prints on six A4 pages. [CSV](../electron/main/telemetry/csv.ts#L40-L102) · [Report build](../src/features/telemetry/report/ReportBuild.tsx) · [Print layout](../src/features/telemetry/report/report.css#L51-L90) · [PDF footer](../electron/main/telemetry/report-pdf.ts#L17-L47)
 - **7.8–7.9.** Added seeded gyro, accelerometer, barometer and GPS signals, with saved project settings shared by flights, scenarios and step tests. Missing seeds appear first in the input list. Modelled gyro feedback adds the PX4 filters and a D term on filtered acceleration. The same step test compares gyro feedback with perfect state. Response metrics use true motion. Recordings declare the raw and filtered channels. [Settings inputs](../src/domain/sensors.ts#L174-L229) · [Models](../simulation-engine/engine-core/src/sensors.rs#L179-L257) · [Recorded channels](../electron/main/telemetry/session-recorder.ts#L18-L26) · [Comparison](../tests/unit/scenario-protocol.test.ts#L794-L820) · [Tuning readout](../src/features/tuning/StepTestPanel.tsx#L137-L142)
-- **7.12 in progress.** Added acceptance test 12 for a flight, replay, verification, CSV and PDF, then reopening and verifying after restart and deleting the run and file. The test passes. [Test 12](../tests/e2e/phase7-acceptance.spec.ts#L27) · [ADR 0011](adr/0011-telemetry-recording-and-sensor-models.md)
+- **7.12.** Added acceptance test 12 for a flight, replay, verification, CSV and PDF, then reopening and verifying after restart and deleting the run and file. The test passes. [Test 12](../tests/e2e/phase7-acceptance.spec.ts#L27) · [ADR 0011](adr/0011-telemetry-recording-and-sensor-models.md)
 
 ### Catalogue acceptance and performance
 
@@ -20,7 +20,16 @@ Both exceeded the 10 % overshoot limit set before the first run. On 2026-11-25 t
 
 - **D20 sensor cost.** Compared with sensors off, flying on the gyro cost 1.27× per 1 ms step without samples and 1.35× when sampling every fourth step. Three runs each; without samples only one run is usable, because the other two timed the sensors-off case at about 31 µs per step instead of 12, slower than with sensors on (unexplained, probably request round trips). Both ratios are below the 2× limit. [D20](plans/phase-7-telemetry.md#decisions-made-with-you)
 - **Disk use.** A recording at 250 Hz takes about 15 MB per minute. The plan estimated 9.6 MB per minute. [Saved cadence](../electron/main/telemetry/session-recorder.ts#L9-L26)
-- **D18 frame time with recording and live graphs.** PERF-GATE: to be measured. [Gate configuration](../tests/e2e/flight-performance.spec.ts#L270-L272)
+- **D18 frame time with recording and live graphs: passes, after one fix.** `npm run test:flight-perf` on the same PC and settings as 6.0b (i7-9750H, 60 Hz, mains, Intel UHD 630, window 1388 × 785), all runs valid. Judged: the three runs with both on. [Gate configuration](../tests/e2e/flight-performance.spec.ts)
+
+| Case | Frame median, ms | Frame p95, ms | Frames over two periods (longest, ms) | Request p95, ms | Stick to draw p95, ms |
+| --- | --- | --- | --- | --- | --- |
+| Limit | 17.5 | 35.0 | – | – | 67 |
+| Ground | 16.6 / 16.6 / 16.6 | 19.0 / 18.8 / 18.5 | 2 (278) / 2 (385) / 2 (161) | 6.7 / 6.4 / 6.0 | 64.6 / 51.3 / 49.8 |
+| Free hover | 16.6 / 16.6 / 16.6 | 18.5 / 18.5 / 18.6 | 3 (146) / 3 (135) / 3 (145) | 6.4 / 6.3 / 6.2 | 49.4 / 49.3 / 48.9 |
+| Terrain, wind, turbulence, ground effect (reported) | 16.6 / 16.6 / 16.6 | 19.2 / 19.3 / 19.4 | 3 (143) / 3 (136) / 3 (134) | 7.7 / 8.4 / 7.7 | 49.0 / 59.7 / 48.5 |
+
+  Not judged, one run each: recording alone gave stick p95 50.2 / 51.5 / 47.8 ms (ground / hover / terrain) and both off gave 50.0 / 48.8 / 48.1 ms. The first run with both on **failed** (stick p95 82 / 77 / 106 ms; frame median 16.9 / 17.2 / 17.3 ms): each live graph rebuilt its 10 s window from per-point objects and redrew on every frame. The graphs now copy typed columns (0.1 ms instead of 9.4 ms per graph of 2501 points × 6 series) and redraw at most 10 times a second, one graph per frame. The limits did not change. The 64.6 ms on the ground in run 1 is close to the limit and not traced, and neither are the two to three hitches per 20 s already seen in 6.0b. [Live data](../src/features/telemetry/live-buffer.ts) · [Scheduler](../src/features/telemetry/use-live-telemetry.ts)
 
 ### PX4 v1.13.3 source lines
 

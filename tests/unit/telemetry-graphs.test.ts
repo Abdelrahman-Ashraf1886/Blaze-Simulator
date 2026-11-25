@@ -6,7 +6,9 @@ import react from '@vitejs/plugin-react'
 import { createServer, type ViteDevServer } from 'vite'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { channelDefinition, describeChannel, groupAxes, isTelemetryLayout, STARTER_LAYOUTS, starterLayout, type PlotChannel, type TelemetryLayout } from '../../src/features/telemetry/layout'
-import { alignSamples, comparisonOffset, intersectRanges, pointAt, recordingRange, sampleQuery, shiftedRange, valueLabel } from '../../src/features/telemetry/samples'
+import { alignSamples, comparisonOffset, intersectRanges, livePointIndex, pointAt, recordingRange, sampleQuery, sampleValue, shiftedRange, valueLabel } from '../../src/features/telemetry/samples'
+import { createLiveBuffer } from '../../src/features/telemetry/live-buffer'
+import { createLiveTelemetry, LIVE_GRAPH_INTERVAL_MS } from '../../src/features/telemetry/use-live-telemetry'
 import { replayIndexAt, replayTimeAt, replayWindowAt } from '../../src/features/flight/replay-frame'
 import type { RecordingHeader } from '../../electron/ipc/contract'
 import { telemetryChannels } from '../../src/domain/telemetry-channels'
@@ -33,6 +35,210 @@ const volts = pack[0]!
 const amps = pack[1]!
 
 afterEach(() => vi.unstubAllGlobals())
+
+function readThenAlign(
+  ring: readonly Float64Array[], head: number, length: number,
+  channels: readonly string[], names: readonly string[], fromS: number,
+) {
+  const clock = channels.indexOf('time')
+  const times = ring[clock]!
+  // The former live-buffer read, followed by the unchanged saved-graph alignment.
+  return alignSamples(names.filter((name) => channels.includes(name)).map((channel) => {
+    const column = channels.indexOf(channel)
+    const values = ring[column]!
+    const points = []
+    for (let i = 0; i < length; i++) {
+      const slot = (head + i) % times.length
+      const timeS = times[slot]!
+      if (timeS >= fromS) points.push({ timeS, value: sampleValue(values[slot]) })
+    }
+    return { channel, points }
+  }))
+}
+
+describe('live graph data', () => {
+  it.each([1, 2, 4])('matches read and align through wrap at capacity %i', (capacity) => {
+    const channels = ['b', 'time', 'a']
+    const names = ['a', 'b', 'time']
+    const duration = capacity
+    const live = createLiveBuffer(duration, capacity)
+    const read = live.createReader(names)
+    const ring = channels.map(() => new Float64Array(capacity))
+    live.begin(channels)
+    expect(read().map((column) => Array.from(column))).toEqual([[], [], [], []])
+    for (let time = 0; time <= 2 * capacity; time++) {
+      const row = [time * 2, time, time <= capacity ? null : time * 3]
+      row.forEach((value, column) => { ring[column]![time % capacity] = value ?? NaN })
+      live.append([row, [0, time, 0], [0, time - 1, 0], [0, time + 1]])
+      const length = Math.min(time + 1, capacity)
+      const head = (time + 1 - length) % capacity
+      expect(read().map((column) => Array.from(column))).toEqual(readThenAlign(ring, head, length, channels, names, 0))
+    }
+
+    const snapshot = read()
+    expect(snapshot[1]).toBeInstanceOf(Float64Array)
+    expect(snapshot[3]).toBe(snapshot[0])
+    const [clock, a, b] = snapshot
+    const later = (2 * capacity) + duration + 1
+    live.append([[1, later, NaN]])
+    expect(read().map((column) => Array.from(column))).toEqual([[later], [null], [1], [later]])
+    live.begin(channels)
+    live.append([[8, 0, 4]])
+    expect(read().map((column) => Array.from(column))).toEqual([[0], [4], [8], [0]])
+    expect(read()).toBe(snapshot)
+    expect(read()[0].buffer).toBe(clock.buffer)
+    expect((read()[1] as Float64Array).buffer).toBe((a as Float64Array).buffer)
+    expect((read()[2] as Float64Array).buffer).toBe((b as Float64Array).buffer)
+    live.reset()
+    expect(read().map((column) => Array.from(column))).toEqual([[], [], [], []])
+  })
+
+  it('uses the same cursor lookup as the saved path, including gaps and ties', () => {
+    const times = Float64Array.of(2, 4, 8)
+    const values = [8, null, 4]
+    const points = Array.from(times, (timeS, index) => ({ timeS, value: values[index]! }))
+    for (const stepped of [true, false]) {
+      for (const time of [1, 2, 3, 4, 6, 7, 8, 9]) {
+        expect(sampleValue(values[livePointIndex(times, time, stepped)])).toBe(pointAt(points, time, stepped))
+      }
+    }
+  })
+
+  it('reports one live read before and after for 2501 rows and six series', () => {
+    // LiveGraphs.tsx:5–13 supplies the window, row rate, and six body-rate series.
+    const duration = 10
+    const rate = 250
+    const capacity = rate * duration + 1
+    const names = telemetryChannels(0, 'attitudeHold').map(({ name }) => name)
+      .filter((name) => /^(state\.bodyRates|setpoint\.rates)\./.test(name))
+    const channels = ['time', ...names]
+    const rows = Array.from({ length: capacity + 1 }, (_, i) => [i / rate, ...names.map((_, j) => i + j)])
+    const ring = channels.map((_, column) => Float64Array.from(
+      { length: capacity }, (_, slot) => rows[slot || capacity]![column]!,
+    ))
+    const live = createLiveBuffer(duration, capacity)
+    const read = live.createReader(names)
+    live.begin(channels)
+    live.append(rows)
+    expect(read()[0]).toHaveLength(capacity)
+    expect(names).toHaveLength(6)
+    readThenAlign(ring, 1, capacity, channels, names, 0)
+    let start = performance.now()
+    const beforeData = readThenAlign(ring, 1, capacity, channels, names, 0)
+    const before = performance.now() - start
+    start = performance.now()
+    const afterData = read()
+    const after = performance.now() - start
+    console.log(`Live graph read (2501 × 6), read + align before: ${before.toFixed(3)} ms, typed read after: ${after.toFixed(3)} ms`)
+    expect(beforeData).toHaveLength(afterData.length)
+  })
+})
+
+function fakeDrawClock() {
+  vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] })
+  const frames = new Map<number, FrameRequestCallback>()
+  let id = 0
+  let frame = 0
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    frames.set(++id, callback)
+    return id
+  })
+  vi.stubGlobal('cancelAnimationFrame', (handle: number) => frames.delete(handle))
+  return {
+    get frame() { return frame },
+    get queuedFrames() { return frames.size },
+    runFrame() {
+      // Drive a synthetic display with several frames between eligible redraws.
+      vi.advanceTimersByTime(LIVE_GRAPH_INTERVAL_MS / 5 - 1)
+      frame++
+      const callbacks = [...frames.values()]
+      frames.clear()
+      for (const callback of callbacks) callback(performance.now())
+    },
+    finishFrame: () => vi.advanceTimersByTime(1),
+  }
+}
+
+describe('live graph scheduling', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('caps each plot, staggers plots, and drains the final samples after the producer stops', () => {
+    const clock = fakeDrawClock()
+    const live = createLiveTelemetry(10, 4)
+    const draws: { plot: number; frame: number; time: number; latest?: number }[] = []
+    const subscriptions = [0, 1, 2].map((plot) => {
+      const read = live.source.createReader(['a'])
+      const subscription = live.source.subscribe(() => {
+        draws.push({ plot, frame: clock.frame, time: performance.now(), latest: read()[0].at(-1) })
+      })
+      subscription.setVisible(true)
+      return subscription
+    })
+    live.begin(['time', 'a'])
+    for (let row = 0; row < 20; row++) {
+      live.append([[row, row]])
+      const count = draws.length
+      clock.runFrame()
+      expect(draws).toHaveLength(count)
+      clock.finishFrame()
+    }
+    for (let frame = 0; frame < 10; frame++) {
+      clock.runFrame()
+      clock.finishFrame()
+    }
+    expect(new Set(draws.map(({ frame }) => frame)).size).toBe(draws.length)
+    expect(clock.queuedFrames).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+    for (let plot = 0; plot < subscriptions.length; plot++) {
+      const ownDraws = draws.filter((item) => item.plot === plot)
+      expect(ownDraws.length).toBeGreaterThan(1)
+      expect(ownDraws.at(-1)?.latest).toBe(19)
+      for (let i = 1; i < ownDraws.length; i++) {
+        expect(ownDraws[i]!.time - ownDraws[i - 1]!.time).toBeGreaterThanOrEqual(LIVE_GRAPH_INTERVAL_MS)
+      }
+      subscriptions[plot]!.unsubscribe()
+    }
+  })
+
+  it.each(['frame', 'after-frame', 'cooldown'] as const)('cancels pending %s work on unsubscribe', (stage) => {
+    const clock = fakeDrawClock()
+    const live = createLiveTelemetry(10, 4)
+    const draw = vi.fn()
+    const subscription = live.source.subscribe(draw)
+    subscription.setVisible(true)
+    if (stage !== 'frame') clock.runFrame()
+    if (stage === 'cooldown') {
+      clock.finishFrame()
+      live.begin(['time', 'a'])
+    }
+    subscription.unsubscribe()
+    expect(clock.queuedFrames).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+    live.append([[1, 1]])
+    clock.runFrame()
+    clock.finishFrame()
+    expect(draw).toHaveBeenCalledTimes(stage === 'cooldown' ? 1 : 0)
+  })
+
+  it('draws only visible subscriptions and picks up the latest data when shown', () => {
+    const clock = fakeDrawClock()
+    const live = createLiveTelemetry(10, 4)
+    const read = live.source.createReader(['a'])
+    const draw = vi.fn(() => read()[0].at(-1))
+    const subscription = live.source.subscribe(draw)
+    subscription.setVisible(true)
+    subscription.setVisible(false)
+    live.begin(['time', 'a'])
+    live.append([[1, 7]])
+    expect(clock.queuedFrames).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+    subscription.setVisible(true)
+    clock.runFrame()
+    clock.finishFrame()
+    expect(draw).toHaveReturnedWith(1)
+    subscription.unsubscribe()
+  })
+})
 
 describe('telemetry layouts', () => {
   it('groups y axes in first use order by unit', () => {

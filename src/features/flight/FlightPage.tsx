@@ -46,7 +46,7 @@ export default function FlightPage() {
   const error = useProjects((s) => s.error)
   useEffect(() => { void useProjects.getState().load() }, [])
   if (!projectId) return <>
-    <PageHeader title="Flight test" />
+    <PageHeader title="Flight Simulator" />
     <div className="mx-auto w-full max-w-[1600px] px-6 pb-10 pt-5">
       <Section title="Open a project" count={projects.length}>
         {error ? <EmptyState>{error}</EmptyState> : projects.length === 0 ? <EmptyState>{loading ? 'Loading…' : 'No projects yet. Create one on the Dashboard.'}</EmptyState> :
@@ -357,7 +357,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="flight-test">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-2 text-[12.5px]">
-        <h1 className="mr-2 font-semibold">{project.name} · Flight test</h1>
+        <h1 className="mr-2 font-semibold">{project.name} · Flight Simulator</h1>
         <label className="flex items-center gap-2">
           Mode
           <select data-testid="flight-mode" className="h-7 rounded-sm border border-line-strong bg-chrome px-2" value={mode}

@@ -28,7 +28,7 @@ export interface NavItem {
 }
 
 /** Phase in progress in this build; its sections are enabled as they are built. */
-export const CURRENT_PHASE = 5
+export const CURRENT_PHASE = 7
 
 /** Sidebar order. Groups only add visual separation. */
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -37,11 +37,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: '/components', label: 'Components', icon: Cpu, group: 'engineering', phase: 3, ready: true },
   { path: '/electrical', label: 'Electrical Designer', icon: Cable, group: 'engineering', phase: 3, ready: true },
   { path: '/analysis', label: 'Engineering Analysis', icon: Gauge, group: 'engineering', phase: 4, ready: true },
-  { path: '/flight', label: 'Flight test', icon: Plane, group: 'flight', phase: 4, ready: true },
+  { path: '/flight', label: 'Flight Simulator', icon: Plane, group: 'flight', phase: 4, ready: true },
   { path: '/scenarios', label: 'Scenarios', icon: ListChecks, group: 'flight', phase: 4, ready: true },
   { path: '/tuning', label: 'Tuning', icon: SlidersHorizontal, group: 'flight', phase: 5, ready: true },
   { path: '/input', label: 'Input devices', icon: Gamepad2, group: 'flight', phase: 6, ready: true },
-  { path: '/simulator', label: 'Flight Simulator', icon: Plane, group: 'flight', phase: 6 },
   { path: '/telemetry', label: 'Telemetry', icon: Activity, group: 'flight', phase: 7 },
   { path: '/projects', label: 'Projects', icon: FolderKanban, group: 'workspace', phase: 1 },
   { path: '/settings', label: 'Settings', icon: Settings, group: 'workspace', phase: 8 },

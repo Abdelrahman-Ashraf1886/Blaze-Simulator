@@ -38,7 +38,7 @@ test('a stopped flight is listed on the dashboard and survives restart', async (
     app = undefined
     const second = await launchApp(userData)
     app = second.app
-    await expect(recordedFlight(second.page, project)).toHaveText(saved)
+    await expect(recordedFlight(second.page, project)).toHaveText(saved, { useInnerText: true })
   } finally {
     await app?.close()
     rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })

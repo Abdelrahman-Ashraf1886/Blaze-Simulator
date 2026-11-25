@@ -59,13 +59,13 @@ test('opens a saved recording, adds a channel, and zooms the graph', async () =>
       }
 
       await page.getByTestId('nav-/telemetry').click()
-      await page.getByRole('button', { name: header.title }).click()
+      await page.getByRole('button', { name: header.title, exact: true }).click()
       await expect(page.getByRole('region', { name: 'Selected run' })).toContainText('test-engine')
       await page.getByRole('button', { name: 'Add graph' }).click()
       const graph = page.getByRole('article', { name: 'Graph 3' })
       await graph.getByText('Edit channels').click()
       await graph.getByRole('searchbox', { name: 'Search channels' }).fill('voltage')
-      await graph.getByLabel('Channel', { exact: true }).selectOption('pack.voltage')
+      await graph.getByRole('combobox').selectOption('pack.voltage')
       await graph.getByRole('button', { name: 'Add channel' }).click()
       const plot = graph.getByRole('group', { name: 'Graph 3' })
       await plot.focus()

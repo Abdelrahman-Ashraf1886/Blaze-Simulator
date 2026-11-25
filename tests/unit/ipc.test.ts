@@ -84,11 +84,16 @@ describe('IPC handlers', () => {
       Channels.engineScenarioRun,
       Channels.engineStepTest,
       Channels.engineStatusChanged,
+      Channels.recordingVerify,
+      Channels.recordingVerifyCancel,
+      Channels.recordingVerifyProgress,
       Channels.assemblySaveSync,
       Channels.assetsImport,
       Channels.terrainImport,
       Channels.viewportSavePng,
+      Channels.recordingPrintReportPdf,
       Channels.componentsExportPack,
+      Channels.recordingExportCsv,
       Channels.componentsImportPack,
     ]
     const requestChannels = Object.values(Channels).filter((c) => !mainOnly.includes(c))

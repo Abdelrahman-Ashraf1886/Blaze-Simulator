@@ -3,8 +3,10 @@ import { existsSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
-import { createHandlers, createRecordingHandlers, createTerrainHandlers, importTerrain } from '../ipc/handlers'
+import { createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
+import { createRecordingCsvExporter } from './telemetry/csv'
 import { RecordingStore } from './telemetry/store'
+import { printCurrentReportPdf } from './telemetry/report-pdf'
 import { SessionRecorder } from './telemetry/session-recorder'
 import { backfillHullsAsync, importAssetFileAsync, removeAssetFiles, resolveAssetUrl } from './assets/store'
 import { shutdownHullWorkers } from './assets/hull-async'
@@ -15,7 +17,7 @@ import { z } from 'zod'
 import { openDatabase, schemaVersion, type Db } from './db/database'
 import { createRepositories } from './db/repositories'
 import { dropTest } from './engine/drop-test'
-import { flightEnd, flightStart, flightStep } from './engine/flight-session'
+import { flightEnd } from './engine/flight-session'
 import { scenarioRun } from './engine/scenario-run'
 import { stepTest } from './engine/step-test'
 import { EngineSupervisor } from './engine/supervisor'
@@ -42,6 +44,7 @@ protocol.registerSchemesAsPrivileged([
 let db: Db | null = null
 let dbPath = ''
 let engine: EngineSupervisor | null = null
+let recordingCsv: ReturnType<typeof createRecordingCsvExporter> | undefined
 let recorder: SessionRecorder | undefined
 let mainWindow: BrowserWindow | null = null
 
@@ -275,6 +278,20 @@ async function start(): Promise<void> {
       return { ok: false, error: { code: 'INTERNAL', message: `Could not export: ${(e as Error).message}` } }
     }
   })
+  recordingCsv = createRecordingCsvExporter(recordings)
+  const exportCsv = createRecordingCsvHandler(recordingCsv)
+  ipcMain.handle(Channels.recordingExportCsv, (event, payload: unknown) =>
+    exportCsv(payload, async (suggestedName) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const options = {
+        title: 'Export recording',
+        defaultPath: join(app.getPath('documents'), suggestedName),
+        filters: [{ name: 'CSV', extensions: ['csv'] }],
+      }
+      const picked = await (win ? dialog.showSaveDialog(win, options) : dialog.showSaveDialog(options))
+      return picked.canceled || !picked.filePath ? null : picked.filePath
+    }))
+
   ipcMain.handle(Channels.componentsImportPack, async (event): Promise<IpcResult<{ imported: number; skipped: number } | null>> => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const options = {
@@ -334,6 +351,25 @@ async function start(): Promise<void> {
   for (const [channel, handler] of Object.entries({ ...handlers, ...createTerrainHandlers(repos, assetsDir), ...createRecordingHandlers(recordings) })) {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload))
   }
+  for (const [channel, handler] of Object.entries(createRecordingVerifyHandlers(recordings, binaryPath))) {
+    ipcMain.handle(channel, (event, payload: unknown) => handler(event.sender, payload))
+  }
+  ipcMain.handle(Channels.recordingPrintReportPdf, (event, payload: unknown) => handlePrintReportPdf(payload, async () => {
+    const win = mainWindow
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
+      throw new Error('Printing is available from the main window.')
+    }
+    return printCurrentReportPdf(event.sender, async (id) => {
+      const run = await recordings.get(id)
+      return run.title ?? undefined
+    }, async (fileName) => {
+      const picked = await dialog.showSaveDialog(win, {
+        title: 'Save report as PDF', defaultPath: join(app.getPath('documents'), fileName),
+        filters: [{ name: 'PDF document', extensions: ['pdf'] }],
+      })
+      return picked.canceled ? undefined : picked.filePath
+    })
+  }))
   // Same validation and storage as the async save; used only while a window unloads.
   ipcMain.on(Channels.assemblySaveSync, (event, payload: unknown) => {
     event.returnValue = handlers[Channels.assemblySave]!(payload)
@@ -347,8 +383,8 @@ async function start(): Promise<void> {
     return result
   }
   ipcMain.handle(Channels.engineDropTest, (_event, payload: unknown) => withLoadedVehicle(() => dropTest(engine!, payload)))
-  ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => withLoadedVehicle(() => flightStart(engine!, payload, recorder)))
-  ipcMain.handle(Channels.engineFlightStep, (_event, payload: unknown) => flightStep(engine!, payload, recorder))
+  ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => withLoadedVehicle(() => flightStartForView(engine!, payload, recorder)))
+  ipcMain.handle(Channels.engineFlightStep, (_event, payload: unknown) => flightStepForView(engine!, payload, recorder))
   ipcMain.handle(Channels.engineFlightEnd, () => flightEnd(engine!, recorder))
   ipcMain.handle(Channels.engineScenarioRun, (_event, payload: unknown) => withLoadedVehicle(() => scenarioRun(engine!, payload, recorder)))
   ipcMain.handle(Channels.engineStepTest, (_event, payload: unknown) => withLoadedVehicle(() => stepTest(engine!, payload, recorder)))
@@ -377,7 +413,8 @@ app.on('before-quit', (event) => {
   // Never let a stuck engine keep the app alive: give it 3 s, then quit regardless.
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 3000))
   const closeRecordings = recorder?.shutdown('app quit')
-  void Promise.race([Promise.allSettled([closeRecordings, engine.stop()]), deadline]).finally(() => app.quit())
+  const closeCsvExports = recordingCsv?.shutdown()
+  void Promise.race([Promise.allSettled([closeRecordings, closeCsvExports, engine.stop()]), deadline]).finally(() => app.quit())
 })
 
 // The database must outlive the windows: closing a window runs its unload handler,

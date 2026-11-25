@@ -27,8 +27,8 @@ export function useLiveTelemetry(durationS: number, capacity: number) {
         buffer.append(rows)
         notify()
       },
-      end() {
-        buffer.end()
+      reset() {
+        buffer.reset()
         notify()
       },
     }

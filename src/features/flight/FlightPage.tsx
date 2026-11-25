@@ -6,7 +6,7 @@ import { EmptyState, Section } from '@/components/section'
 import { Button } from '@/components/ui/button'
 import type { TuningOverrides } from '@/domain/controller-params'
 import { thrustFactorReadout } from '@/domain/thrust-curve'
-import { readFlightDeviceButtons, readInputCalibration, readRecordRuns, writeFlightDeviceButtons, writeRecordRuns } from '@/lib/prefs'
+import { readFlightDeviceButtons, readInputCalibration, readPref, readRecordRuns, writeFlightDeviceButtons, writePref, writeRecordRuns } from '@/lib/prefs'
 import { runChecks } from '@/domain/checks'
 import { lowestPoint } from '@/domain/collisions'
 import { terrainHeightAt } from '@/domain/terrain'
@@ -25,6 +25,8 @@ import { massBodies, massState, type MassState } from '../workshop/mass-input'
 import { useWorkshopView } from '../workshop/view-store'
 import { createLiveCalibratedInputReader, gamepads, type LiveCalibratedInput } from '../input/device-input'
 import { NO_DEVICES, type DeviceHandle } from '../input/gamepads'
+import { LIVE_CAPACITY, LIVE_WINDOW_S, LiveGraphs } from '../telemetry/LiveGraphs'
+import { useLiveTelemetry } from '../telemetry/use-live-telemetry'
 import { DebugPanel, endReason } from './DebugPanel'
 import { EngineFlightSource, idleFrame } from './EngineFlightSource'
 import { FlightCommandControls, FlightInputSelector, FlightPauseControls } from './FlightControls'
@@ -125,6 +127,10 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     return idleFrame(mass.motors.length, position, mass.mp.com ?? [0, 0, 0])
   }, [mass, payload, terrain, doc, geo, components, assets])
   const [recordRuns, setRecordRuns] = useState(readRecordRuns)
+  const [showLive, setShowLive] = useState(() => readPref<unknown>('flight.liveTelemetry', false) === true)
+  const liveOpen = useRef(showLive)
+  const [samplesEnabled, setSamplesEnabled] = useState(false)
+  const liveTelemetry = useLiveTelemetry(LIVE_WINDOW_S, LIVE_CAPACITY)
   const [recordingId, setRecordingId] = useState<string>()
   const [recordingError, setRecordingError] = useState<string>()
   const [runBytes, setRunBytes] = useState<number>()
@@ -275,13 +281,18 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
     setRecordingId(undefined)
     setRecordingError(undefined)
     setRunBytes(undefined)
+    setSamplesEnabled(recordRuns || liveOpen.current)
+    liveTelemetry.reset()
     const next = new EngineFlightSource(getApi().engine, {
       ...gate.input, ...tuning.session,
       ...(recordRuns ? { recording: { projectId: project.id, title: 'Flight Simulator' } } : {}),
-    }, { onRecording: ({ recordingId, recordingError }) => {
-      if (recordingId) setRecordingId(recordingId)
-      if (recordingError) setRecordingError(recordingError)
-    } })
+    }, {
+      liveTelemetry: { ...liveTelemetry, isOpen: () => liveOpen.current },
+      onRecording: ({ recordingId, recordingError }) => {
+        if (recordingId) setRecordingId(recordingId)
+        if (recordingError) setRecordingError(recordingError)
+      },
+    })
     const readDevice = selectedDevice ? createLiveCalibratedInputReader(selectedDevice) : null
     let inputStatus = readyInput
     const buttonEdges = createDeviceButtonEdges()
@@ -431,6 +442,12 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
               setRecordRuns(enabled)
             }} /> Record runs
           </label>
+          <Button size="sm" aria-expanded={showLive} aria-controls="flight-live-telemetry" onClick={() => {
+            const next = !showLive
+            liveOpen.current = next
+            writePref('flight.liveTelemetry', next)
+            setShowLive(next)
+          }}>{showLive ? 'Hide live graphs' : 'Show live graphs'}</Button>
           <span>This run {runBytes === undefined ? '—' : `${runBytes.toLocaleString()} B`}</span>
           <span>On disk {totalBytes === undefined ? '—' : `${totalBytes.toLocaleString()} B`}</span>
         </div>
@@ -482,6 +499,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
           </div>
         </div>
         <aside aria-label="Physics debug panel" className="w-full shrink-0 overflow-y-auto border-t border-line bg-chrome px-4 py-3 @min-[1000px]:w-[400px] @min-[1000px]:border-l @min-[1000px]:border-t-0">
+          {showLive && <div className="mb-5"><LiveGraphs source={liveTelemetry.source} needsNewFlight={running && !samplesEnabled} /></div>}
           <div className="mb-5">
             <FlightSetup projectId={project.id} conditions={conditions} onChange={setConditions} blockers={blockers} environment={payload.ok ? payload.payload : undefined} terrainId={terrainId} engineBlock={engineBlock} locked={running} />
           </div>

@@ -36,7 +36,12 @@ export const recordingOptionsSchema = z.strictObject({
   live: z.boolean().optional(),
 }).optional()
 
+// The active report and its suggested file name are resolved in main.
+export const printReportPdfSchema = z.undefined()
 export const recordingIdSchema = z.object({ id: z.uuid() })
+export const recordingVerifyCancelSchema = z.strictObject({ requestId: z.uuid() })
+export const recordingVerifySchema = recordingVerifyCancelSchema.extend({ id: z.uuid() })
+export const flightLiveViewSchema = z.looseObject({ live: z.literal(true).optional() })
 export const recordingSampleSchema = recordingIdSchema.extend({
   channels: z.array(z.string().min(1)).nonempty(),
   fromS: z.number().nonnegative().optional(),
@@ -45,6 +50,20 @@ export const recordingSampleSchema = recordingIdSchema.extend({
 }).refine(({ fromS, toS }) => fromS === undefined || toS === undefined || fromS <= toS, {
   message: 'Inverted recording time range',
 }).refine(({ channels }) => new Set(channels).size === channels.length, {
+  message: 'Duplicate recording channel',
+})
+
+export const recordingCsvSchema = z.strictObject({
+  id: recordingIdSchema.shape.id,
+  channels: z.array(recordingSampleSchema.shape.channels.element).optional(),
+  fromS: recordingSampleSchema.shape.fromS,
+  toS: recordingSampleSchema.shape.toS,
+  bom: z.boolean().optional(),
+  comments: z.boolean().optional(),
+  enumNames: z.boolean().optional(),
+}).refine(({ fromS, toS }) => fromS === undefined || toS === undefined || fromS <= toS, {
+  message: 'Inverted recording time range',
+}).refine(({ channels }) => !channels || new Set(channels).size === channels.length, {
   message: 'Duplicate recording channel',
 })
 

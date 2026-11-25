@@ -642,6 +642,7 @@ export const Channels = {
   recordingReadSamples: 'recording:readSamples',
   recordingReadRequests: 'recording:readRequests',
   recordingTotalSize: 'recording:totalSize',
+  recordingPrintReportPdf: 'recording:printReportPdf',
   systemStatus: 'system:status',
   assemblyLoad: 'assembly:load',
   assemblySave: 'assembly:save',
@@ -695,6 +696,7 @@ interface RecordingApi {
   readSamples(query: RecordingSampleQuery): Promise<IpcResult<RecordingSeries[]>>
   readRequests(id: string): Promise<IpcResult<string[]>>
   totalSize(): Promise<IpcResult<number>>
+  printReportPdf(): Promise<IpcResult<{ path: string } | null>>
 }
 
 export type DesktopApiWithRecordings = DesktopApi & { runs: RunRecordingApi; recording: RecordingApi }

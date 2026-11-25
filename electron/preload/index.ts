@@ -21,6 +21,7 @@ const api: DesktopApiWithRecordings = {
     readSamples: (query) => ipcRenderer.invoke('recording:readSamples', query),
     readRequests: (id) => ipcRenderer.invoke('recording:readRequests', { id }),
     totalSize: () => ipcRenderer.invoke('recording:totalSize'),
+    printReportPdf: () => ipcRenderer.invoke('recording:printReportPdf'),
   },
   tuning: {
     get: (projectId) => ipcRenderer.invoke('tuning:get', { id: projectId }),

@@ -1,0 +1,87 @@
+.flight-report {
+  max-width: 1600px;
+  margin-inline: auto;
+  padding: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.flight-report h1 { font-size: 15px; font-weight: 650; }
+.flight-report h2 { font-size: 14px; font-weight: 650; margin-block-end: 0.75rem; }
+.flight-report h3 { font-weight: 600; margin-block-start: 0.75rem; }
+.flight-report ul { padding-inline-start: 1.25rem; list-style: disc; }
+.flight-report header, .flight-report p { margin-block-end: 0.75rem; }
+.flight-report .report-muted { color: var(--color-fg-muted); }
+.flight-report .report-warning { color: var(--color-warn); }
+
+.report-heading, .report-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.report-heading { justify-content: space-between; }
+.report-section { border-top: 1px solid var(--color-line); padding-block: 1rem; }
+.report-facts { display: grid; gap: 0.5rem 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); margin-block-end: 0.75rem; }
+.report-facts > div { min-width: 0; }
+.report-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.report-metrics > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+  padding-block: 0.45rem;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.report-metrics dt { font-weight: 550; }
+.report-definition { grid-column: 1 / -1; }
+.report-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: 1rem; }
+.report-figure { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.25rem 0.5rem; }
+.report-figure figcaption, .report-legend { grid-column: 1 / -1; }
+.report-chart-edge { display: flex; flex-direction: column; justify-content: space-between; }
+.report-chart-time { grid-column: 2; display: flex; justify-content: space-between; }
+.report-plot { width: 100%; border-left: 1px solid var(--color-line-strong); border-bottom: 1px solid var(--color-line-strong); overflow: visible; }
+.report-target { color: var(--color-setpoint); stroke-dasharray: 5 3; }
+
+@page { size: A4; margin: 12mm; }
+
+@media print {
+  html:has(.flight-report), body:has(.flight-report), #root:has(.flight-report) {
+    height: auto;
+    color-scheme: light;
+    color: black;
+    background: white;
+  }
+
+  #root:has(.flight-report) > div,
+  #root:has(.flight-report) > div > div,
+  main:has(.flight-report) {
+    display: block;
+    height: auto;
+    overflow: visible;
+    container-type: normal;
+  }
+
+  #root:has(.flight-report) aside,
+  #root:has(.flight-report) footer,
+  .report-actions { display: none; }
+
+  .flight-report {
+    --color-fg-muted: #333;
+    --color-warn: #654500;
+    --color-line: #bbb;
+    --color-line-strong: #777;
+    --color-setpoint: #811d59;
+    color: black;
+    padding: 0;
+  }
+
+  .report-section { break-before: page; }
+  .report-figures { display: block; }
+  .report-figure { margin-block-end: 0.75rem; }
+  .report-metrics > div, .report-figure { break-inside: avoid; }
+  .report-facts { display: block; }
+  .report-facts > div { margin-block-end: 0.5rem; }
+  .flight-report h2, .flight-report h3, .report-facts dt { break-after: avoid; }
+}

@@ -29,6 +29,7 @@ const api: DesktopApiWithRecordings = {
     },
     totalSize: () => ipcRenderer.invoke('recording:totalSize'),
     printReportPdf: () => ipcRenderer.invoke('recording:printReportPdf'),
+    exportCsv: (query) => ipcRenderer.invoke('recording:exportCsv', query),
   },
   tuning: {
     get: (projectId) => ipcRenderer.invoke('tuning:get', { id: projectId }),

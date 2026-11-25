@@ -77,17 +77,21 @@ const complete: RecordingSummary = {
 function apiFor(summary: RecordingSummary) {
   const api: DesktopApiWithRecordings['recording'] = {
     summary: vi.fn(async () => ({ ok: true as const, data: summary })),
-    readRequests: vi.fn(async () => ({ ok: true as const, data: [] })),
+    readRequests: vi.fn(async () => ({ ok: true as const, data: { lines: [], integrityError: null } })),
     totalSize: vi.fn(async () => ({ ok: true as const, data: 0 })),
     printReportPdf: vi.fn(async () => ({ ok: true as const, data: null })),
     readSamples: vi.fn(async ({ channels, fromS, toS }: RecordingSampleQuery) => ({
-      ok: true as const, data: channels.map((channel) => ({
+      ok: true as const, data: { integrityError: null, series: channels.map((channel) => ({
         channel,
         points: Array.from({ length: (toS ?? 0) - (fromS ?? 0) + 1 }, (_, i) => ({
           timeS: i + (fromS ?? 0), value: channel === 'pack.voltage' ? 10 - (i + (fromS ?? 0)) / summary.sampleCount : 2,
         })),
-      })),
+      })) },
     })),
+    exportCsv: vi.fn(async () => ({ ok: true as const, data: null })),
+    verify: vi.fn(async () => ({ ok: true as const, data: { status: 'cancelled' as const } })),
+    cancelVerify: vi.fn(async () => ({ ok: true as const, data: null })),
+    onVerifyProgress: vi.fn(() => () => {}),
   }
   return api
 }

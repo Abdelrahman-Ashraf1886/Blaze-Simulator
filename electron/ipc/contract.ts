@@ -109,6 +109,14 @@ export interface RecordingSampleQuery {
   maxPoints?: number
 }
 
+export interface RecordingCsvQuery extends Omit<RecordingSampleQuery, 'channels' | 'maxPoints'> {
+  /** Omit to export all recorded channels. Time is always the first column. */
+  channels?: string[]
+  bom?: boolean
+  comments?: boolean
+  enumNames?: boolean
+}
+
 export interface RecordingPoint {
   timeS: number
   value: number | null
@@ -670,6 +678,7 @@ export const Channels = {
   recordingVerifyProgress: 'recording:verifyProgress',
   recordingTotalSize: 'recording:totalSize',
   recordingPrintReportPdf: 'recording:printReportPdf',
+  recordingExportCsv: 'recording:exportCsv',
   systemStatus: 'system:status',
   assemblyLoad: 'assembly:load',
   assemblySave: 'assembly:save',
@@ -727,6 +736,7 @@ interface RecordingApi {
   onVerifyProgress(listener: (progress: RecordingVerifyProgress) => void): () => void
   totalSize(): Promise<IpcResult<number>>
   printReportPdf(): Promise<IpcResult<{ path: string } | null>>
+  exportCsv(query: RecordingCsvQuery): Promise<IpcResult<{ path: string } | null>>
 }
 
 export type DesktopApiWithRecordings = DesktopApi & { runs: RunRecordingApi; recording: RecordingApi }

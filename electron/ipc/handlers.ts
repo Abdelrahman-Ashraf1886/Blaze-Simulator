@@ -9,6 +9,7 @@ import {
   listRunsSchema,
   projectIdSchema,
   printReportPdfSchema,
+  recordingCsvSchema,
   recordingIdSchema,
   recordingSampleSchema,
   recordingVerifyCancelSchema,
@@ -30,12 +31,18 @@ import {
 import { fieldDef, isOverridable, type SpecValue } from './component-fields'
 import { ConflictError, NotFoundError, TuningValidationError, ValidationError, type Repositories } from '../main/db/repositories'
 import { importTerrainFile, readTerrainFile } from '../main/assets/terrain-store'
+import type { createRecordingCsvExporter, PickCsvPath } from '../main/telemetry/csv'
 import { RecordingFormatError } from '../main/telemetry/format'
 import { RecordingQueryError } from '../main/telemetry/reader'
 import type { RecordingStore } from '../main/telemetry/store'
 import { verifyRecording } from '../main/telemetry/verify'
 import { flightStart, flightStartSchema, flightStep, type EngineForFlight } from '../main/engine/flight-session'
 import { RECORD_EVERY_STEPS, type SessionRecorder } from '../main/telemetry/session-recorder'
+
+export function createRecordingCsvHandler(exporter: Pick<ReturnType<typeof createRecordingCsvExporter>, 'export'>) {
+  return (payload: unknown, pickPath: PickCsvPath) =>
+    validatedAsync(recordingCsvSchema, payload, (query) => exporter.export(query, pickPath))
+}
 
 export function createRecordingHandlers(store: RecordingStore) {
   return {

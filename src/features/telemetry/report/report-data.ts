@@ -102,8 +102,8 @@ export async function readReport(api: RecordingApi, id: string, signal: AbortSig
   const result = await api.summary(id)
   signal.throwIfAborted()
   if (!result.ok && result.error.code !== 'VALIDATION') throw new Error('Recording could not be read. ' + result.error.message)
-  // The current summary IPC returns a validation error on malformed frames
-  // (reader.ts:197–203, handlers.ts:184–185). It has no partial data in that case.
+  // A file that fails beyond its header comes back with integrityError and its intact
+  // samples. A bad magic, version or header is refused, with no data to show.
   const summary: RecordingSummary = result.ok ? result.data : {
     header: null, end: null, sampleCount: 0, requestCount: 0, bytes: 0, incomplete: true, integrityError: result.error.message,
   }
@@ -113,7 +113,7 @@ export async function readReport(api: RecordingApi, id: string, signal: AbortSig
   if (header?.kind === 'scenario' && summary.requestCount) {
     const reply = await api.readRequests(id)
     signal.throwIfAborted()
-    if (reply.ok) requests = reply.data
+    if (reply.ok) requests = reply.data.lines
     else notices.push('Recorded requests could not be read. ' + reply.error.message)
   }
   const recorded = parseReportRequests(header ?? { vehicleLoad: '', startRequest: '' }, requests)
@@ -141,7 +141,7 @@ export async function readReport(api: RecordingApi, id: string, signal: AbortSig
       for (let row = 0; row < stop - first; row++) {
         const timeS = timeAt(first + row)
         const values: Record<string, number | null> = {}
-        for (const { channel, points } of reply.data) {
+        for (const { channel, points } of reply.data.series) {
           const point = points[row]
           if (point?.timeS === timeS) values[channel] = point.value
         }
@@ -154,7 +154,7 @@ export async function readReport(api: RecordingApi, id: string, signal: AbortSig
     if (query) {
       const reply = await api.readSamples(query)
       signal.throwIfAborted()
-      if (reply.ok) graphs = reply.data
+      if (reply.ok) graphs = reply.data.series
       else notices.push('Graph samples could not be read. ' + reply.error.message)
     }
   }

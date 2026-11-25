@@ -735,12 +735,20 @@ describe('a real engine', () => {
     // activity visible. Leave the sensor range disabled so the noise is observable.
     const excessiveSigma = 1000 * sigma
     const excessive = await hover(excessiveSigma)
-    const response = await sup.runStepTest({ test: input.test, config: { ...input.config, sensors: model } })
-    expect(response.endReason).toBe('duration')
-    const measured = measuredSamples(response.trace)
-    const metrics = stepMetrics(measured, { t0: response.stepTimeS, y0: 0, y1: amplitudeRadps }, opts)
-    const riseS = metrics.status === 'ok' && metrics.riseTime.status === 'reached' ? metrics.riseTime.time : null
-    const overshootPct = metrics.status === 'ok' && metrics.overshoot.status === 'overshoot' ? metrics.overshoot.percent : 0
+    const stepRun = async (sensors: SensorPayload | undefined) => {
+      const response = await sup.runStepTest({ test: input.test, config: { ...input.config, ...(sensors ? { sensors } : {}) } })
+      expect(response.endReason).toBe('duration')
+      const measured = measuredSamples(response.trace)
+      const metrics = stepMetrics(measured, { t0: response.stepTimeS, y0: 0, y1: amplitudeRadps }, opts)
+      return {
+        response, measured,
+        riseS: metrics.status === 'ok' && metrics.riseTime.status === 'reached' ? metrics.riseTime.time : null,
+        overshootPct: metrics.status === 'ok' && metrics.overshoot.status === 'overshoot' ? metrics.overshoot.percent : 0,
+      }
+    }
+    const { response, measured, riseS, overshootPct } = await stepRun(model)
+    const perfect = await stepRun(undefined)
+    console.info('GYRO step, perfect state', perfect.riseS, perfect.overshootPct)
     console.info('GYRO catalogue', JSON.stringify({ sigma, limits, nominal, riseS, overshootPct, excessiveSigma, excessive }))
     expect.soft(nominal.tiltRmsRad).toBeLessThan(limits.tiltRms)
     expect.soft(nominal.rateRmsRadps).toBeLessThan(limits.rateRms)

@@ -1003,24 +1003,25 @@ describe('6.5 on the real NDJSON engine', () => {
     await result(load)
     const modes = [undefined, sensors, { ...sensors, flyOnGyro: gyroFilters }]
     // Existing 100-step cap (flight_session.rs:30). Keep the same flight and
-    // requests for all modes, with three repeats to take the median.
-    const batches = 10
-    const repetitions = 3
+    // requests for all modes: ten simulated seconds per run, one warm-up round that
+    // is not counted, then the median of five.
+    const batches = 100
+    const repetitions = 5
     for (const sampleEverySteps of [undefined, RECORD_EVERY_STEPS]) {
       const times: number[][] = modes.map(() => [])
-      for (let repeat = 0; repeat < repetitions; repeat++) {
+      for (let repeat = -1; repeat < repetitions; repeat++) {
         for (const [index, sensors] of modes.entries()) {
           await result(start({ ...baseStart, environment: free, sensors, sampleEverySteps }))
           const input = step(MAX_SESSION_STEPS, rates)
           const began = performance.now()
           for (let i = 0; i < batches; i++) await result(input)
-          times[index]!.push((performance.now() - began) * 1000 / (batches * MAX_SESSION_STEPS))
+          if (repeat >= 0) times[index]!.push((performance.now() - began) * 1000 / (batches * MAX_SESSION_STEPS))
         }
       }
-      const [off, recorded, flown] = times.map((runs) => runs.sort((a, b) => a - b)[1]!)
+      const [off, recorded, flown] = times.map((runs) => runs.sort((a, b) => a - b)[2]!)
       console.info(`D20 sampleEverySteps=${sampleEverySteps ?? 'off'} µs/step off=${off!.toFixed(2)} recorded=${recorded!.toFixed(2)} flown=${flown!.toFixed(2)} flown/off=${(flown! / off!).toFixed(2)}x`)
     }
-  }), 20_000)
+  }), 60_000)
 
   it('records sensors for both scenario controllers and rejects bad inputs at their paths', async () => withProtocol(async ({ request, result }) => {
     await result(load)

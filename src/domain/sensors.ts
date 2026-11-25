@@ -195,6 +195,7 @@ export function buildSensorPayload(
       'Enter a positive whole millisecond period. A catalogue rate must divide 1 kHz exactly.', source)
   }
 
+  const seed = read('seed', '1', settings.seed, Number.isSafeInteger, 'Enter a signed safe integer seed.')
   const gyro = group('gyro', settings.gyro, (v) => imu('gyro', v))
   function flightFilters(): GyroFilterPayload | undefined {
     const filters = settings?.gyroFilters
@@ -221,7 +222,7 @@ export function buildSensorPayload(
     read('flyOnGyro', '1', undefined, () => false, 'Configure a gyroscope to use gyro rate feedback.')
   }
   const payload = {
-    seed: read('seed', '1', settings.seed, Number.isSafeInteger, 'Enter a signed safe integer seed.'),
+    seed,
     gyro,
     ...(flyOnGyro !== undefined ? { flyOnGyro } : {}),
     accelerometer: group('accelerometer', settings.accelerometer, (v) => {

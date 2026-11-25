@@ -38,7 +38,7 @@ describe('migrations', () => {
   it('enforces foreign keys', () => {
     expect(() =>
       db
-        .prepare('INSERT INTO simulation_runs VALUES (?, ?, ?, ?, ?)')
+        .prepare('INSERT INTO simulation_runs (id, project_id, started_at, duration_s, status) VALUES (?, ?, ?, ?, ?)')
         .run('r1', 'missing-project', new Date().toISOString(), 1, 'completed'),
     ).toThrow(/FOREIGN KEY/)
   })
@@ -72,7 +72,7 @@ describe('project repository', () => {
   it('cascades project deletion to simulation runs', () => {
     const repos = createRepositories(db)
     const p = repos.projects.create({ name: 'P', frameType: 'octo-x' })
-    db.prepare('INSERT INTO simulation_runs VALUES (?, ?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO simulation_runs (id, project_id, started_at, duration_s, status) VALUES (?, ?, ?, ?, ?)').run(
       'r1',
       p.id,
       new Date().toISOString(),

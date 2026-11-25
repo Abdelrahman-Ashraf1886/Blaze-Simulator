@@ -6,6 +6,8 @@ import {
   createProjectSchema,
   listRunsSchema,
   projectIdSchema,
+  recordingIdSchema,
+  recordingSampleSchema,
   renameProjectSchema,
   saveAssemblySchema,
   setTuningSchema,
@@ -23,6 +25,25 @@ import {
 import { fieldDef, isOverridable, type SpecValue } from './component-fields'
 import { ConflictError, NotFoundError, TuningValidationError, ValidationError, type Repositories } from '../main/db/repositories'
 import { importTerrainFile, readTerrainFile } from '../main/assets/terrain-store'
+import { RecordingFormatError } from '../main/telemetry/format'
+import { RecordingQueryError } from '../main/telemetry/reader'
+import type { RecordingStore } from '../main/telemetry/store'
+
+export function createRecordingHandlers(store: RecordingStore) {
+  return {
+    [Channels.runsListRecent]: (p: unknown) => validatedAsync(listRunsSchema, p, (i) => store.listRecent(i.limit)),
+    [Channels.runsList]: (p: unknown) => validatedAsync(projectIdSchema, p, (i) => store.list(i.id)),
+    [Channels.runsGet]: (p: unknown) => validatedAsync(recordingIdSchema, p, (i) => store.get(i.id)),
+    [Channels.runsDelete]: (p: unknown) => validated(recordingIdSchema, p, (i) => store.delete(i.id)),
+    [Channels.recordingSummary]: (p: unknown) =>
+      validatedAsync(recordingIdSchema, p, (i) => store.read(i.id, (reader) => reader.summary())),
+    [Channels.recordingReadSamples]: (p: unknown) =>
+      validatedAsync(recordingSampleSchema, p, (i) => store.read(i.id, (reader) => reader.readSamples(i))),
+    [Channels.recordingReadRequests]: (p: unknown) =>
+      validatedAsync(recordingIdSchema, p, (i) => store.read(i.id, (reader) => reader.readRequests())),
+    [Channels.recordingTotalSize]: (p: unknown) => validatedAsync(z.undefined(), p, () => store.totalSize()),
+  }
+}
 
 export function createTerrainHandlers(repos: Repositories, dir: string) {
   return {
@@ -67,7 +88,6 @@ export function createHandlers(
         repos.projects.delete(i.id)
         return null
       }),
-    [Channels.runsListRecent]: (p) => validated(listRunsSchema, p, (i) => repos.runs.listRecent(i.limit)),
     [Channels.systemStatus]: () =>
       run(() => ({ ...getSystemStatus(), componentCount: repos.components.count() })),
     [Channels.assemblyLoad]: (p) => validated(projectIdSchema, p, (i) => repos.assemblies.load(i.id)),
@@ -130,6 +150,18 @@ function validated<S extends z.ZodType, T>(
   return run(() => fn(parsed.data))
 }
 
+async function validatedAsync<S extends z.ZodType, T>(
+  schema: S, payload: unknown, fn: (input: z.infer<S>) => Promise<T>,
+): Promise<IpcResult<T>> {
+  const parsed = schema.safeParse(payload)
+  if (!parsed.success) return { ok: false, error: { code: 'VALIDATION', message: parsed.error.issues.map((i) => i.message).join('; ') } }
+  try {
+    return { ok: true, data: await fn(parsed.data) }
+  } catch (error) {
+    return handlerError(error)
+  }
+}
+
 /** Like `validated`, with messages that name the specification field. */
 function componentValidated<S extends z.ZodType, T>(schema: S, payload: unknown, fn: (input: z.infer<S>) => T): IpcResult<T> {
   const parsed = schema.safeParse(payload)
@@ -141,11 +173,17 @@ function run<T>(fn: () => T): IpcResult<T> {
   try {
     return { ok: true, data: fn() }
   } catch (e) {
-    if (e instanceof NotFoundError) return { ok: false, error: { code: 'NOT_FOUND', message: e.message } }
-    if (e instanceof ConflictError) return { ok: false, error: { code: 'CONFLICT', message: e.message } }
-    if (e instanceof TuningValidationError) return { ok: false, error: { code: 'VALIDATION', message: e.message, errors: e.errors } }
-    if (e instanceof ValidationError) return { ok: false, error: { code: 'VALIDATION', message: e.message } }
-    console.error('[ipc] handler failed', e)
-    return { ok: false, error: { code: 'INTERNAL', message: 'Unexpected error. See application log.' } }
+    return handlerError(e)
   }
+}
+
+function handlerError(e: unknown): IpcResult<never> {
+  if (e instanceof NotFoundError) return { ok: false, error: { code: 'NOT_FOUND', message: e.message } }
+  if (e instanceof ConflictError) return { ok: false, error: { code: 'CONFLICT', message: e.message } }
+  if (e instanceof TuningValidationError) return { ok: false, error: { code: 'VALIDATION', message: e.message, errors: e.errors } }
+  if (e instanceof ValidationError || e instanceof RecordingQueryError || e instanceof RecordingFormatError) {
+    return { ok: false, error: { code: 'VALIDATION', message: e.message } }
+  }
+  console.error('[ipc] handler failed', e)
+  return { ok: false, error: { code: 'INTERNAL', message: 'Unexpected error. See application log.' } }
 }

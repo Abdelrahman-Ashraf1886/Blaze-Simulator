@@ -68,7 +68,7 @@ renderer receives frames without going through `ipcMain` per message.
 
 ## Flight environment
 
-- `engine-core/src/wind.rs` evaluates constant wind, logarithmic shear and one discrete gust. `flight.rs` samples wind for body drag and applies the optional `ground_effect.rs` thrust correction at each hub. `environment.rs` and `sim.rs` place plane, heightfield and obstacle colliders and resolve start clearance using the collision shapes.
+- `engine-core/src/wind.rs` evaluates constant wind, logarithmic shear, one discrete gust and optional seeded Dryden turbulence (`turbulence: {kind:"dryden",seed}`). `flight.rs` samples the combined wind for body drag and for airspeed in the optional `ground_effect.rs` correction at each hub. Live loads report the Dryden vector at the CoM and whether any sample used the 10 or 1000 ft hold. `environment.rs` and `sim.rs` place plane, heightfield and obstacle colliders and resolve start clearance using the collision shapes.
 - `engine-core/src/takeoff.rs` and `land_detector.rs` supply ramp and landing states. `auto_modes.rs` generates straight vertical takeoff and landing targets, and `flight_loop.rs` runs them through the PX4 cascade. The scenario host uses that same loop for environment acceptance.
 - `src/domain/wind.ts`, `environment.ts` and `terrain.ts` validate project inputs. The Workshop Environment panel owns terrain and obstacles, and Flight setup owns wind and ground effect. `src/domain/input-mapping.ts` applies device calibration and `src/features/flight/cameras.ts` computes camera pose from telemetry. The live session keeps accepted input requests for deterministic in-memory replay.
 

@@ -58,6 +58,9 @@ export function toFlightFrame(d: Diagnostic, endReason: EndReason, contacts: rea
     dragBodyN: axes(d.loads.dragBodyN),
     environmentLoads: {
       windComWorldMps: [...d.loads.windComWorldMps],
+      ...(d.loads.turbulence && { turbulence: {
+        ...d.loads.turbulence, velocityWorldMps: [...d.loads.turbulence.velocityWorldMps],
+      } }),
       groundEffectAddedThrustN: d.loads.groundEffectAddedThrustN,
       groundEffectStatus: d.loads.groundEffectStatus,
       windAboveRange: d.loads.windAboveRange,

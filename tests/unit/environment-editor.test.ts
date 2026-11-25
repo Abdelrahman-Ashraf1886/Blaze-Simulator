@@ -127,7 +127,7 @@ it('renders the wind, ground effect, grid and hull controls on the server', asyn
     const markup = renderToStaticMarkup(createElement(Fragment, null,
       createElement(WindSection, {
         wind: { kind: 'wind', fromDeg: null, mean: { kind: 'shear', speedAt20FtMps: null, roughness: { kind: 'custom', lengthM: null } },
-          gust: { kind: 'discrete', amplitudeMps: null, lengthM: null, startS: null } },
+          gust: { kind: 'discrete', amplitudeMps: null, lengthM: null, startS: null }, turbulence: { kind: 'dryden', seed: null } },
         onChange,
       }),
       createElement(GroundEffectSection, { value: undefined, onChange }),
@@ -139,6 +139,9 @@ it('renders the wind, ground effect, grid and hull controls on the server', asyn
     expect(markup).toContain('Category C (terminal phases)')
     expect(markup).toContain('wind-roughness-length')
     expect(markup).toContain('wind-gust-start')
+    expect(markup).toContain('wind-turbulence-seed')
+    expect(markup).toContain('does not model hovering flight')
+    expect(markup).toContain('stops changing at zero airspeed')
     expect(markup).toContain('Required')
     expect(markup).toContain('interaction between rotors is not modelled')
     expect(markup).toContain('<option value="" selected="">Unset</option><option value="true">On</option><option value="false">Off</option>')

@@ -23,6 +23,8 @@ Friction 0.4 is below tan 45°, so nothing can rest on the steep slope; its fail
 
 All ten complete ClosedLoop reports from the 4.9 catalogue matched the pre-change engine build byte for byte with the thrust curve off and on. Their state hashes also matched the recorded 5.9 baselines. The PX4 snapshot lacked `src/modules/navigator/mission_params.c`. The 2.5 m takeoff target comes from the existing reference record and 6.7 fixture. [Recorded parameter](../database/reference/physics.v1.json#L1332-L1340)
 
+- **6.11.** Added optional low-altitude Dryden turbulence with a user-entered seed and a positive mean wind reference speed. Exact spatial filter transitions use stationary initial states and deterministic noise. Live loads include the turbulent velocity and height holds, and the session log retains the seed for replay. The flight form explains the hover limitation and the frozen-field behavior at zero mean-relative airspeed. [Model and sources](../simulation-engine/engine-core/src/turbulence.rs#L1) · [Verification](../simulation-engine/engine-core/src/turbulence/tests.rs)
+
 ## 2026-11-24 — Phase 5, milestone 5.9
 
 - **A.** `PositionControl` now owns vertical control in both loops. With `MPC_USE_HTE = 0`, the five scenario hashes match the 4.7 controller. With the estimator enabled, it uses height above the ground beneath the vehicle and treats free space as airborne. The Part A scenario altitude errors changed by less than 1e-5 m. [Hash regression](../simulation-engine/engine-core/src/scenario/tests.rs#L120-L136) · [Estimator sample](../simulation-engine/engine-core/src/flight_loop.rs#L86-L107)

@@ -25,6 +25,7 @@ pub(crate) fn configure(
             WindError::ExpectedObject(field) | WindError::InvalidNumber { field, .. } if *field != "wind" => {
                 format!("{prefix}wind.{error}")
             }
+            WindError::TurbulenceSeed => format!("{prefix}wind.{error}"),
             _ => format!("{prefix}wind: {error}"),
         })?;
         flight.set_wind(wind);

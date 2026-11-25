@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { mkdtemp, rm, stat, truncate } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, truncate } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DesktopApiWithRecordings } from '../../electron/ipc/contract'
@@ -67,6 +67,21 @@ test('shows a live trace, then replays, scrubs and verifies a three-second recor
       await page.getByRole('button', { name: 'Verify', exact: true }).click()
       await expect(page.getByRole('status', { name: 'Verification result' })).toContainText('Same')
 
+      const csv = test.info().outputPath('run.csv')
+      const pdf = test.info().outputPath('report.pdf')
+      await app.evaluate(({ dialog }, paths) => {
+        dialog.showSaveDialog = (async (_win: unknown, options: { filters: { extensions: string[] }[] }) =>
+          ({ canceled: false, filePath: options.filters[0]!.extensions[0] === 'pdf' ? paths.pdf : paths.csv })) as never
+      }, { csv, pdf })
+      await page.getByRole('checkbox', { name: 'Mode names instead of codes' }).check()
+      await page.getByRole('button', { name: 'Export CSV' }).click()
+      await expect(page.getByText('CSV saved.')).toBeVisible()
+      const rows = (await readFile(csv, 'utf8')).trimEnd().split('
+')
+      expect(rows[0]).toMatch(/^time \[s\],/)
+      // 250 Hz for at least the three seconds flown, and one initial row.
+      expect(rows.length - 1).toBeGreaterThanOrEqual(751)
+
       await page.getByRole('button', { name: 'Back to runs' }).click()
       const recording = join(userData, 'recordings', fileName!)
       await truncate(recording, (await stat(recording)).size - 1)
@@ -75,6 +90,12 @@ test('shows a live trace, then replays, scrubs and verifies a three-second recor
       await expect(replay.getByTestId('flight-viewport').locator('canvas')).toBeVisible()
       await page.getByRole('button', { name: 'Verify', exact: true }).click()
       await expect(page.getByRole('status', { name: 'Verification result' })).toContainText('Cannot verify')
+
+      await page.getByRole('link', { name: 'Report' }).click()
+      await expect(page.getByText('This recording is incomplete. Only the saved data is shown.')).toBeVisible()
+      await page.getByRole('button', { name: 'Save as PDF' }).click()
+      await expect(page.getByText('PDF saved.', { exact: true })).toBeVisible()
+      expect((await readFile(pdf)).subarray(0, 4).toString()).toBe('%PDF')
     } finally {
       await app.close()
     }

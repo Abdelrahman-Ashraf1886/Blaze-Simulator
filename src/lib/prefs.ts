@@ -1,4 +1,5 @@
 import { isDeviceCalibration, type DeviceCalibration } from '../features/input/calibration'
+import { isTelemetryLayout, type TelemetryLayout } from '../features/telemetry/layout'
 
 /**
  * Per-user UI conveniences (sidebar state and similar). Stored in localStorage;
@@ -74,4 +75,15 @@ export function readRecordRuns(): boolean {
 
 export function writeRecordRuns(enabled: boolean): void {
   writePref('record-runs', enabled)
+}
+
+const telemetryLayoutKey = 'telemetry.layout'
+
+export function readTelemetryLayout(): TelemetryLayout | undefined {
+  const saved = readPref<unknown>(telemetryLayoutKey, undefined)
+  return isTelemetryLayout(saved) ? saved : undefined
+}
+
+export function writeTelemetryLayout(layout: TelemetryLayout): void {
+  if (isTelemetryLayout(layout)) writePref(telemetryLayoutKey, layout)
 }

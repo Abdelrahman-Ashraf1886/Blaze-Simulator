@@ -41,7 +41,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: '/scenarios', label: 'Scenarios', icon: ListChecks, group: 'flight', phase: 4, ready: true },
   { path: '/tuning', label: 'Tuning', icon: SlidersHorizontal, group: 'flight', phase: 5, ready: true },
   { path: '/input', label: 'Input devices', icon: Gamepad2, group: 'flight', phase: 6, ready: true },
-  { path: '/telemetry', label: 'Telemetry', icon: Activity, group: 'flight', phase: 7 },
+  { path: '/telemetry', label: 'Telemetry', icon: Activity, group: 'flight', phase: 7, ready: true },
   { path: '/projects', label: 'Projects', icon: FolderKanban, group: 'workspace', phase: 1 },
   { path: '/settings', label: 'Settings', icon: Settings, group: 'workspace', phase: 8 },
 ]

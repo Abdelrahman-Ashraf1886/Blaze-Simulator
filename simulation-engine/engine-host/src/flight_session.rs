@@ -393,7 +393,7 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
             if let Some(sampling) = &mut session.sampling {
                 advance(&mut session.sim, cl.as_mut(), p.steps, ClosedLoop::flight, |cl, sim| {
                     let mut inputs = None;
-                    cl.step_observed(sim, &sp, |rates| inputs = Some((sp, rates)));
+                    cl.step_with_rate_feedback(sim, &sp, sampling.rate_feedback(), |rates| inputs = Some((sp, rates)));
                     sampling.attitude(&mut samples, sim, cl, inputs);
                     Ok(())
                 })
@@ -416,7 +416,7 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
             let ran = if let Some(sampling) = &mut session.sampling {
                 advance(&mut session.sim, loop_.as_mut(), p.steps, FlightLoop::flight, |loop_, sim| {
                     let mut inputs = None;
-                    step_manual_observed(loop_, sim, command, |sp| inputs = Some((command, sp)))?;
+                    step_manual_observed(loop_, sim, command, sampling.rate_feedback(), |sp| inputs = Some((command, sp)))?;
                     sampling.flight_loop(&mut samples, sim, loop_, inputs);
                     Ok(())
                 })

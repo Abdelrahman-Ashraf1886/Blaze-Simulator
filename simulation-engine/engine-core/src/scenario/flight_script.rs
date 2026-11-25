@@ -193,14 +193,14 @@ pub fn run_flight_script(
     sim: &mut Simulation, controller: &mut FlightLoop, scenario: &Scenario,
     acceptance: FlightAcceptance,
 ) -> Result<ScenarioReport, String> {
-    run_flight_script_observed(sim, controller, scenario, acceptance, |_, _, _| {})
+    run_flight_script_observed(sim, controller, scenario, acceptance, |_, _, _| None)
 }
 
 /// Observe the initial state, then each completed step with the applied command and setpoints.
 pub fn run_flight_script_observed(
     sim: &mut Simulation, controller: &mut FlightLoop, scenario: &Scenario,
     acceptance: FlightAcceptance,
-    mut observe: impl FnMut(&Simulation, &FlightLoop, Option<(FlightCommand, FlightSetpoints)>),
+    mut observe: impl FnMut(&Simulation, &FlightLoop, Option<(FlightCommand, FlightSetpoints)>) -> Option<crate::gyro_filters::RateFeedback>,
 ) -> Result<ScenarioReport, String> {
     let n = controller.flight().motor_count();
     scenario.validate(n)?;
@@ -221,7 +221,7 @@ pub fn run_flight_script_observed(
     let mut ramp_end = None;
     let mut recovery = None;
     let mut wind_valid = true;
-    observe(sim, controller, None);
+    let mut feedback = observe(sim, controller, None);
     for k in 0..steps_for(scenario.duration_s) {
         while segment + 1 < script.len() && boundaries[segment + 1] <= k { segment += 1; }
         let command = script[segment].command;
@@ -232,8 +232,8 @@ pub fn run_flight_script_observed(
         let touching_before = sim.touching_ground();
         let input = command.into();
         let mut inputs = None;
-        controller.step_observed(sim, input, |setpoints, _, _| inputs = Some((input, setpoints)))?;
-        observe(sim, controller, inputs);
+        controller.step_with_rate_feedback(sim, input, feedback, |setpoints, _, _| inputs = Some((input, setpoints)))?;
+        feedback = observe(sim, controller, inputs);
         let state = sim.state();
         let snap = controller.last_step().ok_or("flight script produced no step")?;
         let flight = controller.flight();

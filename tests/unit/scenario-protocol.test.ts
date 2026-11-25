@@ -35,6 +35,9 @@ import { stepTest } from '../../electron/main/engine/step-test'
 import { EngineSupervisor } from '../../electron/main/engine/supervisor'
 import { lowestPoint } from '../../src/domain/collisions'
 import { RECOMMENDED_STEP_METRICS_OPTIONS, stepMetrics } from '../../src/domain/step-response'
+import { noiseDensityToSampleSigma } from '../../src/domain/sensor-specs'
+import type { SensorPayload } from '../../src/domain/sensors'
+import { toSI } from '../../src/domain/units'
 import { thrustFactor, thrustFactorReadout } from '../../src/domain/thrust-curve'
 import { enginePayload, flightGate } from '../../src/features/flight/readiness'
 import { BUILTINS, scenarioRequest, scenarioRunInput } from '../../src/features/scenarios/scenarios'
@@ -652,6 +655,111 @@ describe('a real engine', () => {
       expect(err(result)?.message).toContain(input)
     }
   })
+
+  it('measures catalogue hover and true roll-rate step response with the datasheet gyro', async () => {
+    const gate = catalogueQuad()
+    const vehicle = VehicleDefinitionSchema.parse(gate.input.vehicle)
+    await sup.loadVehicle(vehicle, {
+      propulsion: PropulsionDefinitionSchema.parse(gate.input.propulsion),
+      aero: BodyDragSchema.parse(gate.input.aero),
+    })
+    const refs = physics.sets.find(({ id }) => id === 'sensorFiltersPx4')!.values
+    const value = (key: string) => {
+      const hz = refs.find((entry) => entry.key === key)?.value
+      if (typeof hz !== 'number') throw new Error(`Missing PX4 filter reference ${key}`)
+      return hz
+    }
+    const notch = (index: number) => {
+      const frequencyHz = value('IMU_GYRO_NF' + index + '_FRQ')
+      return frequencyHz === 0 ? null : { frequencyHz, bandwidthHz: value('IMU_GYRO_NF' + index + '_BW') }
+    }
+    // 2.8 mdps/√Hz (components.v1.json:25 and phase-7-telemetry.md:81–84).
+    const sampleHz = 1000 // phase-7-telemetry.md:43 and engine-core/src/sim.rs:28
+    const sigma = noiseDensityToSampleSigma(toSI(2.8, 'mdps/√Hz'), sampleHz)
+    const model: SensorPayload = {
+      seed: -12, // flight-live.test.ts sensor fixture
+      gyro: { noiseSigma: sigma, vibrationSigma: null, bias: null, randomWalk: null, range: null, delaySteps: null },
+      accelerometer: null, barometer: null, gps: null,
+      flyOnGyro: {
+        gyroCutoffHz: value('IMU_GYRO_CUTOFF'), dgyroCutoffHz: value('IMU_DGYRO_CUTOFF'),
+        notch0: notch(0), notch1: notch(1),
+      },
+    }
+    // Use the existing 10°/s, 1 s hold, 10 s step (step_test/tests.rs:40–47).
+    const holdS = 1
+    const durationS = 10
+    const amplitudeRadps = Math.PI / 18
+    const opts = RECOMMENDED_STEP_METRICS_OPTIONS
+    // Acceptance limits fixed before running. True hover rate RMS must be below
+    // the raw per-axis sample sigma. Tilt RMS must stay below that rate applied
+    // for the one-second hold. The 10–90% rise must fit in one hold interval.
+    // Overshoot is reported, not judged (user, 2026-11-25): no PX4 acceptance figure
+    // was found (phase-5-flight-control.md, step definitions), and the 10% set before
+    // the first run failed with perfect state too (11.8% against 13.2% on the gyro).
+    const limits = { rateRms: sigma, tiltRms: sigma * holdS, riseS: holdS }
+    const input = stepTestInput(gate, {
+      step: { type: 'rate', axis: 'roll', amplitudeRadps }, holdS, durationS, decimationSteps: 10,
+    }, {})!
+    const rms = (values: number[]) => Math.hypot(...values) / Math.sqrt(values.length)
+    const hover = async (noiseSigma: number) => {
+      const scenario = {
+        type: 'custom', scenario: {
+          name: 'Gyro acceptance hover', durationS, modifications: [], checks: [],
+          script: [{ fromS: 0, attitude: { type: 'euler', roll: 0, pitch: 0, yaw: 0 }, yawRateRadps: 0, zM: 0, zVelocityMps: 0 }],
+        },
+      }
+      const run = await sup.runScenario(ScenarioRunParamsSchema.parse({
+        scenario, config: { ...input.config, sampleEverySteps: 4, sensors: { ...model, gyro: { ...model.gyro!, noiseSigma } } },
+      }))
+      expect(run.report.endReason).toBe('duration')
+      const index = (key: string) => {
+        const i = run.channels!.indexOf(key)
+        expect(i, key).toBeGreaterThanOrEqual(0)
+        return i
+      }
+      const [qx, qy] = ['x', 'y'].map((axis) => index('state.quaternion.' + axis))
+      const rate = ['x', 'y', 'z'].map((axis) => index('state.bodyRates.' + axis))
+      const clip = ['x', 'y', 'z'].map((axis) => index('sensor.gyroClipped.' + axis))
+      const raw = ['x', 'y', 'z'].map((axis) => index('sensor.gyro.' + axis))
+      const motors = vehicle.motors.map((_, i) => index('motor.' + i + '.throttle'))
+      const rows = run.samples!.rows.filter((_, i) => run.samples!.steps[i]! / sampleHz >= holdS)
+      return {
+        tiltRmsRad: rms(rows.map((row) => 2 * Math.asin(Math.min(1, Math.hypot(row[qx!]!, row[qy!]!))))),
+        rateRmsRadps: rms(rows.map((row) => Math.hypot(...rate.map((i) => row[i]!)))),
+        rawGyroRmsRadps: rms(rows.flatMap((row) => raw.map((i) => row[i]!))),
+        motorActivityRms: rms(rows.slice(1).flatMap((row, i) => motors.map((m) => row[m]! - rows[i]![m]!))),
+        clipped: rows.reduce((total, row) => total + clip.reduce((n, i) => n + row[i]!, 0), 0),
+      }
+    }
+    const nominal = await hover(sigma)
+    // Three orders of magnitude above the datasheet density to make motor
+    // activity visible. Leave the sensor range disabled so the noise is observable.
+    const excessiveSigma = 1000 * sigma
+    const excessive = await hover(excessiveSigma)
+    const stepRun = async (sensors: SensorPayload | undefined) => {
+      const response = await sup.runStepTest({ test: input.test, config: { ...input.config, ...(sensors ? { sensors } : {}) } })
+      expect(response.endReason).toBe('duration')
+      const measured = measuredSamples(response.trace)
+      const metrics = stepMetrics(measured, { t0: response.stepTimeS, y0: 0, y1: amplitudeRadps }, opts)
+      return {
+        response, measured,
+        riseS: metrics.status === 'ok' && metrics.riseTime.status === 'reached' ? metrics.riseTime.time : null,
+        overshootPct: metrics.status === 'ok' && metrics.overshoot.status === 'overshoot' ? metrics.overshoot.percent : 0,
+      }
+    }
+    const { response, measured, riseS, overshootPct } = await stepRun(model)
+    const perfect = await stepRun(undefined)
+    console.info('GYRO step, perfect state', JSON.stringify({ riseS: perfect.riseS, overshootPct: perfect.overshootPct }))
+    console.info('GYRO catalogue', JSON.stringify({ sigma, limits, nominal, riseS, overshootPct, excessiveSigma, excessive }))
+    expect.soft(nominal.tiltRmsRad).toBeLessThan(limits.tiltRms)
+    expect.soft(nominal.rateRmsRadps).toBeLessThan(limits.rateRms)
+    expect.soft(riseS).not.toBeNull()
+    expect.soft(riseS!).toBeLessThan(limits.riseS)
+    expect.soft(excessive.rawGyroRmsRadps).toBeGreaterThan(excessiveSigma / 2)
+    expect.soft(excessive.clipped).toBe(0)
+    expect.soft(excessive.motorActivityRms).toBeGreaterThan(nominal.motorActivityRms * 10)
+    expect.soft(response.rateLoopFeedback?.some(({ rateUsedRadps }, i) => rateUsedRadps[0] !== measured[i]?.y)).toBe(true)
+  }, 30_000)
 
   it('runs every 4.9 catalogue baseline with the curve off and with the derived factor', async () => {
     const gate = catalogueQuad()

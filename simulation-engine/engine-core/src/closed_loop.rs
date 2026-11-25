@@ -116,6 +116,13 @@ impl ClosedLoop {
     pub fn step_observed(
         &mut self, sim: &mut Simulation, sp: &Setpoint, observe: impl FnOnce([f64; 3]),
     ) {
+        self.step_with_rate_feedback(sim, sp, None, observe);
+    }
+
+    pub fn step_with_rate_feedback(
+        &mut self, sim: &mut Simulation, sp: &Setpoint,
+        feedback: Option<crate::gyro_filters::RateFeedback>, observe: impl FnOnce([f64; 3]),
+    ) {
         if self.flight.ended().is_some() {
             return;
         }
@@ -126,7 +133,7 @@ impl ClosedLoop {
             z: s.com_m[2],
             z_velocity: s.linear_velocity_mps[2],
         };
-        let out = self.controller.step(&est, sp, sim.config().dt_s);
+        let out = self.controller.step_with_rate_feedback(&est, sp, sim.config().dt_s, feedback);
         if out.saturation != Saturation::default() {
             self.saturated_steps += 1;
         }

@@ -1,9 +1,10 @@
-//! Recorded sensor models. The host advances them once after each plant step.
+//! Sensor models advanced once after each plant step.
 use std::collections::VecDeque;
 
 use rapier3d_f64::{math::{Rotation, Vector}, na::ComplexField};
 
 use crate::{
+    gyro_filters::{GyroFilterConfig, GyroFilters, RateFeedback},
     math::STANDARD_GRAVITY,
     sim::{SimConfig, SimState},
     turbulence::SplitMix64,
@@ -13,6 +14,8 @@ use crate::{
 pub struct ImuConfig {
     pub noise_sigma: f64,
     pub vibration_sigma: f64,
+    /// The gyro bias is the residual after PX4's estimated bias correction
+    /// (VehicleAngularVelocity.cpp:916).
     pub bias: [f64; 3],
     pub random_walk: f64,
     pub delay_steps: u64,
@@ -42,6 +45,7 @@ pub type AccelerometerConfig = (ImuConfig, [f64; 3]);
 #[derive(Default)]
 pub struct SensorConfig {
     pub gyro: Option<ImuConfig>,
+    pub fly_on_gyro: Option<GyroFilterConfig>,
     /// Accelerometer config and its mounting point relative to the body origin, FLU.
     pub accelerometer: Option<AccelerometerConfig>,
     pub barometer: Option<BarometerConfig>,
@@ -162,6 +166,8 @@ struct Gps {
 
 pub struct Sensors {
     gyro: Option<Imu>,
+    gyro_filters: Option<GyroFilters>,
+    rate_feedback: Option<RateFeedback>,
     accelerometer: Option<(Imu, [f64; 3])>,
     barometer: Option<Barometer>,
     gps: Option<Gps>,
@@ -175,7 +181,8 @@ impl Sensors {
     /// Reserve slots even for disabled sensors. Every active stream consumes
     /// six uniforms per plant step, including between slow samples.
     pub fn new(seed: i64, config: SensorConfig) -> Option<Self> {
-        let SensorConfig { gyro, accelerometer, barometer, gps } = config;
+        let SensorConfig { gyro, fly_on_gyro, accelerometer, barometer, gps } = config;
+        assert!(fly_on_gyro.is_none() || gyro.is_some(), "gyro feedback requires a gyro");
         if gyro.is_none() && accelerometer.is_none() && barometer.is_none() && gps.is_none() {
             return None;
         }
@@ -185,6 +192,8 @@ impl Sensors {
         let [position_streams, velocity_streams] = std::array::from_fn(|_| std::array::from_fn(|_| SplitMix64(root.next())));
         Some(Self {
             gyro: gyro.map(|config| Imu::new(config, gyro_streams)),
+            gyro_filters: fly_on_gyro.map(GyroFilters::new),
+            rate_feedback: None,
             accelerometer: accelerometer.map(|(config, mount)| (Imu::new(config, accel_streams), mount)),
             barometer: barometer.map(|config| Barometer {
                 config, stream: baro_stream, delay: Delay::new(config.delay_steps),
@@ -201,6 +210,14 @@ impl Sensors {
     pub fn observe(&mut self, state: SimState, sim: SimConfig) {
         let Some(previous) = self.previous.replace(state) else {
             debug_assert_eq!(state.steps, 0);
+            if self.flying_on_gyro() {
+                assert_eq!(sim.dt_s, crate::sim::DEFAULT_DT_S);
+                self.rate_feedback = Some(RateFeedback {
+                    rate_radps: state.angular_velocity_body_radps,
+                    acceleration_radps2: [0.0; 3],
+                    from_gyro: false,
+                });
+            }
             return;
         };
         debug_assert_eq!(previous.steps + 1, state.steps);
@@ -208,6 +225,9 @@ impl Sensors {
         let sqrt_dt = ComplexField::sqrt(sim.dt_s);
         if let Some(gyro) = &mut self.gyro {
             gyro.advance(step, state.angular_velocity_body_radps, sqrt_dt);
+            if let (Some(filters), Some(sample)) = (&mut self.gyro_filters, gyro.delay.held) {
+                self.rate_feedback = Some(filters.apply(sample.value));
+            }
         }
         if let Some((accel, mount)) = &mut self.accelerometer {
             accel.advance(step, specific_force(previous, state, *mount, sim), sqrt_dt);
@@ -235,6 +255,16 @@ impl Sensors {
             let sample = (step - 1).is_multiple_of(c.period_steps).then_some(Some(GpsSample { position_m, velocity_mps }));
             gps.delay.advance(step, sample);
         }
+    }
+
+    pub fn flying_on_gyro(&self) -> bool {
+        self.gyro_filters.is_some()
+    }
+
+    /// Feedback available to the next tick, including the initial true-rate
+    /// hold until the first delayed sample becomes available.
+    pub fn rate_feedback(&self) -> Option<RateFeedback> {
+        self.rate_feedback
     }
 
     pub fn gyro(&self) -> Option<ImuSample> {
@@ -291,6 +321,14 @@ impl Sensors {
                 floats(word, s.position_m);
                 floats(word, s.velocity_mps);
             });
+        }
+        if let Some(filters) = &self.gyro_filters {
+            filters.hash(&mut word);
+            if let Some(feedback) = self.rate_feedback {
+                word(u64::from(feedback.from_gyro));
+                floats(&mut word, feedback.rate_radps);
+                floats(&mut word, feedback.acceleration_radps2);
+            }
         }
         hash
     }

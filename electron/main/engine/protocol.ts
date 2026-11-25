@@ -12,7 +12,7 @@
 import { z } from 'zod'
 import { ISA_MAX_ALTITUDE_M, ISA_MIN_ALTITUDE_M } from '../../../src/domain/atmosphere'
 import type { SimFlightEnvironment } from '../../../src/domain/environment'
-import type { SensorPayload } from '../../../src/domain/sensors'
+import { validGyroFilterHz, type SensorPayload } from '../../../src/domain/sensors'
 
 export const PROTOCOL_VERSION = 2
 
@@ -412,9 +412,17 @@ const imuSensor = z.strictObject({
   delaySteps,
   range: positive.nullable(),
 })
+const filterHz = nonnegative.refine(validGyroFilterHz, 'must be a finite single-precision frequency')
+const gyroNotch = z.strictObject({ frequencyHz: filterHz, bandwidthHz: filterHz })
 export const SensorsSchema = z.strictObject({
   seed: z.int(),
   gyro: imuSensor.nullable(),
+  flyOnGyro: z.strictObject({
+    gyroCutoffHz: filterHz,
+    dgyroCutoffHz: filterHz,
+    notch0: gyroNotch.nullable(),
+    notch1: gyroNotch.nullable(),
+  }).nullable().optional(),
   accelerometer: imuSensor.extend({ mountPositionM: vec3 }).nullable(),
   barometer: z.strictObject({
     referenceAltitudeM: num.min(ISA_MIN_ALTITUDE_M).max(ISA_MAX_ALTITUDE_M),
@@ -431,6 +439,8 @@ export const SensorsSchema = z.strictObject({
     periodSteps,
     delaySteps,
   }).nullable(),
+}).refine(({ gyro, flyOnGyro }) => flyOnGyro == null || gyro !== null, {
+  path: ['flyOnGyro'], message: 'requires a gyroscope',
 }) satisfies z.ZodType<SensorPayload>
 
 const telemetrySamples = z.strictObject({
@@ -772,7 +782,7 @@ const stepTestSpec = z.strictObject({
 
 export const StepTestRunParamsSchema = z.strictObject({
   test: stepTestSpec,
-  config: ScenarioConfigSchema.pick({ airDensityKgM3: true, cutoff: true }).extend({ gains, ...mixerShape, ...flightEnvironmentShape }),
+  config: ScenarioConfigSchema.pick({ airDensityKgM3: true, cutoff: true, sensors: true }).extend({ gains, ...mixerShape, ...flightEnvironmentShape }),
 })
 export type StepTestRunParams = z.infer<typeof StepTestRunParamsSchema>
 
@@ -792,6 +802,12 @@ const traceSample = z.strictObject({
 })
 export const StepTestRunResultSchema = z.strictObject({
   trace: z.strictObject({ decimationSteps: z.int().positive(), samples: z.array(traceSample).max(maxStepTestSamples) }),
+  /** Aligned with trace.samples, whose measured signals and metrics use true state. */
+  rateLoopFeedback: z.array(z.strictObject({
+    rateUsedRadps: vec3,
+    angularAccelerationUsedRadps2: vec3,
+    fromGyro: z.boolean(),
+  })).max(maxStepTestSamples).optional(),
   stepTimeS: num.nonnegative(),
   elapsedS: num.nonnegative(),
   hoverCollective01: num.min(0).max(1),
@@ -801,5 +817,7 @@ export const StepTestRunResultSchema = z.strictObject({
   error: z.string().nullable(),
   stateHash: z.string().regex(/^[0-9a-f]{16}$/),
   gains: gains.unwrap(),
+}).refine(({ trace, rateLoopFeedback }) => rateLoopFeedback === undefined || rateLoopFeedback.length === trace.samples.length, {
+  path: ['rateLoopFeedback'], message: 'must align with trace.samples',
 })
 export type StepTestRunResult = z.infer<typeof StepTestRunResultSchema>

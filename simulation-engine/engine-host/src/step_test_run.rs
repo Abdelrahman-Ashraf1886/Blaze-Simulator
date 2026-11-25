@@ -35,6 +35,7 @@ struct Config {
     wind: Option<Value>,
     #[serde(default, deserialize_with = "crate::protocol::present")]
     ground_effect: Option<Value>,
+    sensors: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -98,6 +99,10 @@ pub fn handle(
     if let Err(error) = bounded(&test) {
         return bad(error);
     }
+    let sensors = match crate::protocol::parse_sensors(config.sensors, "config.sensors") {
+        Ok(sensors) => sensors,
+        Err(error) => return bad(error),
+    };
     let cutoff = match config.cutoff {
         CutoffRequest::VoltageV(v) => Cutoff::VoltageV(v),
         CutoffRequest::ChargeMah(q) => Cutoff::ChargeMah(q),
@@ -106,7 +111,7 @@ pub fn handle(
         Ok(hover) => hover,
         Err(error) => return bad(error),
     };
-    match step_test::run(vehicle, test, hover, |mut flight| {
+    match step_test::run_with_sensors(vehicle, test, hover, sensors, |mut flight| {
         flight_environment::configure(&mut flight, config.wind.as_ref(), config.ground_effect.as_ref(), "config.")?;
         manual_flight_with_gains(vehicle, propulsion, flight, config.gains.as_ref(), config.airmode, config.thrust_model_factor)
     }) {

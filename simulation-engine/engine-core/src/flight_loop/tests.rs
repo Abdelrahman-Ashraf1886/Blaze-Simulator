@@ -411,3 +411,72 @@ fn estimator_refuses_an_indivisible_step_before_advancing() {
     assert!(controller.step(&mut sim, FlightCommand::Position(Sticks::default())).unwrap_err().contains("divide"));
     assert_eq!(before, sim.state_hash());
 }
+
+#[test]
+fn noise_free_gyro_flies_the_independent_filter_feedback() {
+    use crate::gyro_filters::{GyroFilterConfig, RateFeedback};
+    use crate::sensors::{ImuConfig, SensorConfig, Sensors};
+    use std::f64::consts::{PI, SQRT_2, TAU};
+
+    let config = SimConfig::default();
+    let (mut sim, mut loop_, collective) = hover_fixture(false, config);
+    let (mut reference_sim, mut reference_loop, _) = hover_fixture(false, config);
+    // PX4 defaults (physics.v1.json:1540–1562), no notches or sensor effects.
+    let (rate_cutoff, accel_cutoff) = (40.0, 30.0);
+    let mut sensors = Sensors::new(0, SensorConfig {
+        gyro: Some(ImuConfig {
+            noise_sigma: 0.0, vibration_sigma: 0.0, bias: [0.0; 3], random_walk: 0.0,
+            delay_steps: 0, range: None,
+        }),
+        fly_on_gyro: Some(GyroFilterConfig {
+            gyro_cutoff_hz: rate_cutoff, dgyro_cutoff_hz: accel_cutoff, notch0: None, notch1: None,
+        }),
+        ..Default::default()
+    }).unwrap();
+    sensors.observe(sim.state(), config);
+
+    // Independently evaluate the transfer function in direct form I in f64.
+    let g = (PI * f64::from(rate_cutoff) * config.dt_s).tan();
+    let norm = 1.0 + SQRT_2 * g + g * g;
+    let b = g * g / norm;
+    let a1 = 2.0 * (g * g - 1.0) / norm;
+    let a2 = (1.0 - SQRT_2 * g + g * g) / norm;
+    let alpha = 1.0 / (1.0 + 1.0 / (TAU * f64::from(accel_cutoff) * config.dt_s));
+    let mut x = [reference_sim.state().angular_velocity_body_radps; 2];
+    let mut y = x;
+    let mut acceleration = [0.0; 3];
+    // Same 10°/s roll excitation as step_test/tests.rs:40–47.
+    let demand = 10.0_f64.to_radians();
+    let command = FlightCommand::Rates { body_radps: [demand, 0.0, 0.0], collective };
+
+    for step in 0..500 {
+        let observed = sensors.rate_feedback().unwrap();
+        assert_eq!(observed.from_gyro, step > 0);
+        for axis in 0..3 {
+            assert!((observed.rate_radps[axis] - y[0][axis]).abs() < 2e-5);
+            assert!((observed.acceleration_radps2[axis] - acceleration[axis]).abs() < 2e-4);
+        }
+        let mut actual = [0.0; 4];
+        loop_.step_with_rate_feedback(&mut sim, command, Some(observed), |_, commands, _| actual.copy_from_slice(commands)).unwrap();
+        let expected = RateFeedback { rate_radps: y[0], acceleration_radps2: acceleration, from_gyro: step > 0 };
+        reference_loop.step_with_rate_feedback(&mut reference_sim, command, Some(expected), |_, commands, _| {
+            for (a, b) in actual.into_iter().zip(commands) {
+                assert!((a - b).abs() < 2e-5);
+            }
+        }).unwrap();
+        let input = reference_sim.state().angular_velocity_body_radps;
+        let output = if step == 0 {
+            x = [input; 2];
+            y = x;
+            input
+        } else {
+            std::array::from_fn(|a| b * (input[a] + 2.0 * x[0][a] + x[1][a]) - a1 * y[0][a] - a2 * y[1][a])
+        };
+        for a in 0..3 {
+            acceleration[a] += alpha * ((output[a] - y[0][a]) / config.dt_s - acceleration[a]);
+        }
+        x = [input, x[0]];
+        y = [output, y[0]];
+        sensors.observe(sim.state(), config);
+    }
+}

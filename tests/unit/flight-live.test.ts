@@ -5,6 +5,7 @@
  * through the same handlers.
  */
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { EventEmitter, once } from 'node:events'
 import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -631,6 +632,9 @@ describe('IPC validation', () => {
   })
 })
 
+// PX4 gyro filter defaults from database/reference/physics.v1.json:1540–1635.
+const gyroFilters = { gyroCutoffHz: 40, dgyroCutoffHz: 30, notch0: null, notch1: null }
+const wireDigest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const sensorEffects = { noiseSigma: 0.03, vibrationSigma: 0.01, bias: null, randomWalk: 0.02, delaySteps: 2, range: null }
 const sensors = {
   seed: -12, gyro: sensorEffects,
@@ -650,19 +654,20 @@ async function withProtocol(run: (engine: {
   result: (command: object) => Promise<unknown>
   lineBytes: (command: object) => number
   replyBytes: () => number
+  replyLine: () => string
 }) => Promise<void>) {
   const child = spawn(binaryPath, { stdio: ['pipe', 'pipe', 'ignore'] })
   await once(child, 'spawn')
   const closed = once(child, 'close')
   const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]()
   let nextId = 0
-  let lastReplyBytes = 0
+  let lastReply = ''
   const line = (id: number, command: object) => JSON.stringify({ ...command, id }) + '\n'
   const sendLine = async (requestLine: string) => {
     child.stdin.write(requestLine)
     const reply = await replies.next()
     if (reply.done) throw new Error('The engine closed stdout before replying')
-    lastReplyBytes = Buffer.byteLength(reply.value) + 1 // The sidecar writes LF.
+    lastReply = reply.value
     return decodeResponse(reply.value)
   }
   const request = async (command: object) => {
@@ -677,7 +682,11 @@ async function withProtocol(run: (engine: {
     return response.result
   }
   try {
-    await run({ request, sendLine, result, lineBytes: (command) => Buffer.byteLength(line(nextId, command)), replyBytes: () => lastReplyBytes })
+    await run({
+      request, sendLine, result, lineBytes: (command) => Buffer.byteLength(line(nextId, command)),
+      replyBytes: () => Buffer.byteLength(lastReply) + 1, // The sidecar writes LF.
+      replyLine: () => lastReply,
+    })
     await result({ type: 'shutdown' })
   } finally {
     child.stdin.end()
@@ -905,6 +914,14 @@ describe('6.5 on the real NDJSON engine', () => {
 
     const plain = await fly(duration, undefined, 1)
     const run = await fly(duration, sensors, 1)
+    // Captured with the 7.8 release sidecar, covering diagnostic, hash, channel order and row bytes.
+    expect([off, plain, run].map(wireDigest)).toEqual([
+      '81ae63bea365ed7bda6d567115e879a2f349e65bf460affa1e3b04f7db41cb42',
+      'cb139e95513dddb361fd5dc47ecef0e36040b4b0e6f6b587a4ed42d5e8356a52',
+      '7ff7613fcab4934494d0105adf40f09d0d2a04e3d79be9e8b8d474f14205e754',
+    ])
+    expect(run.advanced.stateHash).toBe('77549dedba77397c')
+    expect(await fly(duration, { ...sensors, flyOnGyro: null }, 1)).toEqual(run)
     const { channels } = run.started
     const read = (row: number, channel: string) => run.rows[row]?.[channels!.indexOf(channel)]
     expect(channels?.slice(0, plain.started.channels!.length)).toEqual(plain.started.channels)
@@ -951,6 +968,90 @@ describe('6.5 on the real NDJSON engine', () => {
     expect(replayedHash).toBe(run.advanced.stateHash)
   }))
 
+  it('uses the delayed gyro sample from the preceding row across chunk sizes and raw log replay', async () => withProtocol(async ({ result, sendLine, replyLine }) => {
+    await result(load)
+    // Bypass both filters to make the rate feedback directly checkable from the delayed raw column.
+    const model = { ...sensors, flyOnGyro: { ...gyroFilters, gyroCutoffHz: 0, dgyroCutoffHz: 1 / dtS } }
+    const fly = async (chunk: number, model: SensorPayload, sampleEverySteps?: number) => {
+      const initial = FlightSessionStartResultSchema.parse(await result(start({ ...baseStart, environment: free, sensors: model, sampleEverySteps })))
+      const rows = [...(initial.samples?.rows ?? [])]
+      let hash = ''
+      for (let left = MAX_SESSION_STEPS; left > 0; left -= chunk) {
+        const next = FlightSessionStepResultSchema.parse(await result(step(Math.min(left, chunk), rates)))
+        rows.push(...(next.samples?.rows ?? []))
+        hash = next.stateHash
+      }
+      return { channels: initial.channels, rows, hash }
+    }
+    const whole = await fly(MAX_SESSION_STEPS, model, 1)
+    for (const chunk of [1, 7, 17]) expect(await fly(chunk, model, 1)).toEqual(whole)
+    expect((await fly(7, model)).hash).toBe(whole.hash)
+    expect((await fly(7, model, 4)).rows).toEqual(whole.rows.filter((_, i) => i % 4 === 0))
+    expect((await fly(17, { ...model, seed: model.seed + 1 })).hash).not.toBe(whole.hash)
+    const at = (name: string) => whole.channels!.indexOf(name)
+    const source = at('controller.rateSource')
+    const raw = at('sensor.gyro.x')
+    const filtered = at('sensor.gyroFiltered.x')
+    const acceleration = at('sensor.angularAccelerationFiltered.x')
+    const firstGyroStep = sensorEffects.delaySteps + 2
+    for (const [i, row] of whole.rows.entries()) {
+      expect(row[source]).toBe(Number(i >= firstGyroStep))
+      if (i < firstGyroStep) {
+        expect(row[filtered]).toBeNull()
+      } else {
+        expect(row[filtered]).toBe(Math.fround(whole.rows[i - 1]![raw]!))
+        expect(row[acceleration]).toBe(i === firstGyroStep ? 0 : Math.fround(
+          Math.fround(row[filtered]! - whole.rows[i - 1]![filtered]!) / dtS,
+        ))
+      }
+    }
+    const commands = [start({ ...baseStart, environment: free, sensors: model, sampleEverySteps: 1 })]
+    const steps = []
+    for (let left = MAX_SESSION_STEPS; left > 0; left -= 17) steps.push(step(Math.min(left, 17), rates))
+    const wire = [...commands, ...steps].map((command, id) => JSON.stringify({ ...command, id }))
+    for (const line of wire) expect((await sendLine(line + '\n')).ok).toBe(true)
+    const log = FlightSessionLogResultSchema.parse(await result(getLog))
+    expect(log.start.sensors).toEqual(model)
+    // The sidecar embeds the original request lines as raw JSON (protocol.rs:422–431).
+    const [loggedStart, ...loggedSteps] = wire
+    expect(replyLine()).toContain('"result":{"start":' + loggedStart + ',"steps":[' + loggedSteps.join(',') + ']}')
+    const replay = []
+    let hash = ''
+    for (const [i, line] of wire.entries()) {
+      const reply = await sendLine(line + '\n')
+      if (!reply.ok) throw new Error(reply.error.message)
+      const value = i === 0 ? FlightSessionStartResultSchema.parse(reply.result) : FlightSessionStepResultSchema.parse(reply.result)
+      replay.push(...value.samples!.rows)
+      if ('stateHash' in value) hash = value.stateHash
+    }
+    expect(replay).toEqual(whole.rows)
+    expect(hash).toBe(whole.hash)
+  }))
+
+  it('prints D20 release cost per 1 ms step for all sensor modes', async () => withProtocol(async ({ result }) => {
+    await result(load)
+    const modes = [undefined, sensors, { ...sensors, flyOnGyro: gyroFilters }]
+    // Existing 100-step cap (flight_session.rs:30). Keep the same flight and
+    // requests for all modes: ten simulated seconds per run, one warm-up round that
+    // is not counted, then the median of five.
+    const batches = 100
+    const repetitions = 5
+    for (const sampleEverySteps of [undefined, RECORD_EVERY_STEPS]) {
+      const times: number[][] = modes.map(() => [])
+      for (let repeat = -1; repeat < repetitions; repeat++) {
+        for (const [index, sensors] of modes.entries()) {
+          await result(start({ ...baseStart, environment: free, sensors, sampleEverySteps }))
+          const input = step(MAX_SESSION_STEPS, rates)
+          const began = performance.now()
+          for (let i = 0; i < batches; i++) await result(input)
+          if (repeat >= 0) times[index]!.push((performance.now() - began) * 1000 / (batches * MAX_SESSION_STEPS))
+        }
+      }
+      const [off, recorded, flown] = times.map((runs) => runs.sort((a, b) => a - b)[2]!)
+      console.info(`D20 sampleEverySteps=${sampleEverySteps ?? 'off'} µs/step off=${off!.toFixed(2)} recorded=${recorded!.toFixed(2)} flown=${flown!.toFixed(2)} flown/off=${(flown! / off!).toFixed(2)}x`)
+    }
+  }), 60_000)
+
   it('records sensors for both scenario controllers and rejects bad inputs at their paths', async () => withProtocol(async ({ request, result }) => {
     await result(load)
     const config = { airDensityKgM3, cutoff }
@@ -966,6 +1067,15 @@ describe('6.5 on the real NDJSON engine', () => {
       const off = await run({})
       expect(await run({ sensors: null })).toEqual(off)
       const active = await run({ sensors, sampleEverySteps: 1 })
+      // 7.8 release sidecar response snapshots for both scenario controllers.
+      expect([off, active].map(wireDigest)).toEqual('flightScript' in control ? [
+        '306f00c2f9e2dd817491d50ce3cb7892e4991f5e516a7171a20f0ee430d5a435',
+        'dfec711e7dff74fbb9338a28180918ced69f8ea6adb35b41fcc4583fbf3d16a9',
+      ] : [
+        '57f5b62f159ab3569a59048f2a8d2d5d071737ba4175476c2b2f776a5dda8030',
+        'd7d2e65252f1e53106d46d01f11c2d881a1c67b1e62488b54eea9ff2c271d3b5',
+      ])
+      expect(await run({ sensors: { ...sensors, flyOnGyro: null }, sampleEverySteps: 1 })).toEqual(active)
       expect(active.stateHash).not.toBe(off.stateHash)
       expect(active.report).toEqual({ ...off.report, finalStateHash: active.stateHash })
       expect(active.channels).toContain('sensor.gps.velocity.z')
@@ -975,10 +1085,20 @@ describe('6.5 on the real NDJSON engine', () => {
       expect(active.samples?.rows[1]?.[gpsZ]).toBeNull()
       expect(active.samples?.rows[2]?.[gpsZ]).toBe(active.samples?.rows[1]?.[plantZ])
       expect((await run({ sensors })).stateHash).toBe(active.stateHash)
+      const flown = { ...sensors, flyOnGyro: gyroFilters }
+      const sampled = await run({ sensors: flown, sampleEverySteps: 1 })
+      expect(sampled.stateHash).not.toBe(active.stateHash)
+      expect(sampled.stateHash).toBe((await run({ sensors: flown })).stateHash)
+      const rateSource = sampled.channels!.indexOf('controller.rateSource')
+      expect(sampled.samples!.rows.map((row) => row[rateSource])).toEqual([0, 0, 0, 0, 1, 1])
+      expect(sampled.samples!.rows.at(-1)![sampled.channels!.indexOf('sensor.gyroFiltered.x')]).not.toBe(0)
     }
 
     const scenario = { type: 'builtin', name: 'balanced_hover' }
     for (const [model, path] of [
+      [{ ...sensors, gyro: null, flyOnGyro: gyroFilters }, 'flyOnGyro'],
+      [{ ...sensors, flyOnGyro: { ...gyroFilters, gyroCutoffHz: -1 } }, 'flyOnGyro.gyroCutoffHz'],
+      [{ ...sensors, flyOnGyro: { ...gyroFilters, notch1: { frequencyHz: 40 } } }, 'flyOnGyro.notch1.bandwidthHz'],
       [{ ...sensors, seed: Number.MAX_SAFE_INTEGER + 1 }, 'seed'],
       [{ ...sensors, gyro: { ...sensors.gyro, delaySteps: 0.5 } }, 'gyro.delaySteps'],
       [{ ...sensors, gyro: { ...sensors.gyro, noiseSigma: -1 } }, 'gyro.noiseSigma'],
@@ -1317,6 +1437,27 @@ describe('6.5 on the real NDJSON engine', () => {
     const config = { airDensityKgM3, cutoff }
     const stepTest = { type: 'stepTest.run', test, config }
     const unconfigured = StepTestRunResultSchema.parse(await result(stepTest))
+    // 7.8 release sidecar response digest, including the true measurement column.
+    expect(wireDigest(unconfigured)).toBe('2cf7b78cebd8637191797b68f5ce1b84401eac906031ba8f301203b1e21c758f')
+    expect(await result({ ...stepTest, config: { ...config, sensors: null } })).toEqual(unconfigured)
+    const recorded = StepTestRunResultSchema.parse(await result({ ...stepTest, config: { ...config, sensors } }))
+    expect(recorded.trace).toEqual(unconfigured.trace)
+    expect(recorded.rateLoopFeedback).toBeUndefined()
+    const flown = StepTestRunResultSchema.parse(await result({
+      ...stepTest, config: { ...config, sensors: { ...sensors, flyOnGyro: gyroFilters } },
+    }))
+    expect(flown.rateLoopFeedback?.map(({ fromGyro }) => fromGyro)).toEqual([false, false, true, true])
+    expect(flown.trace).not.toEqual(recorded.trace)
+    const allTicks = StepTestRunResultSchema.parse(await result({
+      ...stepTest, test: { ...test, decimationSteps: 1 },
+      config: { ...config, sensors: { ...sensors, flyOnGyro: gyroFilters } },
+    }))
+    expect(allTicks.stateHash).toBe(flown.stateHash)
+    expect(allTicks.trace.samples.filter((_, i) => i % test.decimationSteps === 0)).toEqual(flown.trace.samples)
+    expect(allTicks.rateLoopFeedback?.filter((_, i) => i % test.decimationSteps === 0)).toEqual(flown.rateLoopFeedback)
+    expect(await request({ ...stepTest, config: { ...config, sensors: { ...sensors, gyro: null, flyOnGyro: gyroFilters } } })).toMatchObject({
+      ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining('config.sensors.flyOnGyro') },
+    })
     expect(unconfigured.stateHash).toBe('9644d51ae5ff0264')
     const configured = StepTestRunResultSchema.parse(await result({
       type: 'stepTest.run', ...StepTestRunParamsSchema.parse({ test, config: { ...config, wind, groundEffect } }),
@@ -1867,9 +2008,15 @@ describe('a real engine session', () => {
       return Promise.all([flight, scenario].map(async ({ recordingId }) => (await getRecording(store, recordingId!)).summary))
     }
     const named = (summary: Awaited<ReturnType<typeof record>>[number]) => summary.header!.channels.filter(({ name }) => name.startsWith('sensor.')).length
-    for (const summary of await record(sensors)) {
+    const recordedOnly = await record(sensors)
+    for (const summary of recordedOnly) {
       expect(summary.end?.status).toBe('completed')
       expect(named(summary)).toBeGreaterThan(0)
+    }
+    // Filtered rate and angular acceleration, three axes each.
+    for (const [i, summary] of (await record({ ...sensors, flyOnGyro: gyroFilters })).entries()) {
+      expect(summary.end?.status).toBe('completed')
+      expect(named(summary)).toBe(named(recordedOnly[i]!) + 6)
     }
     for (const summary of await record({ seed: 1, gyro: null, accelerometer: null, barometer: null, gps: null })) {
       expect(summary.end?.status).toBe('completed')

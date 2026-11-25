@@ -26,6 +26,7 @@ pub mod auto_modes;
 pub mod scenario;
 pub mod step_test;
 pub mod trace;
+pub mod gyro_filters;
 pub mod sensors;
 pub mod sim;
 pub mod vehicle;

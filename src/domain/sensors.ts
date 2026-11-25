@@ -38,9 +38,22 @@ type GpsPayload = {
   delaySteps: number | null
 }
 
+export interface GyroNotchPayload {
+  frequencyHz: number
+  bandwidthHz: number
+}
+
+export interface GyroFilterPayload {
+  gyroCutoffHz: number
+  dgyroCutoffHz: number
+  notch0: GyroNotchPayload | null
+  notch1: GyroNotchPayload | null
+}
+
 export interface SensorPayload {
   seed: number
   gyro: ImuPayload | null
+  flyOnGyro?: GyroFilterPayload | null
   accelerometer: (ImuPayload & { mountPositionM: Vec3 }) | null
   barometer: BarometerPayload | null
   gps: GpsPayload | null
@@ -62,6 +75,11 @@ export interface SensorSettings {
   flightControllerPartId?: string
   gpsPartId?: string
   gyro?: ImuSettings | null
+  flyOnGyro?: boolean
+  gyroFilters?: Partial<Omit<GyroFilterPayload, 'notch0' | 'notch1'>> & {
+    notch0?: Partial<GyroNotchPayload> | null
+    notch1?: Partial<GyroNotchPayload> | null
+  }
   accelerometer?: (ImuSettings & { mountPositionM?: Vec3 }) | null
   barometer?: BarometerSettings | null
   gps?: GpsSettings | null
@@ -82,6 +100,9 @@ export interface MissingSensorInput {
 }
 
 const nonnegative = (n: number) => Number.isFinite(n) && n >= 0
+// Match the f32 frequencies in PX4's LowPassFilter2p.hpp:61–90,
+// NotchFilter.hpp:217–285 and AlphaFilter.hpp:76–86.
+export const validGyroFilterHz = (n: number) => nonnegative(n) && Number.isFinite(Math.fround(n))
 const positive = (n: number) => Number.isFinite(n) && n > 0
 const whole = (n: number) => Number.isSafeInteger(n) && n >= 0
 const wholePositive = (n: number) => whole(n) && n > 0
@@ -174,9 +195,36 @@ export function buildSensorPayload(
       'Enter a positive whole millisecond period. A catalogue rate must divide 1 kHz exactly.', source)
   }
 
+  const seed = read('seed', '1', settings.seed, Number.isSafeInteger, 'Enter a signed safe integer seed.')
+  const gyro = group('gyro', settings.gyro, (v) => imu('gyro', v))
+  function flightFilters(): GyroFilterPayload | undefined {
+    const filters = settings?.gyroFilters
+    const message = 'Enter a nonnegative finite frequency in Hz.'
+    const frequency = (key: string, value: number | undefined) => read(key, 'Hz', value, validGyroFilterHz, message)
+    const notch = (key: 'notch0' | 'notch1') => group(`flyOnGyro.${key}`, filters?.[key], (v) => {
+      const fields = {
+        frequencyHz: frequency(`flyOnGyro.${key}.frequencyHz`, v.frequencyHz),
+        bandwidthHz: frequency(`flyOnGyro.${key}.bandwidthHz`, v.bandwidthHz),
+      }
+      return complete(fields) ? fields : undefined
+    })
+    const fields = {
+      gyroCutoffHz: frequency('flyOnGyro.gyroCutoffHz', filters?.gyroCutoffHz),
+      dgyroCutoffHz: frequency('flyOnGyro.dgyroCutoffHz', filters?.dgyroCutoffHz),
+      notch0: notch('notch0'),
+      notch1: notch('notch1'),
+    }
+    return complete(fields) ? fields : undefined
+  }
+
+  const flyOnGyro = settings.flyOnGyro === true ? flightFilters() : undefined
+  if (settings.flyOnGyro === true && settings.gyro == null) {
+    read('flyOnGyro', '1', undefined, () => false, 'Configure a gyroscope to use gyro rate feedback.')
+  }
   const payload = {
-    seed: read('seed', '1', settings.seed, Number.isSafeInteger, 'Enter a signed safe integer seed.'),
-    gyro: group('gyro', settings.gyro, (v) => imu('gyro', v)),
+    seed,
+    gyro,
+    ...(flyOnGyro !== undefined ? { flyOnGyro } : {}),
     accelerometer: group('accelerometer', settings.accelerometer, (v) => {
       const model = imu('accelerometer', v)
       const mountPositionM = read('accelerometer.mountPositionM', 'm', v.mountPositionM, finiteVector,
@@ -216,5 +264,5 @@ export function buildSensorPayload(
     }),
   }
 
-  return complete(payload) ? { payload, missing } : { missing }
+  return missing.length === 0 && complete(payload) ? { payload, missing } : { missing }
 }

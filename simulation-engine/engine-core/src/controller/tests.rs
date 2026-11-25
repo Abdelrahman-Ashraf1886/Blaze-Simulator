@@ -836,3 +836,19 @@ fn airmode_rpy_raises_collective_for_yaw_and_prioritizes_roll_pitch() {
         }
     }
 }
+
+#[test]
+fn gyro_d_uses_the_supplied_acceleration_on_the_first_tick() {
+    let gains = Gains::px4_v1_13_3();
+    let mut gyro = RateControl::default();
+    let mut perfect = RateControl::default();
+    let sat = Saturation::default();
+    let dt = crate::sim::DEFAULT_DT_S;
+    let rate = [1.0, 0.0, 0.0];
+    let acceleration = [2.0, 0.0, 0.0];
+    let true_torque = perfect.update(&gains, rate, rate, sat, dt);
+    let gyro_torque = gyro.update_gyro(&gains, rate, acceleration, rate, sat, dt);
+    assert_eq!(true_torque[0], 0.0);
+    assert_eq!(gyro_torque[0], -gains.mc_rollrate_k * gains.mc_rollrate_d * acceleration[0]);
+    assert_eq!(gyro.integral(), perfect.integral());
+}

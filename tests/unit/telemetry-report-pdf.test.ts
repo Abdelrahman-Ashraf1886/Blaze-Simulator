@@ -32,7 +32,10 @@ describe('printing the active report', () => {
     const { contents, getTitle, pick, write, bytes } = fixture()
     write.mockRejectedValue(new Error('Disk is full'))
     const result = await handlePrintReportPdf(undefined, () => printCurrentReportPdf(contents, getTitle, pick, write))
-    expect(contents.printToPDF).toHaveBeenCalledWith({ pageSize: 'A4', preferCSSPageSize: true })
+    expect(contents.printToPDF).toHaveBeenCalledWith(expect.objectContaining({
+      pageSize: 'A4', preferCSSPageSize: true, displayHeaderFooter: true,
+      footerTemplate: expect.stringMatching(/Test: \.\.\/ hover.*pageNumber.*totalPages/),
+    }))
     expect(write).toHaveBeenCalledWith('chosen.pdf', bytes)
     expect(result).toEqual({ ok: false, error: { code: 'INTERNAL', message: 'Could not save the report PDF. Disk is full' } })
   })

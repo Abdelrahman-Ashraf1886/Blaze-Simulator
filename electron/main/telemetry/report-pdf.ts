@@ -11,6 +11,15 @@ function currentReportId(url: string) {
   return path && recordingIdSchema.safeParse({ id: path[1] }).data?.id
 }
 
+const escapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }
+
+/** Chromium fills the page number spans; the title is user text and the template is HTML. */
+function footer(title: string) {
+  return '<div style="width: 100%; margin: 0 12mm; font: 8px sans-serif; color: #333; display: flex; justify-content: space-between">' +
+    '<span>' + title.replace(/[&<>"]/g, (char) => escapes[char]!) + '</span>' +
+    '<span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span></div>'
+}
+
 export async function printCurrentReportPdf(
   contents: ReportContents,
   getTitle: (id: string) => Promise<string | undefined>,
@@ -29,7 +38,10 @@ export async function printCurrentReportPdf(
   if (!path) return null
   assertCurrentReport()
   const destination = /\.pdf$/i.test(path) ? path : path + '.pdf'
-  const bytes = await contents.printToPDF({ pageSize: 'A4', preferCSSPageSize: true })
+  const bytes = await contents.printToPDF({
+    pageSize: 'A4', preferCSSPageSize: true,
+    displayHeaderFooter: true, headerTemplate: '<span></span>', footerTemplate: footer(title || 'Blaze UAV flight'),
+  })
   assertCurrentReport()
   await write(destination, bytes)
   return { path: destination }

@@ -1,5 +1,5 @@
 import type { FlightConditionsDoc, WindDoc } from '../../../../electron/ipc/contract'
-import { simWind } from '@/domain/wind'
+import { simWind, validTurbulenceSeed } from '@/domain/wind'
 import { ChoiceField, OptionalNumberField } from './fields'
 
 type Wind = Extract<WindDoc, { kind: 'wind' }>
@@ -13,11 +13,12 @@ const roughness = {
 }
 const unset = ['', 'Unset'] as const
 const none = ['none', 'None'] as const
+const seedConstraint = { accepts: validTurbulenceSeed, message: `Enter a whole number from 0 to ${Number.MAX_SAFE_INTEGER}.` }
 
 export function WindSection({ wind, onChange }: { wind: FlightConditionsDoc['wind']; onChange: (wind: WindDoc | null) => void }) {
   return <section aria-labelledby="wind-heading" className="mt-3" data-testid="wind-section">
     <h3 id="wind-heading" className="text-[12px] font-medium text-fg-muted">Wind</h3>
-    <p className="text-[11.5px] text-fg-subtle">Wind acts on body drag only. Rotor inflow is not modelled.</p>
+    <p className="text-[11.5px] text-fg-subtle">Wind directly affects body drag only. Ground effect uses the local wind to estimate airspeed.</p>
     <ChoiceField id="wind-setting" label="Wind setting" value={wind?.kind ?? ''} options={[unset, none, ['wind', 'Set']]}
       onChange={(kind) => onChange(kind === 'wind' ? { kind, fromDeg: null, mean: null, gust: null } : kind === 'none' ? { kind } : null)} />
     {wind?.kind === 'wind' && <WindFields wind={wind} onChange={onChange} />}
@@ -25,7 +26,7 @@ export function WindSection({ wind, onChange }: { wind: FlightConditionsDoc['win
 }
 
 function WindFields({ wind, onChange }: { wind: Wind; onChange: (wind: Wind) => void }) {
-  const { mean, gust } = wind
+  const { mean, gust, turbulence } = wind
   const set = (patch: Partial<Wind>) => onChange({ ...wind, ...patch })
   const validation = simWind(wind)
   const hint = (path: string) => !validation.ok && validation.missing.some(({ field }) => field === path) ? 'Required' : undefined
@@ -67,6 +68,19 @@ function WindFields({ wind, onChange }: { wind: Wind; onChange: (wind: Wind) => 
         hint={hint('wind.gust.lengthM')} constraint={positive} onCommit={(lengthM) => set({ gust: { ...gust, lengthM } })} />
       <OptionalNumberField id="wind-gust-start" label="Gust start time" unit="s" value={gust.startS}
         hint={hint('wind.gust.startS')} constraint={nonnegative} onCommit={(startS) => set({ gust: { ...gust, startS } })} />
+    </>}
+    <ChoiceField id="wind-turbulence" label="Turbulence" value={turbulence?.kind ?? 'off'}
+      options={[[ 'off', 'Off'], ['dryden', 'Dryden']]}
+      hint={hint('wind.turbulence') && 'Dryden requires a positive mean wind speed.'}
+      onChange={(kind) => set({ turbulence: kind === 'dryden' ? { kind, seed: null } : null })} />
+    {turbulence?.kind === 'dryden' && <>
+      <OptionalNumberField id="wind-turbulence-seed" label="Dryden seed" value={turbulence.seed}
+        hint={hint('wind.turbulence.seed')} constraint={seedConstraint}
+        onCommit={(seed) => set({ turbulence: { kind: 'dryden', seed } })} />
+      <p className="mt-1 text-[11.5px] text-fg-subtle" data-testid="wind-turbulence-limits">
+        Dryden does not model hovering flight (Juhasz et al., 2017). It treats gusts as fixed in space.
+        The gust stops changing at zero airspeed relative to the mean wind.
+      </p>
     </>}
   </>
 }

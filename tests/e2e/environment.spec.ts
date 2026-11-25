@@ -39,18 +39,29 @@ test('wind, ground effect and an imported ASCII terrain survive reload', async (
     await page.getByTestId('wind-mean').selectOption('constant')
     await commit(page, 'wind-speed', '3.5')
     await page.getByTestId('wind-gust').selectOption('none')
+    await expect(page.getByTestId('wind-turbulence')).toHaveValue('off')
+    await page.getByTestId('wind-turbulence').selectOption('dryden')
+    await expect(page.getByTestId('wind-turbulence-seed')).toHaveValue('')
+    const limits = page.getByTestId('wind-turbulence-limits')
+    await expect(limits).toBeVisible()
+    await expect(limits).toContainText('does not model hovering flight')
+    await expect(limits).toContainText('stops changing at zero airspeed')
+    await commit(page, 'wind-turbulence-seed', '0')
     await page.getByTestId('ground-effect').selectOption('true')
     await expect.poll(() => page.evaluate((projectId) =>
       (window as unknown as { api: DesktopApi }).api.assembly.load(projectId), id)).toMatchObject({
       ok: true,
       data: {
-        flight: { wind: { fromDeg: 90, mean: { kind: 'constant', speedMps: 3.5 }, gust: { kind: 'none' } }, groundEffect: true },
+        flight: { wind: { fromDeg: 90, mean: { kind: 'constant', speedMps: 3.5 }, gust: { kind: 'none' },
+          turbulence: { kind: 'dryden', seed: 0 } }, groundEffect: true },
         environment: { terrain: { friction: 0.4, restitution: 0.2 } },
       },
     })
     await page.reload()
     await expect(page.getByTestId('wind-from')).toHaveValue('90')
     await expect(page.getByTestId('wind-speed')).toHaveValue('3.5')
+    await expect(page.getByTestId('wind-turbulence')).toHaveValue('dryden')
+    await expect(page.getByTestId('wind-turbulence-seed')).toHaveValue('0')
     await expect(page.getByTestId('ground-effect')).toHaveValue('true')
     await page.evaluate((projectId) => { location.hash = `#/workshop/${projectId}` }, id)
     await expect(page.getByTestId('terrain-grid').locator('option:checked')).toHaveText('test-slope.asc')

@@ -224,7 +224,10 @@ const windGust = z.discriminatedUnion('kind', [
 ])
 export const windDocSchema = z.discriminatedUnion('kind', [
   noWindComponent,
-  z.object({ kind: z.literal('wind'), fromDeg: finite.nullable(), mean: windMean.nullable(), gust: windGust.nullable() }).strict(),
+  z.object({
+    kind: z.literal('wind'), fromDeg: finite.nullable(), mean: windMean.nullable(), gust: windGust.nullable(),
+    turbulence: z.strictObject({ kind: z.literal('dryden'), seed: z.int().nonnegative().nullable() }).nullable().optional(),
+  }).strict(),
 ])
 
 const optionalNumber = (min: number, max: number, what: string) =>

@@ -68,6 +68,9 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
     expect(renderMode()).toContain('Finished')
     expect(renderMode()).toContain('Ramping up')
     expect(renderMode()).toContain('Landed no')
+    frame.flightLoop = { ...frame.flightLoop, autoMode: 'return', returnState: 'descend', commandFinished: false }
+    expect(renderMode()).toContain('>Return</span> · In progress')
+    expect(renderMode()).toContain('>Descend</span>')
 
     const controls = await server.ssrLoadModule('/src/features/flight/FlightControls.tsx') as {
       FlightInputSelector: ComponentType<typeof selectorProps>
@@ -101,7 +104,7 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
       command: { type: 'land' }, height: '', paused: false, onHeight: () => {}, onCommand: () => {},
     }
     const commands = renderToStaticMarkup(createElement(controls.FlightCommandControls, commandProps))
-    for (const text of ['MIS_TAKEOFF_ALT (2.5 m)', 'm above start', '>Takeoff<', '>Hold<', '>Land<', '>Manual<']) {
+    for (const text of ['MIS_TAKEOFF_ALT (2.5 m)', 'm above start', '>Takeoff<', '>Hold<', '>Land<', '>Return<', '>Manual<']) {
       expect(commands).toContain(text)
     }
     const loop = render()
@@ -117,6 +120,7 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
 
     frame.environmentLoads = {
       windComWorldMps: [-3, 4, 0], groundEffectAddedThrustN: 0.25,
+      turbulence: { velocityWorldMps: [0, 4, 0], belowRange: true, aboveRange: true },
       windAboveRange: true, windInvalid: true,
       groundEffectStatus: [
         { type: 'applied', belowTestedRange: true }, { type: 'inactive' },
@@ -128,6 +132,7 @@ it('renders all diagnostic groups, contacts, units and end reasons from a frame'
       'Wind at CoM', '-3.000 / 4.000 / 0.000', 'Ground-effect added thrust', '0.250',
       '1 applied / 1 inactive / 1 invalid inputs / 1 invalid wind / 1 non-finite thrust',
       'held wind at the top of the profile', 'A wind calculation failed', 'skipped ground-effect thrust', 'below the tested height range on 1 motor',
+      'Dryden turbulence (world X / Y / Z)', '0.000 / 4.000 / 0.000', 'held at 10 ft', 'held at 1000 ft',
     ]) expect(loads).toContain(text)
     frame.environmentLoads = { ...frame.environmentLoads, windAboveRange: false, windInvalid: false, groundEffectStatus: [] }
     expect(render()).not.toContain('skipped ground-effect thrust')

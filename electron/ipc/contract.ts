@@ -336,6 +336,8 @@ export type WindDoc =
       fromDeg: number | null
       mean: WindMeanDoc | null
       gust: WindGustDoc | null
+      /** null means off. A selected Dryden model requires a user-entered seed. */
+      turbulence?: { kind: 'dryden'; seed: number | null } | null
     }
 
 /**

@@ -1,10 +1,10 @@
 # Phase 6 plan: flight environment
 
-Status (2026-11-24): **Built through 6.10**. 6.0b, 6.11 and 6.12 are open.
+Status (2026-11-24): **Built through 6.12**. 6.0b is open.
 
 - **Built** — 6.0a (sources), 6.1 (wind), 6.2 (ground effect), 6.3 (flight loads), 6.4 (terrain and obstacles), 6.5 (host, storage and replay), 6.6 (input devices), 6.7 (takeoff and landing), 6.8 (cameras), 6.9 (UI), 6.10 (acceptance and docs).
 - **6.0b pending** — user pass limits in D2. No stream measurement ran.
-- **6.11 (turbulence) and 6.12 (return to start) chosen** by the user on 2026-11-24. In progress.
+- **6.11 (turbulence) and 6.12 (return to start) chosen** by the user on 2026-11-24 and built on 2026-11-25. The return parameters can be overridden per session by PX4 name; the tuning editor does not list them.
 - **Added on 2026-11-24** — PlayStation controller support on 6.6's Input page and 6.9's device flying.
 - **6.10 catalogue result** — wind hold, gust recovery and the ground-plane sequence passed. The 45° terrain run failed horizontal hold and landing-state checks; a 5° slope passes. [Measured results](../DEVLOG.md#2026-11-24--phase-6-flight-environment)
 
@@ -237,9 +237,11 @@ Parameters (default, line): `MPC_TKO_SPEED` 1.5 (L451), `MPC_TKO_RAMP_T` 3.0 (L7
 `MPC_JERK_AUTO` 4 (L621), `MPC_YAWRAUTO_MAX` 45 (L706) in `mc_pos_control_params.c`;
 `LNDMC_TRIG_TIME` 1.0 (L48), `LNDMC_Z_VEL_MAX` 0.5 (L60), `LNDMC_XY_VEL_MAX` 1.5 (L72),
 `LNDMC_ROT_MAX` 20 (L84) in `land_detector_params_mc.c`; `MIS_TAKEOFF_ALT` 2.5
-(`navigator/mission_params.c` L58); for return, `RTL_RETURN_ALT` 60 (L59), `RTL_DESCEND_ALT` 30
-(L75), `RTL_LAND_DELAY` 0 (L90), `RTL_MIN_DIST` 10 (L106) in `navigator/rtl_params.c`. Units and
-ranges are read into the reference data in 6.0a.
+(`navigator/mission_params.c` L58). For multicopter return, `RTL_RETURN_ALT` is 30 m,
+`RTL_DESCEND_ALT` is 10 m and `NAV_ACC_RAD` is 2 m. Their generic definitions are 60 m and
+30 m (`navigator/rtl_params.c:59,75`) and 10 m (`navigator/navigator_params.c:70`).
+`RTL_LAND_DELAY` is 0 s and `RTL_MIN_DIST` is 10 m (`navigator/rtl_params.c:90,106`).
+[PX4 v1.13.3 multicopter startup defaults](https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/ROMFS/px4fmu_common/init.d/rc.mc_defaults#L18-L21)
 
 ### Input devices
 
@@ -301,8 +303,8 @@ is what the milestone may touch. In one wave two milestones share no file, excep
 | 6.8 Cameras | Camera maths (pose from frame, easing), chase, orbit, fixed, FPV; selector; FOV field on the camera part | `src/features/flight/cameras.ts`, `FlightViewport.tsx`, `tests/unit/cameras.test.ts`, the part panel and part schema for the FOV | The maths: nothing. `FlightViewport.tsx`: **after 5.8** (its folder). The schema edit: not while 6.5 runs |
 | 6.9 Environment and flight UI | Wind panel, ground-effect switch with its label, terrain import, obstacle shapes, terrain drawn, wind arrow, new loads in the debug panel, device selection, takeoff/land controls, pause and resume | `src/features/flight/*` (except `cameras.ts`), `src/features/workshop/EnvironmentPanel.tsx`, `src/features/scenarios/*` (wind entry), `tests/e2e/environment.spec.ts` | 6.5, 6.6, 6.7, 6.8, **5.8 merged** |
 | 6.10 Acceptance and docs | Wind-hold, gust, takeoff-and-land and terrain scenarios on a built-in build; ROADMAP (including the Phase 4 wind/ground-effect note), ARCHITECTURE, DEVLOG, ADR for the environment models and their limits | `engine-core/src/scenario/builtins.rs`, docs | All above, **5.9 merged** (it edits `scenario.rs`, `closed_loop.rs`) |
-| 6.11 (optional) Turbulence | Dryden low-altitude filters, seeded generator, spectrum test, the two limits on screen | `engine-core/src/turbulence.rs`, `turbulence/tests.rs`, `wind.rs`, then small edits in 6.5's and 6.9's files | D4, 6.0a's gate, 6.3 |
-| 6.12 (optional) Return | PX4's return states on the local position (home = start) | `engine-core/src/auto_modes.rs`, tests, then 6.9's controls | Chosen later (D15), 6.7 |
+| 6.11 Turbulence **Built** | Dryden low-altitude filters, seeded generator, spectrum test, the two limits on screen | `engine-core/src/turbulence.rs`, `turbulence/tests.rs`, `wind.rs`, then small edits in 6.5's and 6.9's files | D4, 6.0a's gate, 6.3 |
+| 6.12 Return **Built** | Multicopter RTL to the first-step pose with cone altitude, straight-track smoothing, optional loiter and the existing landing controller. FlightLoop command, return-state diagnostics, Return button and L1 binding. | `engine-core/src/auto_modes.rs`, FlightLoop, flight-session protocol, Flight controls and RTL reference data | Chosen under D15 after 6.7. Session overrides use PX4 v1.13.3 ranges. |
 
 **Waves.**
 - **Wave 1 (can start now, no Phase 5 file touched):** 6.0a, 6.0b, 6.1 (constant wind first),

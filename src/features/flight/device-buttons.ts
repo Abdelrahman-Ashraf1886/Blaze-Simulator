@@ -9,6 +9,7 @@ export const DEVICE_BUTTONS = {
   1: { name: 'Circle', action: 'land', label: 'Land' },
   2: { name: 'Square', action: 'hold', label: 'Hold' },
   3: { name: 'Triangle', action: 'manual', label: 'Manual' },
+  4: { name: 'L1', action: 'return', label: 'Return' }, // playstation.ts:19–23
   9: { name: 'Options', action: 'pause', label: 'Pause / Resume' },
   14: { name: 'D-pad Left', action: 'previous', label: 'Previous PX4 mode' },
   15: { name: 'D-pad Right', action: 'next', label: 'Next PX4 mode' },

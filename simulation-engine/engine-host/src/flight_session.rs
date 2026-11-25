@@ -12,6 +12,7 @@ use crate::engine::{controlled, loaded_vehicle, manual_flight, parse_environment
 use crate::flight_environment;
 use crate::protocol::{present, ControllerRequest, ErrorCode, FlightLoopDiagnostic, FlightModeRequest, Response};
 use engine_core::aero::BodyDrag;
+use engine_core::auto_modes::ReturnParams;
 use engine_core::closed_loop::{ClosedLoop, ControlDiagnostic};
 use engine_core::flight::{BatteryReading, Cutoff, EndReason, Flight, MotorReading, RotorGroundEffect, StepLoads};
 use engine_core::flight_loop::FlightLoop;
@@ -117,6 +118,7 @@ enum AutoSetpoint {
     },
     Hold {},
     Land {},
+    Return {},
 }
 
 impl AutoSetpoint {
@@ -130,6 +132,7 @@ impl AutoSetpoint {
             }
             Self::Hold {} => Ok(FlightCommand::Hold),
             Self::Land {} => Ok(FlightCommand::Land),
+            Self::Return {} => Ok(FlightCommand::Return),
         }
     }
 }
@@ -277,8 +280,13 @@ pub fn start(
         return bad(format!("cutoff: {e}"));
     }
     let controller = if let Some(c) = p.controller {
-        match manual_flight(vehicle, propulsion, flight, p.gains.as_ref(), c.airmode, c.thrust_model_factor) {
-            Ok(loop_) => SessionController::Manual { loop_: Box::new(loop_), mode: c.mode },
+        let mut gains = p.gains.unwrap_or_default();
+        let return_params = match ReturnParams::take_overrides(&mut gains) {
+            Ok(params) => params,
+            Err(e) => return bad(format!("controller.gains: {e}")),
+        };
+        match manual_flight(vehicle, propulsion, flight, Some(&gains), c.airmode, c.thrust_model_factor) {
+            Ok(loop_) => SessionController::Manual { loop_: Box::new(loop_.with_return_params(return_params)), mode: c.mode },
             Err(e) => return bad(e),
         }
     } else {
@@ -320,7 +328,7 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
     let auto_command = match p.setpoint.remove("command") {
         Some(command) => {
             if matches!(session.controller, SessionController::Legacy(_)) {
-                return bad("setpoint.command (takeoff, hold or land) requires a FlightLoop session (controller.mode at flight.session.start)".into());
+                return bad("setpoint.command (takeoff, hold, land or return) requires a FlightLoop session (controller.mode at flight.session.start)".into());
             }
             if !p.setpoint.is_empty() {
                 return bad("setpoint.command must be the only field in setpoint".into());

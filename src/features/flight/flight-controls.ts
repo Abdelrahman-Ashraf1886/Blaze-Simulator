@@ -51,6 +51,7 @@ export function flightCommandActions(command: AutoCommand | null, height: string
     takeoff: { label: 'Takeoff', disabled: paused || takeoff === null, run: () => { if (takeoff) onCommand(takeoff) } },
     hold: { label: 'Hold', disabled: paused, run: () => onCommand({ type: 'hold' }) },
     land: { label: 'Land', disabled: paused, run: () => onCommand({ type: 'land' }) },
+    return: { label: 'Return', disabled: paused, run: () => onCommand({ type: 'return' }) },
     manual: { label: 'Manual', disabled: paused || command === null, run: () => onCommand(null) },
   }
   return { actions, invalidAltitude: takeoff === null }

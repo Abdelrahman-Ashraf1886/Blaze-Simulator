@@ -18,6 +18,35 @@ fn gust(start_s: f64) -> Value {
 }
 
 #[test]
+fn dryden_requires_positive_mean_and_an_explicit_safe_integer_seed() {
+    let input = |mean, turbulence| json!({
+        "fromDeg": 0, "mean": mean, "gust": gust(0.0), "turbulence": turbulence,
+    });
+    let dryden = |seed| json!({"kind": "dryden", "seed": seed});
+    for mean in [Value::Null, constant(0.0)] {
+        assert!(matches!(Wind::from_json(&input(mean, dryden(json!(0)))), Err(WindError::TurbulenceNeedsMean)));
+    }
+    for config in [
+        json!({"kind": "dryden"}), dryden(json!(-1)), dryden(json!(0.5)), dryden(json!(MAX_SAFE_SEED + 1)),
+        json!({"kind": "dryden", "seed": 0, "extra": true}), json!({"kind": "other", "seed": 0}),
+    ] {
+        assert!(Wind::from_json(&input(constant(10.0), config)).is_err());
+    }
+    for mean in [constant(10.0), shear(json!({"kind": "categoryC"}))] {
+        for seed in [0, MAX_SAFE_SEED] {
+            let model = Wind::from_json(&input(mean.clone(), dryden(json!(seed)))).unwrap();
+            let params = model.turbulence_parameters(REFERENCE_HEIGHT_M).unwrap();
+            let state = model.turbulence_state().unwrap();
+            let [u, v, w] = state.velocity(params);
+            assert_eq!(model.turbulence_velocity(state, params), Vector::new(-u, -v, w));
+            assert_eq!(model.turbulence_state(), Some(DrydenState::new(seed)));
+        }
+    }
+    let omitted = wind(0.0, constant(10.0), gust(0.0));
+    assert_eq!(Wind::from_json(&input(constant(10.0), Value::Null)).unwrap(), omitted);
+}
+
+#[test]
 fn calm_is_exactly_zero() {
     for model in [Wind::calm(), Wind::from_json(&Value::Null).unwrap(), wind(90.0, constant(0.0), Value::Null)] {
         let velocity = model.velocity(-1.0, 2.0).unwrap();

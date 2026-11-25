@@ -78,6 +78,7 @@ pub enum FlightCommand {
     Takeoff { altitude_m: Option<f64> },
     Hold,
     Land,
+    Return,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -154,7 +155,7 @@ pub struct FlightModes {
     height_lock: Option<f64>,
     xy_lock: Option<Xy>,
     acceleration_xy: AccelerationXy,
-    smooth_z: SmoothZ,
+    smooth_z: VelocitySmoothing,
     previous: PositionSetpoint,
 }
 
@@ -182,7 +183,7 @@ impl FlightModes {
             height_lock: None,
             xy_lock: None,
             acceleration_xy: AccelerationXy::default(),
-            smooth_z: SmoothZ::default(),
+            smooth_z: VelocitySmoothing::default(),
             previous: PositionSetpoint::default(),
         })
     }
@@ -259,7 +260,7 @@ impl FlightModes {
             FlightCommand::Altitude(s) => (Mode::Altitude, s),
             FlightCommand::Position(s) if self.gains.mpc_pos_mode == 0.0 => (Mode::Velocity, s),
             FlightCommand::Position(s) => (Mode::Acceleration, s),
-            FlightCommand::Takeoff { .. } | FlightCommand::Hold | FlightCommand::Land => {
+            FlightCommand::Takeoff { .. } | FlightCommand::Hold | FlightCommand::Land | FlightCommand::Return => {
                 return Err("auto commands require the flight loop".into());
             }
         };
@@ -317,7 +318,7 @@ impl FlightModes {
                 slew: finite_xy(prev.acceleration).unwrap_or(Xy::ZERO),
                 ..Default::default()
             };
-            self.smooth_z = SmoothZ {
+            self.smooth_z = VelocitySmoothing {
                 x: finite_or(prev.position[2], s.position[2]),
                 v: finite_or(prev.velocity[2], s.velocity[2]),
                 a: finite_or(prev.acceleration[2], 0.0),
@@ -559,7 +560,7 @@ impl AccelerationXy {
 // locked position and trajectory velocity/acceleration to manual mode 4.
 // Durations are planned at the END of each sample for evaluation on the next.
 #[derive(Clone, Default, Debug)]
-pub(crate) struct SmoothZ {
+pub(crate) struct VelocitySmoothing {
     pub(crate) x: f64,
     pub(crate) v: f64,
     pub(crate) a: f64,
@@ -568,7 +569,7 @@ pub(crate) struct SmoothZ {
     durations: [f64; 3],
 }
 
-impl SmoothZ {
+impl VelocitySmoothing {
     // src/lib/motion_planning/ManualVelocitySmoothingZ.cpp:39-119 and
     // ManualVelocitySmoothingZ.hpp:75-94. World Z-up, so positive target is up.
     fn step(

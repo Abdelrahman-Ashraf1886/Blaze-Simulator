@@ -8,17 +8,20 @@ import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Quaternion, Vector3 } from 'three'
+import physics from '../../database/reference/physics.v1.json'
 import seed from '../../database/seed/components.v1.json'
 import type { Component } from '../../electron/ipc/component-fields'
 import type { AssemblyDocument, IpcResult, ObstacleDoc } from '../../electron/ipc/contract'
 import { STARTING_FRAME } from '../../electron/main/db/repositories'
 import {
   BUILTIN_SCENARIO_NAMES,
+  MAX_SESSION_STEPS,
   ScenarioReportSchema,
   ScenarioRunParamsSchema,
   ScenarioRunResultSchema,
   type Scenario,
   type ScenarioRunResult,
+  type FlightSessionStepParams,
 } from '../../electron/main/engine/protocol'
 import { dropTest, type EngineForDropTest } from '../../electron/main/engine/drop-test'
 import { flightStart, flightStartSchema, flightStep } from '../../electron/main/engine/flight-session'
@@ -486,6 +489,72 @@ describe('a real engine', () => {
     if (!landed.ok) throw new Error(landed.error.message)
     expect(landed.data.report.passed).toBe(true)
     recordAcceptance('GENTLE ' + JSON.stringify({ passed: landed.data.report.passed, flight: landed.data.report.flight }))
+  }, 20_000)
+
+  it('returns the catalogue quad from 30 m in 5 m/s wind and lands at home', async () => {
+    const { doc, geo, components } = catalogueAssembly()
+    // Same constant wind and contact surface as the 6.10 plane fixture above.
+    doc.flight = { ...conditions, wind: { kind: 'wind', fromDeg: 90, mean: { kind: 'constant', speedMps: 5 }, gust: null } }
+    doc.environment = { ground: { friction: 0.5, restitution: 0 }, obstacles: [] }
+    const gate = flightGate(enginePayload(doc, geo, components, {}), conditions)
+    if (!gate.ok) throw new Error(JSON.stringify(gate.blockers))
+    const started = await flightStart(sup, {
+      ...gate.input, controller: { mode: 'position', thrustModelFactor: thrustFactor(gate.thrustFit) },
+    })
+    if (!started.ok) throw new Error(started.error.message)
+    const { dtS, diagnostic } = started.data
+    const home = diagnostic.state.comM
+    let current = diagnostic
+    const advance = async (steps: number, setpoint: FlightSessionStepParams['setpoint']) => {
+      const result = await flightStep(sup, { steps, setpoint })
+      if (!result.ok) throw new Error(result.error.message)
+      expect(result.data.stepsRun).toBe(steps)
+      current = result.data.diagnostic
+    }
+    const value = (key: string) => {
+      for (const set of physics.sets) {
+        const entry = set.values.find((entry) => entry.key === key)
+        if (entry) return entry.value
+      }
+      throw new Error(`Missing reference for ${key}`)
+    }
+    const settlingS = 10 // flight_loop/tests.rs:307–316
+    const takeoffS = value('MPC_SPOOLUP_TIME') + value('MPC_TKO_RAMP_T') + settlingS
+    for (let left = Math.round(takeoffS / dtS); left > 0; left -= MAX_SESSION_STEPS) {
+      await advance(Math.min(left, MAX_SESSION_STEPS), { command: { type: 'takeoff' } })
+    }
+    expect(current.flightLoop).toMatchObject({ autoMode: 'hold', commandFinished: true })
+
+    const distance = () => Math.hypot(current.state.comM[0] - home[0], current.state.comM[1] - home[1])
+    const outM = 30
+    const xyLimit = value('MPC_XY_VEL_MAX')
+    for (let left = Math.round(settlingS / dtS); left > 0 && distance() < outM;) {
+      // Reduce the request size near 30 m so RTL starts within one plant step of the target.
+      const steps = Math.min(left, MAX_SESSION_STEPS, Math.max(1, Math.floor((outM - distance()) / (xyLimit * dtS))))
+      await advance(steps, { sticks: { forward: 1, right: 0, yawRight: 0, throttle: 0 } })
+      left -= steps
+    }
+    expect(distance()).toBeGreaterThanOrEqual(outM)
+    expect(distance()).toBeLessThanOrEqual(outM + xyLimit * dtS)
+
+    const states = new Set<string>()
+    const returnAlt = value('RTL_RETURN_ALT')
+    const returnS = returnAlt / value('MPC_Z_V_AUTO_UP') + outM / value('MPC_XY_CRUISE')
+      + returnAlt / value('MPC_LAND_SPEED') + 3 * settlingS
+    for (let left = Math.ceil(returnS / dtS); left > 0; left -= MAX_SESSION_STEPS) {
+      await advance(Math.min(left, MAX_SESSION_STEPS), { command: { type: 'return' } })
+      const state = current.flightLoop?.returnState
+      if (!state) throw new Error('Return diagnostic missing')
+      states.add(state)
+      if (current.flightLoop?.commandFinished) break
+    }
+    expect([...states]).toEqual(['climb', 'return', 'land', 'landed'])
+    expect(current.flightLoop).toMatchObject({ autoMode: 'return', commandFinished: true, landState: { landed: true } })
+    const errorM = [distance(), Math.abs(current.state.comM[2] - home[2])]
+    recordAcceptance(`RETURN landing errors [XY, Z] m: ${errorM}`)
+    // Acceptance limits fixed before running, from flight_loop/tests.rs:303–306.
+    expect(errorM[0], `landing errors [XY, Z] m: ${errorM}`).toBeLessThan(0.01)
+    expect(errorM[1], `landing errors [XY, Z] m: ${errorM}`).toBeLessThanOrEqual(1.2e-4)
   }, 20_000)
 
   it('refuses FlightLoop built-ins with missing project inputs', async () => {

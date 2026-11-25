@@ -12,7 +12,10 @@ const seedText = readFileSync(seedPath, 'utf8')
 const seed = JSON.parse(seedText) as { components: (Omit<Component, 'origin'> & { id: string })[] }
 
 /** Manufacturer domains the built-in data may cite. */
-const ALLOWED_HOSTS = ['docs.holybro.com', 'holybro.com', 'store.tmotor.com', 'www.apcprop.com', 'genstattu.com']
+const ALLOWED_HOSTS = [
+  'docs.holybro.com', 'holybro.com', 'store.tmotor.com', 'www.apcprop.com', 'genstattu.com',
+  'invensense.tdk.com', 'www.te.com', // Pixhawk 6C IMU and barometer makers
+]
 
 let repos: ReturnType<typeof createRepositories>
 beforeEach(() => {
@@ -91,6 +94,36 @@ describe('built-in components', () => {
   it('has stable, unique ids', () => {
     const ids = seed.components.map((c) => c.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('adds the new sensor specifications to a version 4 library and preserves user gap-fills', () => {
+    const previous = JSON.parse(seedText) as typeof seed & { seedVersion: number }
+    previous.seedVersion = 4
+    const addedFields = {
+      'Pixhawk 6C': ['imuName', 'gyroNoiseDensity', 'accelNoiseDensity', 'baroRmsNoise'],
+      'M10 GPS': ['gpsHorizontalCep'],
+      'M9N GPS': ['gpsHorizontalCep'],
+    }
+    const changed = Object.entries(addedFields).map(([name, keys]) => {
+      const part = previous.components.find((c) => c.name === name)!
+      for (const key of keys) delete part.specs[key]
+      return { id: part.id, keys }
+    })
+
+    loadBuiltIns(repos, JSON.stringify(previous))
+    const gps = previous.components.find((c) => c.name === 'M10 GPS')!
+    const fill = { value: 2.5, unit: 'm', source: 'measured' } as const
+    repos.components.setFill(gps.id, 'gpsHorizontalCep', fill)
+    const before = new Map(repos.components.list().map((c) => [c.id, c.revision]))
+    expect(loadBuiltIns(repos)).toEqual({ added: 0, updated: 3, unchanged: seed.components.length - 3 })
+    for (const { id, keys } of changed) {
+      const part = repos.components.get(id)
+      const source = seed.components.find((c) => c.id === id)!
+      expect(part.revision).toBe(before.get(id)! + 1)
+      for (const key of keys) expect(part.specs[key]).toEqual(source.specs[key])
+    }
+    expect(repos.components.get(gps.id).fills?.gpsHorizontalCep).toEqual(fill)
+    expect(loadBuiltIns(repos)).toEqual({ added: 0, updated: 0, unchanged: seed.components.length })
   })
 
   it('a corrected seed updates the built-in in place; user copies and same-id user records are left alone', () => {

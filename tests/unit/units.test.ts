@@ -28,6 +28,20 @@ describe('units', () => {
     expect(toSI(0.311, 'hp')).toBeCloseTo(231.623, 0)
   })
 
+  it('converts sensor units with the exact scale factors and distinct dimensions', () => {
+    expect(convert(2.8, 'mdps/√Hz', 'deg/s/√Hz')).toBeCloseTo(0.0028, 14)
+    expect(toSI(180_000, 'mdps/√Hz')).toBeCloseTo(Math.PI, 14)
+    expect(toSI(70, 'µg/√Hz')).toBeCloseTo(0.0006864655, 14)
+    expect(convert(1, 'g₀', 'm/s²')).toBe(9.80665)
+    expect(toSI(1, 'g')).toBe(0.001)
+    expect(convert(0.012, 'mbar', 'Pa')).toBeCloseTo(1.2, 14)
+    expect(toSI(1, 'Hz')).toBe(1)
+    expect(() => convert(1, 'g', 'g₀')).toThrow()
+    expect(() => convert(1, 'deg/s', 'deg/s/√Hz')).toThrow()
+    expect(() => convert(1, 'm/s²', 'm/s²/√Hz')).toThrow()
+    expect(() => convert(1, 'Hz', 's')).toThrow()
+  })
+
   it('C rating times capacity gives current: 1300 mAh at 100 C is 130 A', () => {
     expect(toSI(100, 'C') * toSI(1300, 'mAh')).toBeCloseTo(130, 9)
   })

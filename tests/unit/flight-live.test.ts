@@ -279,6 +279,7 @@ describe('EngineFlightSource', () => {
     // Deliberately shorten and reorder the columns to catch any reconstruction in the renderer.
     const channels = ['time', 'sensor.gyro.x', 'pack.voltage']
     const buffer = createLiveBuffer(RECORD_EVERY_STEPS * 0.001, 2)
+    const read = buffer.createReader(['pack.voltage', 'sensor.gyro.x'])
     let open = false
     const row = [0.004, 0.25, 12]
     const h = harness((input) => ok({
@@ -290,14 +291,11 @@ describe('EngineFlightSource', () => {
     await h.frame(RECORD_EVERY_STEPS)
     const closed = h.api.flightStep.mock.calls[0]![0]
     expect(closed).not.toHaveProperty('live')
-    expect(buffer.read(['pack.voltage'], 0)).toEqual([])
+    expect(read().map((column) => Array.from(column))).toEqual([[], [], []])
     open = true
     await h.frame(RECORD_EVERY_STEPS)
     expect(h.api.flightStep.mock.calls[1]![0]).toEqual({ ...closed, live: true })
-    expect(buffer.read(['pack.voltage', 'sensor.gyro.x'], 0)).toEqual([
-      { channel: 'pack.voltage', points: [{ timeS: 0.004, value: 12 }] },
-      { channel: 'sensor.gyro.x', points: [{ timeS: 0.004, value: 0.25 }] },
-    ])
+    expect(read().map((column) => Array.from(column))).toEqual([[0.004], [12], [0.25]])
     open = false
     await h.frame(RECORD_EVERY_STEPS)
     expect(JSON.stringify(h.api.flightStep.mock.calls[2]![0])).toBe(JSON.stringify(closed))

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { telemetryChannels } from '../../domain/telemetry-channels'
-import { createGraphCursor, TelemetryGraph, type LiveGraphSource } from './TelemetryGraph'
+import { createGraphCursor, TelemetryGraph } from './TelemetryGraph'
+import type { LiveGraphSource } from './use-live-telemetry'
 
 // A display choice: long enough to see a manoeuvre and its recovery in one view.
 export const LIVE_WINDOW_S = 10

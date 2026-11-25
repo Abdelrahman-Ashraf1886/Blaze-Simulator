@@ -9,6 +9,11 @@ import { percentile, summarizeFlightTiming, type TimingCapture } from '../../src
 import { STANDARD_AXES } from '../../src/features/input/calibration'
 import { buildQuad, commit, launchApp, openFlight, savePadCalibration, setPad } from './helpers'
 
+const mode = process.env.BLAZE_FLIGHT_PERF_MODE ?? 'full'
+if (mode !== 'full' && mode !== 'record' && mode !== 'plain') {
+  throw new Error(`Unknown BLAZE_FLIGHT_PERF_MODE ${JSON.stringify(mode)}. Expected full, record, or plain.`)
+}
+
 test.use({ trace: 'off' })
 test.skip(process.env.BLAZE_FLIGHT_PERF !== '1', 'Set BLAZE_FLIGHT_PERF=1 to measure the built application')
 
@@ -216,8 +221,9 @@ for (const scenario of cases) {
     let app: ElectronApplication | undefined
     let status = 'invalid'
     let detail: string | undefined
+    const judged = mode === 'full' && scenario.judged
     const report: Record<string, unknown> = {
-      case: scenario.name, judged: scenario.judged, durationMs, cpu: cpus()[0]?.model,
+      case: scenario.name, mode, judged, durationMs, cpu: cpus()[0]?.model,
       stickTestInputs: { flipCount, flipSeed },
     }
     try {
@@ -267,11 +273,8 @@ for (const scenario of cases) {
         // Raw standard Y is inverted by src/domain/input-mapping.ts:55–56.
         await page.evaluate((axis) => { (navigator.getGamepads()[0]!.axes as number[])[axis] = 1 }, STANDARD_AXES.throttle)
       }
-      // Phase 7 D18: judged with recording and the live graphs on. BLAZE_FLIGHT_PERF_PLAIN=1 turns both off for comparison.
-      const telemetry = process.env.BLAZE_FLIGHT_PERF_PLAIN !== '1'
-      report.recordingAndLiveGraphs = telemetry
-      await page.getByLabel('Record runs').setChecked(telemetry)
-      if (telemetry) await page.getByRole('button', { name: 'Show live graphs' }).click()
+      await page.getByLabel('Record runs').setChecked(mode !== 'plain')
+      if (mode === 'full') await page.getByRole('button', { name: 'Show live graphs' }).click()
       await focusWindow(app)
       await page.getByTestId('flight-start').click()
       await expect(page.getByTestId('flight-status')).toHaveText('Running')
@@ -289,7 +292,7 @@ for (const scenario of cases) {
         await expect(page.getByTestId('flight-auto-status')).toContainText('Hold · Finished', { timeout: 30_000 })
         await page.getByRole('button', { name: 'Manual', exact: true }).click()
       }
-      if (telemetry) await expect(page.getByRole('region', { name: 'Live telemetry' }).locator('canvas').first()).toBeVisible()
+      if (mode === 'full') await expect(page.getByRole('region', { name: 'Live telemetry' }).locator('canvas').first()).toBeVisible()
       await page.waitForTimeout(warmupMs)
       const before = await windowState(app)
       report.before = before
@@ -326,13 +329,13 @@ for (const scenario of cases) {
       await expect(page.getByTestId('flight-status')).toHaveText('Running')
 
       const within = (value: number | null, limit: number) => value !== null && value <= limit
-      const failures = [
+      const failures = mode === 'full' ? [
         !within(summary.frameIntervalMs.median, limits.frameMedianMs) && 'frame interval median',
         !within(summary.frameIntervalMs.p95, limits.frameP95Ms) && 'frame interval p95',
         !within(summary.stickToDrawMs.p95, limits.stickP95Ms) && 'stick-to-draw p95',
-      ].filter(Boolean)
-      report.exceededLimits = failures
-      status = !scenario.judged ? 'reported' : failures.length ? 'limit-failure' : 'pass'
+      ].filter(Boolean) : []
+      report.exceededLimits = mode === 'full' ? failures : null
+      status = !judged ? 'reported' : failures.length ? 'limit-failure' : 'pass'
       if (status === 'limit-failure') detail = `LIMIT ${failures.join(', ')}`
     } catch (error) {
       detail = `INVALID ${error instanceof Error ? error.message : String(error)}`

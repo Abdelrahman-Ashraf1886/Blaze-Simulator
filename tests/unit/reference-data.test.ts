@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { controllerParam } from '../../src/domain/controller-params'
 import { isUnit, toSI } from '../../src/domain/units'
 
 interface Entry {
@@ -27,7 +28,7 @@ const get = (id: string, key: string) => set(id).values.find((v) => v.key === ke
 // Source units without a conversion in src/domain/units.ts; limited to their cited parameters.
 const px4SourceUnits: Record<string, string> = {
   MPC_TILTMAX_AIR: 'deg', MPC_TILTMAX_LND: 'deg', MPC_MAN_TILT_MAX: 'deg',
-  MPC_VELD_LP: 'Hz', MPC_JERK_MAX: 'm/s^3', MPC_JERK_AUTO: 'm/s^3',
+  MPC_JERK_MAX: 'm/s^3', MPC_JERK_AUTO: 'm/s^3',
   HTE_HT_NOISE: 'normalized_thrust/s',
 }
 // MIL-F-8785C states its lengths in feet; src/domain/units.ts has no conversion for ft.
@@ -41,7 +42,7 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
     expect(ref.sets.map((s) => s.id)).toEqual([
       'isa', 'carbonFibrePlate', 'px4',
       'px4Position', 'px4Allocation', 'px4ThrustModel', 'px4HoverThrust',
-      'takeoffLandPx4', 'returnPx4', 'landDetectorConstantsPx4', 'windShear',
+      'takeoffLandPx4', 'returnPx4', 'landDetectorConstantsPx4', 'sensorFiltersPx4', 'windShear',
     ])
     for (const s of ref.sets) {
       const keys = s.values.map((v) => v.key)
@@ -81,13 +82,13 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
   })
 
   it('new PX4 sets cite v1.13.3 definition lines and respect every documented bound', () => {
-    const counts = { px4Position: 36, px4Allocation: 1, px4ThrustModel: 1, px4HoverThrust: 6, takeoffLandPx4: 10, returnPx4: 10 }
+    const counts = { px4Position: 36, px4Allocation: 1, px4ThrustModel: 1, px4HoverThrust: 6, takeoffLandPx4: 10, returnPx4: 10, sensorFiltersPx4: 9 }
     for (const [id, count] of Object.entries(counts)) {
       expect(set(id).values, id).toHaveLength(count)
       for (const v of set(id).values) {
         const where = `${id}.${v.key}`
         expect(v.source, where).toBe('software-default')
-        expect(v.key, where).toMatch(/^(MC|MPC|HTE|THR|LNDMC|MIS|RTL|NAV)_[A-Z0-9_]+$/)
+        expect(v.key, where).toMatch(/^(MC|MPC|HTE|THR|LNDMC|MIS|RTL|NAV|IMU|EKF2)_[A-Z0-9_]+$/)
         expect(v.reference?.url, where).toMatch(
           /^https:\/\/github\.com\/PX4\/PX4-Autopilot\/blob\/v1\.13\.3\/src\/.+\.c#L[1-9]\d*$/,
         )
@@ -130,6 +131,29 @@ describe('physics reference data (database/reference/physics.v1.json)', () => {
         expect(entry.condition, key).toContain(generic)
       }
     }
+  })
+
+  it('records the Phase 7 PX4 settings with their source bounds outside controller tuning', () => {
+    const id = 'sensorFiltersPx4'
+    const entries = [
+      ['IMU_GYRO_CUTOFF', 40, 0, 1000, 'Hz', 118],
+      ['IMU_DGYRO_CUTOFF', 30, 0, 1000, 'Hz', 160],
+      ['IMU_ACCEL_CUTOFF', 30, 0, 1000, 'Hz', 46],
+      ['IMU_GYRO_NF0_FRQ', 0, 0, 1000, 'Hz', 51],
+      ['IMU_GYRO_NF0_BW', 20, 0, 100, 'Hz', 66],
+      ['IMU_GYRO_NF1_FRQ', 0, 0, 1000, 'Hz', 85],
+      ['IMU_GYRO_NF1_BW', 20, 0, 100, 'Hz', 100],
+      ['IMU_GYRO_RATEMAX', 400, 100, 2000, 'Hz', 140],
+      ['EKF2_GPS_DELAY', 110, 0, 300, 'ms', 89],
+    ] as const
+    for (const [key, value, min, max, unit, line] of entries) {
+      const entry = get(id, key)
+      expect(entry).toMatchObject({ value, min, max, unit })
+      expect(entry.reference?.url).toMatch(new RegExp('#L' + line + '$'))
+      expect(controllerParam(key)).toBeUndefined()
+    }
+    expect(get(id, 'IMU_GYRO_RATEMAX').condition).toContain('800 Hz when the parameter is 400 Hz (rc.mc_defaults lines 13–16)')
+    expect(get(id, 'EKF2_GPS_DELAY').condition).toMatch(/^Suggestion only:/)
   })
 
   it('takeoffLandPx4 repeats no parameter of another set and leaves out the range-sensor and return parameters', () => {

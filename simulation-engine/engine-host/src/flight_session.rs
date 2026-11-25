@@ -8,8 +8,9 @@
 //! The engine never runs on its own clock, so a session is deterministic: any
 //! chunking of the same setpoint ends in the same state hash as one `sim.run`
 //! in controller mode of the same duration (rotors and battery included).
-use crate::engine::{controlled, loaded_vehicle, manual_flight, parse_environment, setpoint, step_manual};
+use crate::engine::{controlled, loaded_vehicle, manual_flight, parse_environment, setpoint, step_manual, step_manual_observed};
 use crate::flight_environment;
+use crate::telemetry::{ControllerKind, SampleEverySteps, Samples, Sampling};
 use crate::protocol::{present, ControllerRequest, ErrorCode, FlightLoopDiagnostic, FlightModeRequest, Response};
 use engine_core::aero::BodyDrag;
 use engine_core::auto_modes::ReturnParams;
@@ -36,6 +37,7 @@ pub struct Session {
     // next parse and therefore the replay hash. The line reader splits off LF.
     start_request: String,
     step_requests: Vec<String>,
+    sampling: Option<Sampling>,
 }
 
 enum SessionController {
@@ -81,6 +83,8 @@ struct StartParams {
     gains: Option<Map<String, Value>>,
     #[serde(default, deserialize_with = "present")]
     controller: Option<ManualControllerParams>,
+    #[serde(default, deserialize_with = "present")]
+    sample_every_steps: Option<SampleEverySteps>,
 }
 
 #[derive(Deserialize)]
@@ -297,17 +301,31 @@ pub fn start(
             Err(e) => return bad(e),
         }
     };
+    let sampling = p.sample_every_steps.map(|every| {
+        let kind = match &controller {
+            SessionController::Legacy(_) => ControllerKind::AttitudeHold,
+            SessionController::Manual { .. } => ControllerKind::FlightLoop,
+        };
+        Sampling::new(every, vehicle, propulsion, kind)
+    });
     let session = Session {
-        sim, controller, air_density_kg_m3: rho, start_request: line, step_requests: Vec::new(),
+        sim, controller, air_density_kg_m3: rho, start_request: line, step_requests: Vec::new(), sampling,
     };
-    let response = Response::ok(
-        id,
-        json!({
-            "dtS": DEFAULT_DT_S,
-            "maxStepsPerRequest": MAX_SESSION_STEPS,
-            "diagnostic": diagnostic(&session),
-        }),
-    );
+    let result = json!({
+        "dtS": DEFAULT_DT_S,
+        "maxStepsPerRequest": MAX_SESSION_STEPS,
+        "diagnostic": diagnostic(&session),
+    });
+    let response = if let Some(sampling) = &session.sampling {
+        let mut samples = Samples::default();
+        match &session.controller {
+            SessionController::Legacy(cl) => sampling.attitude(&mut samples, &session.sim, cl, None),
+            SessionController::Manual { loop_, .. } => sampling.flight_loop(&mut samples, &session.sim, loop_, None),
+        }
+        sampled_result(id, result, Some(sampling.channels()), samples)
+    } else {
+        Response::ok(id, result)
+    };
     *slot = Some(session);
     response
 }
@@ -357,8 +375,8 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
     // window [t0, t1) compares exactly: an event belongs to the steps run here when its
     // start or end time falls in it. A step that reaches the cut-off still advances the body.
     let first = session.sim.state().steps;
-    let mut ran = 0;
-    match &mut session.controller {
+    let mut samples = Samples::default();
+    let ran = match &mut session.controller {
         SessionController::Legacy(cl) => {
             if input.mode.is_some() {
                 return bad("setpoint.mode requires controller.mode at flight.session.start".into());
@@ -367,9 +385,18 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
                 Ok(s) => s,
                 Err(e) => return bad(format!("setpoint: {e}")),
             };
-            while ran < p.steps && cl.flight().ended().is_none() {
-                cl.step(&mut session.sim, &sp);
-                ran += 1;
+            if let Some(sampling) = &session.sampling {
+                advance(&mut session.sim, cl.as_mut(), p.steps, ClosedLoop::flight, |cl, sim| {
+                    let mut inputs = None;
+                    cl.step_observed(sim, &sp, |rates| inputs = Some((sp, rates)));
+                    sampling.attitude(&mut samples, sim, cl, inputs);
+                    Ok(())
+                })
+            } else {
+                advance(&mut session.sim, cl.as_mut(), p.steps, ClosedLoop::flight, |cl, sim| {
+                    cl.step(sim, &sp);
+                    Ok(())
+                })
             }
         }
         SessionController::Manual { loop_, mode } => {
@@ -381,16 +408,29 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
                     Err(e) => return bad(format!("setpoint: {e}")),
                 },
             };
-            while ran < p.steps && loop_.flight().ended().is_none() {
-                if let Err(e) = step_manual(loop_, &mut session.sim, command) {
-                    *slot = None;
-                    return bad(e);
-                }
-                ran += 1;
-            }
+            let ran = if let Some(sampling) = &session.sampling {
+                advance(&mut session.sim, loop_.as_mut(), p.steps, FlightLoop::flight, |loop_, sim| {
+                    let mut inputs = None;
+                    step_manual_observed(loop_, sim, command, |sp| inputs = Some((command, sp)))?;
+                    sampling.flight_loop(&mut samples, sim, loop_, inputs);
+                    Ok(())
+                })
+            } else {
+                advance(&mut session.sim, loop_.as_mut(), p.steps, FlightLoop::flight, |loop_, sim| {
+                    step_manual(loop_, sim, command)
+                })
+            };
             *mode = selected;
+            ran
         }
-    }
+    };
+    let ran = match ran {
+        Ok(ran) => ran,
+        Err(e) => {
+            *slot = None;
+            return bad(e);
+        }
+    };
     if !loads_are_finite(session.controller.flight().loads()) {
         *slot = None;
         return bad("flight session produced non-finite step loads".into());
@@ -401,17 +441,43 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
     let (all, contacts_dropped) = session.sim.contacts();
     let contacts: Vec<_> = all.into_iter().filter(|c| within(c.start_s) || c.end_s.is_some_and(within)).collect();
     let hash = session.sim.state_hash_with(&session.controller.hash_words());
-    Response::ok(
-        id,
-        json!({
-            "stepsRun": ran,
-            "diagnostic": diagnostic(session),
-            "contacts": contacts,
-            "contactsDropped": contacts_dropped,
-            "endReason": end_reason(session),
-            "stateHash": hash_hex(hash),
-        }),
-    )
+    let result = json!({
+        "stepsRun": ran,
+        "diagnostic": diagnostic(session),
+        "contacts": contacts,
+        "contactsDropped": contacts_dropped,
+        "endReason": end_reason(session),
+        "stateHash": hash_hex(hash),
+    });
+    if session.sampling.is_some() {
+        sampled_result(id, result, None, samples)
+    } else {
+        Response::ok(id, result)
+    }
+}
+
+fn sampled_result(id: u64, result: Value, channels: Option<&[String]>, samples: Samples) -> Response {
+    #[derive(Serialize)]
+    struct SampledResult<'a> {
+        #[serde(flatten)]
+        result: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        channels: Option<&'a [String]>,
+        samples: Samples,
+    }
+    Response::serialized_ok(id, SampledResult { result, channels, samples })
+}
+
+fn advance<C>(
+    sim: &mut Simulation, controller: &mut C, steps: u64, flight: impl Fn(&C) -> &Flight,
+    mut step: impl FnMut(&mut C, &mut Simulation) -> Result<(), String>,
+) -> Result<u64, String> {
+    let mut ran = 0;
+    while ran < steps && flight(controller).ended().is_none() {
+        step(controller, sim)?;
+        ran += 1;
+    }
+    Ok(ran)
 }
 
 pub fn log(id: u64, mut params: Map<String, Value>, session: Option<&Session>) -> Response {

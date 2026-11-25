@@ -83,10 +83,13 @@ band limited to f_s/2, the standard deviation is σ = N·√(f_s/2). Our assumpt
 band. Example, not a default: 2.8 mdps/√Hz (ICM-42688-P, TDK product page) gives 0.063 °/s at
 1 kHz.
 
-**Sensors in the catalogue.** Holybro's Pixhawk 6C has an ICM-42688-P and a BMI055, an IST8310
-magnetometer and an MS5611 barometer (PX4 user guide, `pixhawk6c.md` L52–55). Which of the two
-IMUs the rate loop uses is your choice. GPS: the catalogue's M10 and M9N. Datasheet values are
-read in 7.0, each with its page; a value not found is left empty and asked for.
+**Sensors in the catalogue.** [Holybro's technical specification](https://docs.holybro.com/autopilot/pixhawk-6c/technical-specification)
+lists an ICM-42688-P and a BMI088 for the Pixhawk 6C, with a DSK320X and a BMI423 on newer
+boards. The PX4 v1.13 guide (`pixhawk6c.md` L52–55) lists the discontinued BMI055 as the second
+IMU and identifies the IST8310 magnetometer and MS5611 barometer. Check which IMU your board
+has and choose which one the rate loop uses. The GPS parts in the catalogue are the M10 and
+M9N. Milestone 7.0 records each verified datasheet value with its source and asks for the
+remaining values.
 
 **Barometer** uses the ISA pressure already in `src/domain/atmosphere.ts` (moved to or mirrored
 in the engine with a shared fixture, as the propulsion model is). **GPS** position and velocity

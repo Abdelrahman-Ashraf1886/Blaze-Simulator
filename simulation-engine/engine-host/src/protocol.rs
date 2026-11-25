@@ -398,7 +398,7 @@ pub struct ErrorBody {
 #[serde(untagged)]
 pub enum Response {
     #[serde(skip)]
-    SessionLogLine(String),
+    SerializedLine(String),
     Ok { id: u64, ok: bool, result: Value },
     Err { id: Option<u64>, ok: bool, error: ErrorBody },
 }
@@ -424,12 +424,21 @@ impl Response {
             line.push_str(step);
         }
         line.push_str("]}}");
-        Self::SessionLogLine(line)
+        Self::SerializedLine(line)
+    }
+
+    /// Serialize large results in one pass without building a JSON value tree.
+    pub(crate) fn serialized_ok(id: u64, result: impl Serialize) -> Self {
+        #[derive(Serialize)]
+        struct OkEnvelope<T> { id: u64, ok: bool, result: T }
+        let line = serde_json::to_string(&OkEnvelope { id, ok: true, result })
+            .expect("result types always serialize");
+        Self::SerializedLine(line)
     }
 
     pub fn into_line(self) -> String {
         match self {
-            Self::SessionLogLine(line) => line,
+            Self::SerializedLine(line) => line,
             response => serde_json::to_string(&response).expect("responses always serialize"),
         }
     }

@@ -14,7 +14,12 @@ import type { Component } from '../../electron/ipc/component-fields'
 import type { AssemblyDocument, IpcResult, ObstacleDoc } from '../../electron/ipc/contract'
 import { STARTING_FRAME } from '../../electron/main/db/repositories'
 import {
+  BodyDragSchema,
   BUILTIN_SCENARIO_NAMES,
+  FlightSessionStartParamsSchema,
+  FlightSessionStepParamsSchema,
+  PropulsionDefinitionSchema,
+  VehicleDefinitionSchema,
   MAX_SESSION_STEPS,
   ScenarioReportSchema,
   ScenarioRunParamsSchema,
@@ -237,6 +242,9 @@ describe('the scenario.run request schema', () => {
       'a non-numeric offset': params({ scenario: { type: 'builtin', name: 'com_offset', offsetM: '2cm' } }),
       'an unknown scenario field': params({ scenario: { type: 'builtin', name: 'payload', mass: 1 } }),
       'no cut-off': params({ config: { airDensityKgM3: 1.225 } }),
+      ...Object.fromEntries([0, 0.5, -1, Number.MAX_SAFE_INTEGER + 1, null].map((sampleEverySteps) => [
+        `invalid sampleEverySteps ${sampleEverySteps}`, params({ config: { ...config, sampleEverySteps } }),
+      ])),
       'a zero cut-off': params({ config: { ...config, cutoff: { type: 'voltageV', value: 0 } } }),
       'an unknown cut-off type': params({ config: { ...config, cutoff: { type: 'capacity', value: 5 } } }),
       'no air density': params({ config: { cutoff: config.cutoff } }),
@@ -443,6 +451,83 @@ describe('a real engine', () => {
     // After the refusals the engine still flies.
     expect((await scenarioRun(sup, request({ scenario: { type: 'builtin', name: 'payload', massKg: 0.5 } }))).ok).toBe(true)
   }, 60000)
+
+  it('samples legacy and FlightLoop scenarios like live one-step runs, with unchanged reports and hashes', async () => {
+    expect(await sup.loadVehicle(
+      VehicleDefinitionSchema.parse(quad.vehicle),
+      { propulsion: PropulsionDefinitionSchema.parse(quad.propulsion), aero: BodyDragSchema.parse(quad.aero) },
+    )).toMatchObject({ valid: true })
+    const groundless = { ground: null, obstacles: [] }
+    const dtS = 0.001 // engine-core/src/sim.rs:28
+    // Switch the held input off the 4- and 10-step boundaries.
+    const firstSteps = MAX_SESSION_STEPS - 1
+    const durationS = MAX_SESSION_STEPS * dtS
+    const transition = firstSteps * dtS
+    const base = { name: holdLevel.name, durationS, modifications: [], script: [], checks: [] }
+    const level = [0, 0, 0, 1] as const
+    const sticks = { forward: 0, right: 0, yawRight: 0, throttle: 0 }
+    const cases = [
+      {
+        scenario: {
+          ...base,
+          script: [
+            { fromS: 0, attitude: { type: 'quaternion', xyzw: level }, yawRateRadps: 0, zM: null, zVelocityMps: 0 },
+            { fromS: transition, attitude: { type: 'quaternion', xyzw: level }, yawRateRadps: 0, zM: A, zVelocityMps: 0 },
+          ],
+        },
+        controller: undefined,
+        setpoints: [{}, { altitudeM: A }],
+      },
+      {
+        scenario: {
+          ...base,
+          flightScript: [
+            { fromS: 0, command: { type: 'position', ...sticks } },
+            { fromS: transition, command: { type: 'hold' } },
+          ],
+        },
+        controller: { mode: 'position' },
+        setpoints: [{ sticks }, { command: { type: 'hold' } }],
+      },
+    ]
+    for (const { scenario, controller, setpoints } of cases) {
+      const params = ScenarioRunParamsSchema.parse({ scenario: { type: 'custom', scenario }, config })
+      const initial = await sup.startFlightSession(FlightSessionStartParamsSchema.parse({
+        ...params.config, environment: groundless, controller, sampleEverySteps: 1,
+      }))
+      expect(initial.samples?.steps).toEqual([0])
+      const rows = [...initial.samples!.rows]
+      const diagnosticRows = []
+      for (let i = 0; i < MAX_SESSION_STEPS; i++) {
+        const result = await sup.stepFlightSession(FlightSessionStepParamsSchema.parse({
+          steps: 1, setpoint: setpoints[i < firstSteps ? 0 : 1],
+        }))
+        rows.push(...result.samples!.rows)
+        if (result.diagnostic.control) {
+          diagnosticRows.push(result.diagnostic.control)
+        }
+      }
+
+      const unsampled = await sup.runScenario(params)
+      expect(unsampled.channels).toBeUndefined()
+      expect(unsampled.samples).toBeUndefined()
+      for (const sampleEverySteps of [1, 4, 10]) {
+        const recorded = await sup.runScenario({ ...params, config: { ...params.config, sampleEverySteps } })
+        expect(recorded.report).toEqual(unsampled.report)
+        expect(recorded.stateHash).toBe(unsampled.stateHash)
+        expect(recorded.channels).toEqual(initial.channels)
+        const steps = rows.map((_, i) => i).filter((i) => i % sampleEverySteps === 0)
+        expect(recorded.samples).toEqual({ steps, rows: steps.map((i) => rows[i]) })
+      }
+      if (!controller) {
+        const channel = (name: string) => initial.channels!.indexOf(name)
+        expect(rows.slice(1).map((row) => row[channel('setpoint.collectiveThrust')]))
+          .toEqual(diagnosticRows.map((diagnostic) => diagnostic.collectiveThrust))
+        expect(rows.slice(1).map((row) => row[channel('controller.rateIntegral.z')]))
+          .toEqual(diagnosticRows.map((diagnostic) => diagnostic.rateIntegral[2]))
+      }
+    }
+  }, 15000)
 
   it('runs the four FlightLoop acceptance scripts on the catalogue build', async () => {
     const { doc, geo, components } = catalogueAssembly()

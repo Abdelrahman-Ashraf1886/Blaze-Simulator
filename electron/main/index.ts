@@ -3,7 +3,8 @@ import { existsSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
-import { createHandlers, createTerrainHandlers, importTerrain } from '../ipc/handlers'
+import { createHandlers, createRecordingHandlers, createTerrainHandlers, importTerrain } from '../ipc/handlers'
+import { RecordingStore } from './telemetry/store'
 import { backfillHullsAsync, importAssetFileAsync, removeAssetFiles, resolveAssetUrl } from './assets/store'
 import { shutdownHullWorkers } from './assets/hull-async'
 import { safeFileName, savePngSchema } from './screenshot'
@@ -178,7 +179,7 @@ function buildMenu(): void {
   )
 }
 
-function start(): void {
+async function start(): Promise<void> {
   app.setAppUserModelId(APP_ID)
   nativeTheme.themeSource = 'dark' // dark title bar, menus and native controls on Windows
   applyContentSecurityPolicy()
@@ -195,7 +196,15 @@ function start(): void {
     app.exit(1)
     return
   }
-  const repos = createRepositories(db)
+  const recordingsDir = join(app.getPath('userData'), 'recordings')
+  const repos = createRepositories(db, undefined, recordingsDir)
+  const recordings = new RecordingStore(recordingsDir, repos.runs)
+  try {
+    const orphans = await recordings.recover()
+    for (const name of orphans) console.warn('[recordings] recording file has no run row', name)
+  } catch (error) {
+    console.error('[recordings] startup recovery failed', error)
+  }
 
   try {
     const s = loadBuiltIns(repos)
@@ -319,7 +328,7 @@ function start(): void {
       platform: `${process.platform}-${process.arch}`,
     },
   }))
-  for (const [channel, handler] of Object.entries({ ...handlers, ...createTerrainHandlers(repos, assetsDir) })) {
+  for (const [channel, handler] of Object.entries({ ...handlers, ...createTerrainHandlers(repos, assetsDir), ...createRecordingHandlers(recordings) })) {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload))
   }
   // Same validation and storage as the async save; used only while a window unloads.

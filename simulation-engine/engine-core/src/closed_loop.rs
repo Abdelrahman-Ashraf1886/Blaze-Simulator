@@ -19,7 +19,7 @@
 use crate::controller::{Controller, ControllerInput, Gains, Saturation, Setpoint};
 use crate::flight::Flight;
 use crate::flight_loop::HoverSampling;
-use crate::hover_thrust::HoverThrustParams;
+use crate::hover_thrust::{HoverThrustEstimate, HoverThrustParams};
 use crate::sim::Simulation;
 use crate::thrust_model::MotorOutput;
 use crate::vehicle::Vehicle;
@@ -110,6 +110,12 @@ impl ClosedLoop {
 
     /// One fixed step. After the flight's battery cut-off was reached nothing steps.
     pub fn step(&mut self, sim: &mut Simulation, sp: &Setpoint) {
+        self.step_observed(sim, sp, |_| {});
+    }
+
+    pub fn step_observed(
+        &mut self, sim: &mut Simulation, sp: &Setpoint, observe: impl FnOnce([f64; 3]),
+    ) {
         if self.flight.ended().is_some() {
             return;
         }
@@ -128,9 +134,19 @@ impl ClosedLoop {
         self.torque_demand = out.torque_demand;
         self.saturation = out.saturation;
         let vertical_thrust = out.vertical_thrust;
+        let rates = out.rate_setpoint;
         self.flight.step(sim, self.motor_output.signals(out.motor_commands));
         self.hover.after_step(sim, est.z_velocity, vertical_thrust, sim.touching_ground(), &mut self.controller.position)
             .expect("valid hover estimate from the shared estimator");
+        observe(rates);
+    }
+
+    pub fn hover_thrust_estimate(&self) -> HoverThrustEstimate {
+        self.hover.estimate()
+    }
+
+    pub fn vertical_velocity_integral(&self) -> f64 {
+        self.controller.position.velocity_integral()[2]
     }
 
     /// The last step: torque demand, integrators, collective and saturation.

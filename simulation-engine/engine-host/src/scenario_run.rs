@@ -17,19 +17,20 @@
 use crate::engine::{closed_loop_gains, loaded_vehicle, manual_flight_with_gains};
 use crate::flight_environment;
 use crate::protocol::{present, ErrorCode, Response};
+use crate::telemetry::{ControllerKind, SampleEverySteps, Samples, Sampling};
 use engine_core::aero::BodyDrag;
 use engine_core::environment::Environment;
 use engine_core::flight::{Cutoff, Flight, ScaleToAirDensityError};
 use engine_core::propulsion::Propulsion;
 use engine_core::scenario::{
     balanced_hover, com_offset, com_offset_beyond_authority, modified_vehicle, overweight_payload, payload, run_with_flight_config, Ground, Scenario,
-    position_hold_scenario, run_flight_script, takeoff_hold_land_scenario, FlightAcceptance,
+    position_hold_scenario, run_flight_script, run_flight_script_observed, run_observed, takeoff_hold_land_scenario, FlightAcceptance,
     ScenarioConfig, ScenarioReport, SETTLE_S,
 };
 use engine_core::sim::{SimConfig, Simulation};
 use engine_core::vehicle::Vehicle;
 use engine_core::wind::Wind;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 /// Longest scenario, s of simulated time: 60 000 steps of 1 ms. Free-space steps cost
@@ -105,6 +106,8 @@ struct ConfigRequest {
     start_position_m: Option<[f64; 3]>,
     #[serde(default, deserialize_with = "present")]
     start_clearance_m: Option<f64>,
+    #[serde(default, deserialize_with = "present")]
+    sample_every_steps: Option<SampleEverySteps>,
 }
 
 #[derive(Deserialize)]
@@ -175,8 +178,11 @@ pub fn handle(
     match flight_script(&p.scenario) {
         Ok(Some((scenario, builtin))) => {
             let context = FlightRun { vehicle, propulsion, aero, rho };
-            return match context.run(&p.config, cutoff, flight, &scenario, builtin) {
-                Ok(report) => result(id, &scenario, &report),
+            let mut samples = Samples::default();
+            let sampling = p.config.sample_every_steps.map(|every| Sampling::new(every, vehicle, propulsion, ControllerKind::FlightLoop));
+            let observer = sampling.as_ref().map(|sampling| (sampling, &mut samples));
+            return match context.run(&p.config, cutoff, flight, &scenario, builtin, observer) {
+                Ok(report) => result(id, &scenario, &report, sampling.as_ref(), samples),
                 Err(e) => invalid_scenario(e),
             };
         }
@@ -227,15 +233,39 @@ pub fn handle(
             Err(e) => return bad(format!("config.{e}")),
         }
     }
-    match run_with_flight_config(vehicle, propulsion.clone(), aero, &config, &scenario, |flight| {
+    let configure = |flight: &mut Flight| {
         flight_environment::configure(flight, p.config.wind.as_ref(), p.config.ground_effect.as_ref(), "config.")
-    }) {
-        Ok(report) => result(id, &scenario, &report),
+    };
+    let mut samples = Samples::default();
+    let sampling = p.config.sample_every_steps.map(|every| Sampling::new(every, vehicle, propulsion, ControllerKind::AttitudeHold));
+    let report = if let Some(sampling) = &sampling {
+        run_observed(vehicle, propulsion.clone(), aero, &config, &scenario, configure, |sim, cl, input| {
+            sampling.attitude(&mut samples, sim, cl, input);
+        })
+    } else {
+        run_with_flight_config(vehicle, propulsion.clone(), aero, &config, &scenario, configure)
+    };
+    match report {
+        Ok(report) => result(id, &scenario, &report, sampling.as_ref(), samples),
         Err(e) => bad(e),
     }
 }
 
-fn result(id: u64, scenario: &Scenario, report: &ScenarioReport) -> Response {
+fn result(id: u64, scenario: &Scenario, report: &ScenarioReport, sampling: Option<&Sampling>, samples: Samples) -> Response {
+    if let Some(sampling) = sampling {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct SampledResult<'a> {
+            scenario: &'a Scenario,
+            report: &'a ScenarioReport,
+            state_hash: &'a str,
+            channels: &'a [String],
+            samples: Samples,
+        }
+        return Response::serialized_ok(id, SampledResult {
+            scenario, report, state_hash: &report.final_state_hash, channels: sampling.channels(), samples,
+        });
+    }
     Response::ok(id, json!({
         "scenario": scenario, "report": report, "stateHash": report.final_state_hash,
     }))
@@ -277,7 +307,7 @@ const NEEDS_PLANE: &str = "Enter the ground plane's friction and restitution in 
 impl FlightRun<'_> {
     fn run(
         self, config: &ConfigRequest, cutoff: Cutoff, mut flight: Flight,
-        scenario: &Scenario, builtin: Option<Builtin>,
+        scenario: &Scenario, builtin: Option<Builtin>, observer: Option<(&Sampling, &mut Samples)>,
     ) -> Result<ScenarioReport, String> {
         let FlightRun { vehicle, propulsion, aero, rho } = self;
         let plant = modified_vehicle(vehicle, scenario)?;
@@ -325,8 +355,15 @@ impl FlightRun<'_> {
             let land_speed_mps = gains.parameters()["MPC_LAND_SPEED"].as_f64().ok_or("MPC_LAND_SPEED is unavailable")?;
             acceptance = FlightAcceptance::TakeoffLand { land_speed_mps };
         }
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_flight_script(&mut sim, &mut controller, scenario, acceptance)))
-            .unwrap_or_else(|_| Err("FlightLoop failed while stepping the scenario".into()))
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some((sampling, samples)) = observer {
+                run_flight_script_observed(&mut sim, &mut controller, scenario, acceptance, |sim, loop_, input| {
+                    sampling.flight_loop(samples, sim, loop_, input);
+                })
+            } else {
+                run_flight_script(&mut sim, &mut controller, scenario, acceptance)
+            }
+        })).unwrap_or_else(|_| Err("FlightLoop failed while stepping the scenario".into()))
     }
 
     fn simulation(

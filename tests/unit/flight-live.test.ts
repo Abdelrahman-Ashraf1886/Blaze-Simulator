@@ -19,6 +19,7 @@ import {
 } from '../../electron/main/engine/protocol'
 import { EngineSupervisor } from '../../electron/main/engine/supervisor'
 import type { ReadyItem } from '../../src/domain/propulsion'
+import { telemetryChannels } from '../../src/domain/telemetry-channels'
 import { simWind } from '../../src/domain/wind'
 import { EngineFlightSource, idleFrame, MAX_STEP_MS, stepsForElapsed, toEngineSetpoint, toFlightFrame } from '../../src/features/flight/EngineFlightSource'
 import { airDensityFor, conditionBlockers, EMPTY_CONDITIONS, enginePayload, flightGate, type EnginePayload, type FlightConditions } from '../../src/features/flight/readiness'
@@ -598,18 +599,21 @@ async function withProtocol(run: (engine: {
   request: (command: object) => Promise<ReturnType<typeof decodeResponse>>
   result: (command: object) => Promise<unknown>
   lineBytes: (command: object) => number
+  replyBytes: () => number
 }) => Promise<void>) {
   const child = spawn(binaryPath, { stdio: ['pipe', 'pipe', 'ignore'] })
   await once(child, 'spawn')
   const closed = once(child, 'close')
   const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]()
   let nextId = 0
+  let lastReplyBytes = 0
   const line = (id: number, command: object) => JSON.stringify({ ...command, id }) + '\n'
   const request = async (command: object) => {
     const id = nextId++
     child.stdin.write(line(id, command))
     const reply = await replies.next()
     if (reply.done) throw new Error('The engine closed stdout before replying')
+    lastReplyBytes = Buffer.byteLength(reply.value) + 1 // The sidecar writes LF.
     const response = decodeResponse(reply.value)
     expect(response.id).toBe(id)
     return response
@@ -620,7 +624,7 @@ async function withProtocol(run: (engine: {
     return response.result
   }
   try {
-    await run({ request, result, lineBytes: (command) => Buffer.byteLength(line(nextId, command)) })
+    await run({ request, result, lineBytes: (command) => Buffer.byteLength(line(nextId, command)), replyBytes: () => lastReplyBytes })
     await result({ type: 'shutdown' })
   } finally {
     child.stdin.end()
@@ -662,6 +666,199 @@ describe('6.5 on the real NDJSON engine', () => {
   })
   const getLog = FlightSessionLogRequestSchema.parse({ type: 'flight.session.log' })
   const rates = { mode: 'rates', bodyRadps: v3(0, 0, 0), collective: 0.5 } as const
+
+  it('samples the same steps and diagnostics across chunking, sampling rates and replay', async () => withProtocol(async ({ result, request }) => {
+    await result(load)
+    const initial = { ...baseStart, wind: { ...wind, turbulence: { kind: 'dryden', seed: 0 } }, groundEffect }
+    const sticks = { forward: Math.sin(2), right: Math.cos(2), yawRight: 0.1, throttle: -1 }
+    for (const sampleEverySteps of [0, 0.5, -1, Number.MAX_SAFE_INTEGER + 1, null]) {
+      expect(await request({ type: 'scenario.run', scenario: { type: 'builtin', name: 'balanced_hover' }, config: {
+        airDensityKgM3, cutoff, sampleEverySteps,
+      } })).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
+    }
+    const commands = [
+      step(MAX_SESSION_STEPS - 1, rates),
+      step(MAX_SESSION_STEPS, { mode: 'altitude', sticks }),
+      step(MAX_SESSION_STEPS, { command: { type: 'return' } }),
+    ]
+    for (const sampleEverySteps of [0, 0.5, -1, Number.MAX_SAFE_INTEGER + 1, null]) {
+      expect(FlightSessionStartParamsSchema.safeParse({ ...initial, sampleEverySteps }).success).toBe(false)
+      expect(await request({ type: 'flight.session.start', ...initial, sampleEverySteps }))
+        .toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
+    }
+
+    const fly = async (chunk: number, sampleEverySteps?: number) => {
+      const started = FlightSessionStartResultSchema.parse(await result(start({ ...initial, sampleEverySteps })))
+      const diagnostics = [started.diagnostic]
+      const steps = [...(started.samples?.steps ?? [])]
+      const rows = [...(started.samples?.rows ?? [])]
+      let hash = ''
+      for (const input of commands) {
+        for (let left = input.steps; left > 0; left -= chunk) {
+          const advanced = FlightSessionStepResultSchema.parse(await result({ ...input, steps: Math.min(chunk, left) }))
+          expect(advanced.stepsRun).toBe(Math.min(chunk, left))
+          expect(advanced.samples !== undefined).toBe(sampleEverySteps !== undefined)
+          expect(advanced.samples?.rows.every((row) => row.length === started.channels?.length) ?? true).toBe(true)
+          diagnostics.push(advanced.diagnostic)
+          steps.push(...(advanced.samples?.steps ?? []))
+          rows.push(...(advanced.samples?.rows ?? []))
+          hash = advanced.stateHash
+        }
+      }
+      return { channels: started.channels, diagnostics, steps, rows, hash }
+    }
+
+    const off = await fly(1)
+    expect(off.channels).toBeUndefined()
+    expect(off.steps).toEqual([])
+    const one = await fly(1, 1)
+    expect(one.diagnostics).toEqual(off.diagnostics)
+    expect(one.hash).toBe(off.hash)
+    const columns = telemetryChannels(quad.vehicle.motors.length, 'flightLoop')
+    expect(one.channels).toEqual(columns.map(({ name }) => name))
+    expect(one.steps).toEqual(off.diagnostics.map(({ state }) => state.steps))
+
+    const axis = ['x', 'y', 'z', 'w']
+    for (const [i, diagnostic] of off.diagnostics.entries()) {
+      const { state, motors, battery, loads, flightLoop } = diagnostic
+      const row = one.rows[i]!
+      const cell = (name: string) => row[columns.findIndex((column) => column.name === name)]
+      const vector = (name: string, values: readonly (number | null)[]) =>
+        expect(values.map((_, axisIndex) => cell(`${name}.${axis[axisIndex]}`)), name).toEqual(values)
+      const code = (name: string, value: string | null | undefined) => {
+        const column = columns.find((column) => column.name === name)
+        if (column?.kind !== 'enum') throw new Error(`Missing enum ${name}`)
+        expect(cell(name), name).toBe(value == null ? null : column.values.indexOf(value))
+      }
+      expect(cell('step')).toBe(state.steps)
+      expect(cell('time')).toBe(state.timeS)
+      vector('state.position', state.positionM)
+      vector('state.com', state.comM)
+      vector('state.quaternion', state.quaternion)
+      vector('state.velocity', state.linearVelocityMps)
+      vector('state.bodyRates', state.angularVelocityBodyRadps)
+      for (const [index, motor] of motors.entries()) {
+        const prefix = `motor.${index}`
+        const model = quad.propulsion.motors[index]!
+        const speed = motor.rpm * (2 * Math.PI / 60)
+        const ground = loads.groundEffectStatus[index]
+        expect(cell(`${prefix}.throttle`)).toBe(motor.throttle)
+        expect(cell(`${prefix}.speed`)).toBe(speed)
+        expect(cell(`${prefix}.thrust`)).toBe(motor.thrustN)
+        expect(cell(`${prefix}.dragTorque`)).toBe(motor.dragTorqueNm)
+        expect(cell(`${prefix}.current`)).toBeCloseTo(
+          (motor.throttle * battery.voltageV - speed / model.kvRadPerSV) / model.resistanceOhm, 12,
+        )
+        code(`${prefix}.groundEffectStatus`, ground?.type)
+        expect(cell(`${prefix}.groundEffectBelowTestedRange`)).toBe(ground?.type === 'applied' ? Number(ground.belowTestedRange) : null)
+        code(`${prefix}.groundEffectInvalidReason`, ground?.type === 'invalidInput' ? ground.reason : null)
+      }
+      expect(cell('pack.voltage')).toBe(battery.voltageV)
+      expect(cell('pack.current')).toBe(battery.currentA)
+      expect(cell('pack.chargeUsed')).toBe(battery.chargeUsedC)
+      vector('loads.thrust', loads.thrustBodyN)
+      vector('loads.drag', loads.dragBodyN)
+      vector('loads.armTorque', loads.armTorqueNm)
+      vector('loads.dragReactionTorque', loads.dragReactionTorqueNm)
+      vector('loads.spinUpReactionTorque', loads.spinUpReactionTorqueNm)
+      vector('loads.rotorGyroTorque', loads.rotorGyroTorqueNm)
+      vector('loads.totalTorque', loads.totalTorqueNm)
+      vector('loads.wind', loads.windComWorldMps)
+      vector('loads.turbulence', loads.turbulence?.velocityWorldMps ?? [null, null, null])
+      expect(cell('loads.turbulenceBelowRange')).toBe(loads.turbulence ? Number(loads.turbulence.belowRange) : null)
+      expect(cell('loads.turbulenceAboveRange')).toBe(loads.turbulence ? Number(loads.turbulence.aboveRange) : null)
+      expect(cell('loads.groundEffectAddedThrust')).toBe(loads.groundEffectAddedThrustN)
+      expect(cell('loads.windAboveRange')).toBe(Number(loads.windAboveRange))
+      expect(cell('loads.windInvalid')).toBe(Number(loads.windInvalid))
+      code('controller.mode', flightLoop?.mode)
+      code('controller.autoMode', flightLoop?.autoMode)
+      code('controller.takeoffState', flightLoop?.takeoffState)
+      code('controller.returnState', flightLoop?.returnState)
+      if (!flightLoop) continue
+      for (const [field, value] of Object.entries(flightLoop.landState ?? {})) {
+        expect(cell(`controller.land.${field}`)).toBe(Number(value))
+      }
+      vector('setpoint.position', flightLoop.positionSetpointM)
+      vector('setpoint.velocity', flightLoop.velocitySetpointMps)
+      vector('setpoint.acceleration', flightLoop.accelerationSetpointMps2)
+      vector('controller.velocityIntegral', flightLoop.velocityIntegral)
+      expect(cell('controller.hoverThrust')).toBe(flightLoop.hoverThrust.estimate)
+      expect(cell('controller.hoverThrustVariance')).toBe(flightLoop.hoverThrust.variance)
+      expect(cell('controller.hoverThrustValid')).toBe(Number(flightLoop.hoverThrust.valid))
+      for (const [sign, flags] of Object.entries(flightLoop.saturation)) {
+        for (const [demand, flag] of ['roll', 'pitch', 'yaw', 'collective'].map((name, j) => [name, flags[j]] as const)) {
+          expect(cell(`controller.saturation.${sign}.${demand}`)).toBe(Number(flag))
+        }
+      }
+      if (state.steps <= commands[0]!.steps) {
+        code('input.command', 'rates')
+        vector('input.rates', rates.bodyRadps)
+        vector('setpoint.rates', rates.bodyRadps)
+        expect(cell('input.collective')).toBe(rates.collective)
+        expect(cell('setpoint.collectiveThrust')).toBe(rates.collective)
+        expect(cell('input.stick.forward')).toBeNull()
+      } else if (state.steps <= commands[0]!.steps + commands[1]!.steps) {
+        code('input.command', 'altitude')
+        // Rust and JS can round the same decimal token differently. The engine's rows below compare exactly.
+        expect(cell('input.stick.forward')).toBeCloseTo(sticks.forward, 15)
+        expect(cell('input.stick.right')).toBeCloseTo(sticks.right, 15)
+        expect(cell('input.stick.yawRight')).toBeCloseTo(sticks.yawRight, 15)
+        expect(cell('input.stick.throttle')).toBe(sticks.throttle)
+      } else {
+        code('input.command', 'return')
+      }
+    }
+    const groundColumn = columns.findIndex(({ name }) => name === 'state.groundContact')
+    expect(one.rows.some((row) => row[groundColumn] === 1)).toBe(true)
+
+    for (const rate of [1, 4, 10]) {
+      const expected = one.steps.filter((i) => i % rate === 0)
+      for (const chunk of [1, 7, 17, MAX_SESSION_STEPS]) {
+        const actual = await fly(chunk, rate)
+        expect(actual.steps).toEqual(expected)
+        expect(actual.rows).toEqual(expected.map((i) => one.rows[i]))
+        expect(actual.hash).toBe(off.hash)
+      }
+    }
+
+    const log = FlightSessionLogResultSchema.parse(await result(getLog))
+    expect(log.start.sampleEverySteps).toBe(10)
+    const replay = FlightSessionStartResultSchema.parse(await result(log.start))
+    const replayed = [...replay.samples!.rows]
+    for (const input of log.steps) {
+      replayed.push(...FlightSessionStepResultSchema.parse(await result(input)).samples!.rows)
+    }
+    expect(replayed).toEqual(one.rows.filter((_, i) => i % 10 === 0))
+  }), 30000)
+
+  it('samples the step that reaches cut-off and sends empty arrays after it', async () => withProtocol(async ({ result }) => {
+    await result(load)
+    const initial = FlightSessionStartResultSchema.parse(await result(start({
+      ...baseStart, environment: free, sampleEverySteps: 1,
+      cutoff: { type: 'voltageV', value: quad.propulsion.battery.openCircuitVoltageV },
+    })))
+    expect(initial.samples?.steps).toEqual([0])
+    const stopped = FlightSessionStepResultSchema.parse(await result(step(MAX_SESSION_STEPS, rates)))
+    expect(stopped.stepsRun).toBe(1)
+    expect(stopped.endReason).toBe('voltageCutoff')
+    expect(stopped.samples?.steps).toEqual([1])
+    const ended = FlightSessionStepResultSchema.parse(await result(step(1, rates)))
+    expect(ended.stepsRun).toBe(0)
+    expect(ended.samples).toEqual({ steps: [], rows: [] })
+    expect(ended.stateHash).toBe(stopped.stateHash)
+  }))
+
+  it('prints the elapsed time and NDJSON bytes for 100 steps with and without samples', async () => withProtocol(async ({ result, request, replyBytes }) => {
+    await result(load)
+    for (const sampleEverySteps of [undefined, 1, 4]) {
+      await result(start({ ...baseStart, environment: free, sampleEverySteps }))
+      const began = performance.now()
+      const reply = await request(step(MAX_SESSION_STEPS, rates))
+      const elapsed = performance.now() - began
+      expect(reply.ok).toBe(true)
+      console.info(`100 steps, sampleEverySteps=${sampleEverySteps ?? 'off'}: ${elapsed.toFixed(2)} ms, ${replyBytes()} bytes (NDJSON including LF)`)
+    }
+  }))
 
   it('replays logged inputs, commands and mode changes at different chunk sizes', async () => withProtocol(async ({ result, request }) => {
     await result(load)

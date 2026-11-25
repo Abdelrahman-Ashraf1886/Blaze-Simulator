@@ -50,6 +50,16 @@ pub struct FlightLoopSnapshot {
     pub hover_thrust: HoverThrustEstimate,
 }
 
+/// Setpoints sent to the attitude, rate and thrust layers on the observed step.
+#[derive(Clone, Copy, Debug)]
+pub struct FlightSetpoints {
+    pub attitude: Option<Quat>,
+    pub rates: [f64; 3],
+    pub collective_thrust: f64,
+    /// World Z-up normalized thrust vector from the position controller.
+    pub thrust_world: Option<[f64; 3]>,
+}
+
 pub struct FlightLoop {
     flight: Flight,
     modes: FlightModes,
@@ -81,6 +91,10 @@ pub(crate) struct HoverSampling {
 }
 
 impl HoverSampling {
+    pub(crate) fn estimate(&self) -> HoverThrustEstimate {
+        self.estimator.estimate()
+    }
+
     pub(crate) fn new(hover: HoverThrustParams) -> Result<Self, String> {
         Ok(Self {
             estimator: HoverThrustEstimator::new(hover)?,
@@ -207,7 +221,11 @@ impl FlightLoop {
     }
 
     pub fn hover_thrust_estimate(&self) -> HoverThrustEstimate {
-        self.hover.estimator.estimate()
+        self.hover.estimate()
+    }
+
+    pub fn rate_integral(&self) -> [f64; 3] {
+        self.rate.integral()
     }
 
     pub fn last_step(&self) -> Option<FlightLoopSnapshot> {
@@ -282,6 +300,17 @@ impl FlightLoop {
         sim: &mut Simulation,
         command: FlightCommand,
         observe: impl FnOnce([f64; 3], Option<Quat>, &[f64], SaturationDiagnostic),
+    ) -> Result<(), String> {
+        self.step_observed(sim, command, |sp, signals, saturation| {
+            observe(sp.rates, sp.attitude, signals, saturation);
+        })
+    }
+
+    pub fn step_observed(
+        &mut self,
+        sim: &mut Simulation,
+        command: FlightCommand,
+        observe: impl FnOnce(FlightSetpoints, &[f64], SaturationDiagnostic),
     ) -> Result<(), String> {
         if self.flight.ended().is_some() {
             return Ok(());
@@ -359,11 +388,11 @@ impl FlightLoop {
                 .clamp(-TILT_SLEW_RAD_S * dt, TILT_SLEW_RAD_S * dt);
         }
         let mut setpoints = PositionSetpoint::default();
-        let (mode, rates, thrust, desired_attitude) = match sp {
+        let (mode, rates, thrust, desired_attitude, thrust_world) = match sp {
             ModeSetpoint::Rates {
                 body_radps,
                 collective,
-            } => (FlightMode::Rates, body_radps, collective, None),
+            } => (FlightMode::Rates, body_radps, collective, None, None),
             ModeSetpoint::Attitude {
                 attitude: desired,
                 yaw_rate,
@@ -373,6 +402,7 @@ impl FlightLoop {
                 attitude_rates(&self.gains, attitude, desired, yaw_rate),
                 collective,
                 Some(desired),
+                None,
             ),
             ModeSetpoint::Position(mut sp) => {
                 let mut position = self.position.clone();
@@ -419,6 +449,7 @@ impl FlightLoop {
                     attitude_rates(&self.gains, attitude, out.attitude, out.yaw_rate),
                     out.collective_thrust,
                     Some(out.attitude),
+                    Some(out.thrust),
                 )
             }
         };
@@ -515,7 +546,9 @@ impl FlightLoop {
             velocity_integral: self.position.velocity_integral(),
             hover_thrust: self.hover.estimator.estimate(),
         });
-        observe(rates, desired_attitude, signals, saturation);
+        observe(FlightSetpoints {
+            attitude: desired_attitude, rates, collective_thrust: thrust, thrust_world,
+        }, signals, saturation);
         Ok(())
     }
 }

@@ -2,7 +2,7 @@
 use super::{steps_for, Scenario, ScenarioEnd, ScenarioReport, G};
 use crate::{
     aero::{rotate, BodyDrag}, auto_modes::AutoMode, flight::EndReason,
-    flight_loop::{FlightLoop, FlightLoopSnapshot}, flight_modes::{FlightCommand, Sticks},
+    flight_loop::{FlightLoop, FlightLoopSnapshot, FlightSetpoints}, flight_modes::{FlightCommand, Sticks},
     math::Vec3, position_control::bodyz_to_attitude, sim::{hash_hex, Simulation},
     takeoff::{TakeoffParams, TakeoffState}, wind::Wind,
 };
@@ -193,6 +193,15 @@ pub fn run_flight_script(
     sim: &mut Simulation, controller: &mut FlightLoop, scenario: &Scenario,
     acceptance: FlightAcceptance,
 ) -> Result<ScenarioReport, String> {
+    run_flight_script_observed(sim, controller, scenario, acceptance, |_, _, _| {})
+}
+
+/// Observe the initial state, then each completed step with the applied command and setpoints.
+pub fn run_flight_script_observed(
+    sim: &mut Simulation, controller: &mut FlightLoop, scenario: &Scenario,
+    acceptance: FlightAcceptance,
+    mut observe: impl FnMut(&Simulation, &FlightLoop, Option<(FlightCommand, FlightSetpoints)>),
+) -> Result<ScenarioReport, String> {
     let n = controller.flight().motor_count();
     scenario.validate(n)?;
     let script = scenario.flight_script.as_ref().ok_or("FlightLoop requires flightScript")?;
@@ -212,6 +221,7 @@ pub fn run_flight_script(
     let mut ramp_end = None;
     let mut recovery = None;
     let mut wind_valid = true;
+    observe(sim, controller, None);
     for k in 0..steps_for(scenario.duration_s) {
         while segment + 1 < script.len() && boundaries[segment + 1] <= k { segment += 1; }
         let command = script[segment].command;
@@ -220,13 +230,15 @@ pub fn run_flight_script(
         }
         let before = sim.state();
         let touching_before = sim.touching_ground();
-        let mut target_attitude = None;
-        controller.step_with_commands(sim, command.into(), |_, target, _, _| { target_attitude = target; })?;
+        let input = command.into();
+        let mut inputs = None;
+        controller.step_observed(sim, input, |setpoints, _, _| inputs = Some((input, setpoints)))?;
+        observe(sim, controller, inputs);
         let state = sim.state();
         let snap = controller.last_step().ok_or("flight script produced no step")?;
         let flight = controller.flight();
         let displacement = Vector::from_array(state.com_m) - start;
-        if let Some(q) = target_attitude {
+        if let Some(q) = inputs.and_then(|(_, sp)| sp.attitude) {
             report.max_attitude_error_deg = report.max_attitude_error_deg.max(super::angle(super::normalize(state.quaternion), q));
         }
         report.saturated_fraction += u8::from(snap.saturation.positive.iter().chain(&snap.saturation.negative).any(|x| *x)) as f64;

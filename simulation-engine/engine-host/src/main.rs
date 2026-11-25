@@ -6,6 +6,7 @@ mod flight_environment;
 mod protocol;
 mod scenario_run;
 mod step_test_run;
+mod telemetry;
 
 use protocol::{parse_request, PROTOCOL_VERSION};
 use std::io::{self, BufRead, Write};

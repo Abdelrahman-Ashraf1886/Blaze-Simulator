@@ -397,6 +397,24 @@ export function isEngineResponse(v: unknown): v is EngineResponse {
 
 export const MAX_SESSION_STEPS = 100
 
+// Zod's int() limits JSON numbers to the safe integer range, as in engine-host/src/telemetry.rs.
+const sampleEverySteps = z.number().int().positive().optional()
+const telemetrySamples = z.strictObject({
+  steps: z.array(z.number().int().nonnegative()),
+  rows: z.array(z.array(z.number().nullable())),
+}).refine((samples) => samples.steps.length === samples.rows.length, 'one row per sampled step')
+
+const telemetryRecordingShape = {
+  channels: z.array(z.string()).optional(),
+  samples: telemetrySamples.optional(),
+}
+const telemetryColumnsMatch = ({ channels, samples }: {
+  channels?: string[]
+  samples?: z.infer<typeof telemetrySamples>
+}) => channels === undefined
+  ? samples === undefined
+  : samples !== undefined && samples.rows.every((row) => row.length === channels.length)
+
 export const FlightSessionStartParamsSchema = z.strictObject({
   environment: EnvironmentSchema,
   ...flightEnvironmentShape,
@@ -413,6 +431,7 @@ export const FlightSessionStartParamsSchema = z.strictObject({
   gains,
   /** Selects FlightLoop for the session, with the initial mode and fixed mixer settings. */
   controller: z.strictObject({ mode: flightMode, ...mixerShape }).optional(),
+  sampleEverySteps,
 })
 export type FlightSessionStartParams = z.infer<typeof FlightSessionStartParamsSchema>
 
@@ -503,7 +522,12 @@ export const FlightSessionStartResultSchema = z.strictObject({
   maxStepsPerRequest: z.number().int().positive(),
   /** The state before the first step. */
   diagnostic: FlightDiagnosticSchema,
-})
+  ...telemetryRecordingShape,
+}).refine(
+  (result) => telemetryColumnsMatch(result) &&
+    (result.samples === undefined || (result.samples.steps.length === 1 && result.samples.steps[0] === 0)),
+  'telemetry start includes channel names and one row at step zero',
+)
 export type FlightSessionStartResult = z.infer<typeof FlightSessionStartResultSchema>
 
 export const FlightSessionStepResultSchema = z.strictObject({
@@ -515,6 +539,7 @@ export const FlightSessionStepResultSchema = z.strictObject({
   contactsDropped: z.number().int().nonnegative(),
   endReason: cutoffReason.nullable(),
   stateHash: z.string().regex(/^[0-9a-f]{16}$/),
+  samples: telemetrySamples.optional(),
 })
 export type FlightSessionStepResult = z.infer<typeof FlightSessionStepResultSchema>
 
@@ -618,6 +643,7 @@ export const ScenarioConfigSchema = z.strictObject({
   /** With an environment: the body origin at the start, world frame. */
   startPositionM: vec3.optional(),
   startClearanceM: StartClearanceSchema.optional(),
+  sampleEverySteps,
 })
 export type ScenarioConfigParams = z.infer<typeof ScenarioConfigSchema>
 
@@ -679,7 +705,8 @@ export const ScenarioRunResultSchema = z.strictObject({
   report: ScenarioReportSchema,
   /** The report's `finalStateHash`. */
   stateHash: z.string().regex(/^[0-9a-f]{16}$/),
-})
+  ...telemetryRecordingShape,
+}).refine(telemetryColumnsMatch, 'telemetry rows match the declared channels')
 export type ScenarioRunResult = z.infer<typeof ScenarioRunResultSchema>
 
 // The free-space scenario bound and the engine's fixed step (sim.rs:28).

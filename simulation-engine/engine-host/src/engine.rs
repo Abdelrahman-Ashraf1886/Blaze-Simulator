@@ -614,7 +614,16 @@ pub(crate) fn manual_flight_with_gains(
 /// The caller drops the run/session on any failure, including non-finite demands
 /// rejected by the allocator's assertion (controller.rs, Allocator::allocate).
 pub(crate) fn step_manual(loop_: &mut FlightLoop, sim: &mut Simulation, command: FlightCommand) -> Result<(), String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loop_.step(sim, command)))
+    step_manual_observed(loop_, sim, command, |_| {})
+}
+
+pub(crate) fn step_manual_observed(
+    loop_: &mut FlightLoop, sim: &mut Simulation, command: FlightCommand,
+    observe: impl FnOnce(engine_core::flight_loop::FlightSetpoints),
+) -> Result<(), String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        loop_.step_observed(sim, command, |sp, _, _| observe(sp))
+    }))
         .unwrap_or_else(|failure| {
             let message = failure.downcast_ref::<&str>().copied()
                 .or_else(|| failure.downcast_ref::<String>().map(String::as_str))

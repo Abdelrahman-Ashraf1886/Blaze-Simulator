@@ -158,7 +158,7 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
         title={`${project.name} · Scenarios`}
         actions={
           <>
-            <Link className="text-[12.5px] text-accent" to={`/flight/${project.id}`}>Flight test</Link>
+            <Link className="text-[12.5px] text-accent" to={`/flight/${project.id}`}>Flight Simulator</Link>
             <Link className="text-[12.5px] text-accent" to={`/workshop/${project.id}`}>Workshop</Link>
             <Button size="sm" variant="primary" data-testid="scenario-run-all" disabled={busy || engineBlock !== null || !BUILTINS.some(canRun)} onClick={() => void runAll()}>
               Run all

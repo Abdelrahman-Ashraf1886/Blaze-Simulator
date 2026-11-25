@@ -148,7 +148,7 @@ function AnalysisView({ project, doc, a }: { project: Project; doc: AssemblyDocu
       <PageHeader title={`${project.name} · Engineering Analysis`} />
       <div className="mx-auto w-full max-w-[1600px] px-6 pb-10 pt-3">
         <p className="mb-4 text-[12px] leading-relaxed text-fg-subtle">
-          Read-only: every value is worked out from the saved build by the same calculations the workshop, the Electrical Designer and the flight test use. Hover a value for its source or formula.
+          Read-only: every value is worked out from the saved build by the same calculations the workshop, the Electrical Designer and the flight simulator use. Hover a value for its source or formula.
         </p>
         <div className="grid gap-x-10 gap-y-8 min-[1100px]:grid-cols-2">
           <MassSection a={a} follow={follow} />

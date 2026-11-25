@@ -85,7 +85,7 @@ export function DashboardPage() {
 
           <Section title="Simulation history" testId="simulation-history">
             {runs.length === 0 ? (
-              <EmptyState>No simulation runs yet. The Flight Simulator (Phase 6) records runs here.</EmptyState>
+              <EmptyState>No simulation runs yet. Recording flights comes with telemetry (Phase 7).</EmptyState>
             ) : (
               <Table>
                 <thead>

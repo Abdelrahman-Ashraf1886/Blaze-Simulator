@@ -1,7 +1,7 @@
 //! Recorded sensor models. The host advances them once after each plant step.
 use std::collections::VecDeque;
 
-use rapier3d_f64::{math::Vector, na::{ComplexField, Quaternion, UnitQuaternion}};
+use rapier3d_f64::{math::{Rotation, Vector}, na::ComplexField};
 
 use crate::{
     math::STANDARD_GRAVITY,
@@ -309,15 +309,15 @@ fn floats(word: &mut (impl FnMut(u64) + ?Sized), values: impl IntoIterator<Item 
 fn specific_force(before: SimState, after: SimState, mount: [f64; 3], config: SimConfig) -> [f64; 3] {
     let vec = Vector::from_array;
     let [x, y, z, w] = after.quaternion;
-    let attitude = UnitQuaternion::new_unchecked(Quaternion::new(w, x, y, z));
-    let offset = vec(mount) - attitude.inverse_transform_vector(&(vec(after.com_m) - vec(after.position_m)));
+    let world_to_body = Rotation::from_xyzw(x, y, z, w).inverse();
+    let offset = vec(mount) - world_to_body * (vec(after.com_m) - vec(after.position_m));
     let com_accel = (vec(after.linear_velocity_mps) - vec(before.linear_velocity_mps)) / config.dt_s;
     let alpha = (vec(after.angular_velocity_radps) - vec(before.angular_velocity_radps)) / config.dt_s;
     let gravity = Vector::new(0.0, 0.0, -config.gravity_mps2);
     let omega = vec(after.angular_velocity_body_radps);
-    (attitude.inverse_transform_vector(&(com_accel - gravity))
-        + attitude.inverse_transform_vector(&alpha).cross(&offset)
-        + omega.cross(&omega.cross(&offset))).into()
+    (world_to_body * (com_accel - gravity)
+        + (world_to_body * alpha).cross(offset)
+        + omega.cross(omega.cross(offset))).to_array()
 }
 
 // src/domain/atmosphere.ts:41–42,72–93 and database/reference/physics.v1.json:12–104.

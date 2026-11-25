@@ -208,10 +208,6 @@ impl Simulation {
         }
     }
 
-    pub fn config(&self) -> SimConfig {
-        self.config
-    }
-
     pub fn state(&self) -> SimState {
         let rb = &self.world.bodies[self.body];
         let q = *rb.rotation();

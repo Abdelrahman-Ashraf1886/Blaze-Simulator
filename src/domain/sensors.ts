@@ -1,6 +1,6 @@
 import { ISA_MAX_ALTITUDE_M, ISA_MIN_ALTITUDE_M } from './atmosphere'
 import { cepToAxisSigma, noiseDensityToSampleSigma, type SensorSpecs } from './sensor-specs'
-import { convert, dimensionOf, toSI } from './units'
+import { dimensionOf, toSI } from './units'
 
 // phase-7-telemetry.md:43,81–84 and engine-core/src/sim.rs:28.
 const STEP_MS = 1
@@ -125,7 +125,12 @@ export function buildSensorPayload(
     const spec = entry?.value
     if (entry?.field.kind !== 'quantity' || typeof spec?.value !== 'number' || !('unit' in spec)
       || dimensionOf(spec.unit) !== entry.field.dimension) return
-    return inMs ? convert(spec.value, spec.unit, 'ms') : toSI(spec.value, spec.unit)
+    if (!inMs) return toSI(spec.value, spec.unit)
+    if (spec.unit === 'ms') return spec.value
+    // Seconds and milliseconds are the time units (units.ts:132–133).
+    // Check the decimal places before shifting so 1.001 s is 1001 ms exactly.
+    const seconds = spec.value.toString()
+    return /^\d+(?:\.\d{1,3})?$/.test(seconds) ? Number(`${seconds}e3`) : Number.NaN
   }
 
   function effect(

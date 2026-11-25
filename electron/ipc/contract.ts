@@ -43,6 +43,82 @@ export interface SimulationRun {
   status: RunStatus
 }
 
+export type RecordingKind = 'flight' | 'scenario' | 'step-test'
+
+export interface RecordingRun extends SimulationRun {
+  kind: RecordingKind | null
+  title: string | null
+  fileName: string | null
+  bytes: number | null
+  sampleCount: number | null
+  engineVersion: string | null
+  stateHash: string | null
+  endReason: string | null
+  incomplete: boolean | null
+  open: boolean
+  fileMissing: boolean
+}
+
+export interface RecordingChannel {
+  name: string
+  unit: string
+  label: string
+}
+
+export interface RecordingHeader {
+  runId: string
+  projectId: string
+  projectName: string
+  kind: RecordingKind
+  title: string
+  startedAt: string
+  appVersion: string
+  engineVersion: string
+  protocolVersion: number
+  samplePeriodSteps: number
+  stepLengthS: number
+  firstSampleStep: number
+  channels: RecordingChannel[]
+  vehicleLoad: string
+  startRequest: string
+}
+
+export interface RecordingEnd {
+  status: RunStatus
+  reason: string
+  elapsedS: number
+  finalStateHash: string | null
+  engineError: string | null
+}
+
+export interface RecordingSummary {
+  header: RecordingHeader | null
+  end: RecordingEnd | null
+  bytes: number
+  sampleCount: number
+  requestCount: number
+  incomplete: boolean
+  integrityError: string | null
+}
+
+export interface RecordingSampleQuery {
+  id: string
+  channels: string[]
+  fromS?: number
+  toS?: number
+  maxPoints?: number
+}
+
+export interface RecordingPoint {
+  timeS: number
+  value: number | null
+}
+
+export interface RecordingSeries {
+  channel: string
+  points: RecordingPoint[]
+}
+
 export type EngineState = 'stopped' | 'starting' | 'connected' | 'restarting' | 'failed'
 
 export interface EngineStatus {
@@ -546,6 +622,13 @@ export const Channels = {
   projectsRename: 'projects:rename',
   projectsDelete: 'projects:delete',
   runsListRecent: 'runs:listRecent',
+  runsList: 'runs:list',
+  runsGet: 'runs:get',
+  runsDelete: 'runs:delete',
+  recordingSummary: 'recording:summary',
+  recordingReadSamples: 'recording:readSamples',
+  recordingReadRequests: 'recording:readRequests',
+  recordingTotalSize: 'recording:totalSize',
   systemStatus: 'system:status',
   assemblyLoad: 'assembly:load',
   assemblySave: 'assembly:save',
@@ -588,6 +671,21 @@ export const Channels = {
 } as const
 
 /** Shape exposed on `window.api` by the preload script. */
+interface RunRecordingApi {
+  list(projectId: string): Promise<IpcResult<RecordingRun[]>>
+  get(id: string): Promise<IpcResult<RecordingRun>>
+  delete(id: string): Promise<IpcResult<null>>
+}
+
+interface RecordingApi {
+  summary(id: string): Promise<IpcResult<RecordingSummary>>
+  readSamples(query: RecordingSampleQuery): Promise<IpcResult<RecordingSeries[]>>
+  readRequests(id: string): Promise<IpcResult<string[]>>
+  totalSize(): Promise<IpcResult<number>>
+}
+
+export type DesktopApiWithRecordings = DesktopApi & { runs: RunRecordingApi; recording: RecordingApi }
+
 export interface DesktopApi {
   projects: {
     list(): Promise<IpcResult<Project[]>>
@@ -595,7 +693,10 @@ export interface DesktopApi {
     rename(input: RenameProjectInput): Promise<IpcResult<Project>>
     delete(id: string): Promise<IpcResult<null>>
   }
-  runs: { listRecent(limit: number): Promise<IpcResult<SimulationRun[]>> }
+  runs: Partial<RunRecordingApi> & {
+    listRecent(limit: number): Promise<IpcResult<(SimulationRun & Partial<RecordingRun>)[]>>
+  }
+  recording?: RecordingApi
   tuning: {
     get(projectId: string): Promise<IpcResult<TuningSettings>>
     set(input: SetTuningInput): Promise<IpcResult<TuningSettings>>

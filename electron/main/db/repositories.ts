@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { unlinkSync } from 'node:fs'
+import { join } from 'node:path'
+import { recordingFileName } from '../telemetry/format'
 import { TRIANGLE_WARNING } from '../../ipc/contract'
 import { validateOverrides, type ParamError, type TuningOverrides } from '../../../src/domain/controller-params'
 import {
@@ -28,10 +31,12 @@ import type {
   PartKind,
   Project,
   RenameProjectInput,
+  RecordingHeader,
+  RecordingKind,
+  RecordingRun,
   RunStatus,
   SaveAssemblyInput,
   SaveAssemblyResult,
-  SimulationRun,
 } from '../../ipc/contract'
 import type { Db } from './database'
 
@@ -197,11 +202,80 @@ export class TuningValidationError extends ValidationError {
   }
 }
 
-export function createRepositories(db: Db, now: () => Date = () => new Date()) {
+interface RunRow {
+  id: string
+  project_id: string
+  project_name: string
+  started_at: string
+  duration_s: number
+  status: RunStatus
+  kind: RecordingKind | null
+  title: string | null
+  file_name: string | null
+  bytes: number | null
+  sample_count: number | null
+  engine_version: string | null
+  state_hash: string | null
+  end_reason: string | null
+  incomplete: number | null
+  recording_open: number | null
+}
+
+type StoredRun = Omit<RecordingRun, 'fileMissing'>
+
+function toRun(row: RunRow): StoredRun {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    projectName: row.project_name,
+    startedAt: row.started_at,
+    durationS: row.duration_s,
+    status: row.status,
+    kind: row.kind,
+    title: row.title,
+    fileName: row.file_name,
+    bytes: row.bytes,
+    sampleCount: row.sample_count,
+    engineVersion: row.engine_version,
+    stateHash: row.state_hash,
+    endReason: row.end_reason,
+    incomplete: row.incomplete === null ? null : row.incomplete === 1,
+    open: row.recording_open === 1,
+  }
+}
+
+export function createRepositories(db: Db, now: () => Date = () => new Date(), recordingsDir?: string) {
   const getProject = (id: string): Project => {
     const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined
     if (!row) throw new NotFoundError(`Project ${id} not found`)
     return toProject(row)
+  }
+
+  const selectRuns = 'SELECT r.*, p.name AS project_name FROM simulation_runs r JOIN projects p ON p.id = r.project_id'
+  const getRun = (id: string): StoredRun => {
+    const row = db.prepare(`${selectRuns} WHERE r.id = ?`).get(id) as RunRow | undefined
+    if (!row) throw new NotFoundError(`Run ${id} not found`)
+    return toRun(row)
+  }
+  const projectRuns = (id: string): StoredRun[] => {
+    getProject(id)
+    return (db.prepare(`${selectRuns} WHERE r.project_id = ? ORDER BY r.started_at DESC, r.id`).all(id) as RunRow[]).map(toRun)
+  }
+  const removeRunFiles = (runs: StoredRun[]): void => {
+    const paths = runs.flatMap((run) => {
+      if (run.open) throw new ConflictError(`Run ${run.id} is still recording`)
+      if (run.fileName === null) return []
+      if (!recordingsDir || run.fileName !== recordingFileName(run.id)) throw new ValidationError('Invalid recording file name')
+      return [join(recordingsDir, run.fileName)]
+    })
+    // Explicit deletions are cold-path operations. Keep the rows if unlink fails.
+    for (const path of paths) {
+      try {
+        unlinkSync(path)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
   }
 
   /** The saved gain overrides of a project (schema v13), name → value. */
@@ -274,34 +348,43 @@ export function createRepositories(db: Db, now: () => Date = () => new Date()) {
         return getProject(input.id)
       },
       delete(id: string): void {
-        const info = db.prepare('DELETE FROM projects WHERE id = ?').run(id)
-        if (info.changes === 0) throw new NotFoundError(`Project ${id} not found`)
+        removeRunFiles(projectRuns(id))
+        db.prepare('DELETE FROM projects WHERE id = ?').run(id)
       },
     },
     runs: {
-      listRecent(limit: number): SimulationRun[] {
-        const rows = db
-          .prepare(
-            `SELECT r.id, r.project_id, p.name AS project_name, r.started_at, r.duration_s, r.status
-             FROM simulation_runs r JOIN projects p ON p.id = r.project_id
-             ORDER BY r.started_at DESC LIMIT ?`,
-          )
-          .all(limit) as {
-          id: string
-          project_id: string
-          project_name: string
-          started_at: string
-          duration_s: number
-          status: RunStatus
-        }[]
-        return rows.map((r) => ({
-          id: r.id,
-          projectId: r.project_id,
-          projectName: r.project_name,
-          startedAt: r.started_at,
-          durationS: r.duration_s,
-          status: r.status,
-        }))
+      create(header: RecordingHeader): void {
+        const fileName = recordingFileName(header.runId)
+        db.prepare(`
+          INSERT INTO simulation_runs
+            (id, project_id, started_at, duration_s, status, kind, title, file_name,
+             bytes, sample_count, engine_version, incomplete, recording_open)
+          VALUES (?, ?, ?, 0, 'aborted', ?, ?, ?, 0, 0, ?, 1, 1)
+        `).run(header.runId, header.projectId, header.startedAt, header.kind, header.title, fileName, header.engineVersion)
+      },
+      finish(id: string, result: Pick<StoredRun, 'status' | 'durationS' | 'fileName' | 'bytes' |
+        'sampleCount' | 'stateHash' | 'endReason' | 'incomplete'>): void {
+        const info = db.prepare(`
+          UPDATE simulation_runs SET status = @status, duration_s = @durationS, file_name = @fileName,
+            bytes = @bytes, sample_count = @sampleCount, state_hash = @stateHash, end_reason = @endReason,
+            incomplete = @incomplete, recording_open = 0 WHERE id = @id AND recording_open = 1
+        `).run({ ...result, id, incomplete: Number(result.incomplete) })
+        if (info.changes === 0) throw new ConflictError(`Run ${id} is no longer open`)
+      },
+      listByProject: projectRuns,
+      get: getRun,
+      listRecent(limit: number): StoredRun[] {
+        return (db.prepare(`${selectRuns} ORDER BY r.started_at DESC, r.id LIMIT ?`).all(limit) as RunRow[]).map(toRun)
+      },
+      listOpen(): StoredRun[] {
+        return (db.prepare(`${selectRuns} WHERE r.recording_open = 1`).all() as RunRow[]).map(toRun)
+      },
+      fileNames(): string[] {
+        return (db.prepare('SELECT file_name FROM simulation_runs WHERE file_name IS NOT NULL').pluck().all() as string[])
+      },
+      delete(id: string): void {
+        removeRunFiles([getRun(id)])
+        db.prepare('DELETE FROM simulation_runs WHERE id = ?').run(id)
       },
     },
     components: {

@@ -1,16 +1,27 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DesktopApi, EngineStatus } from '../ipc/contract'
+import type { DesktopApiWithRecordings, EngineStatus } from '../ipc/contract'
 
 // Channel names are duplicated as literals on purpose: importing the contract
 // module at runtime would bundle zod into the sandboxed preload.
-const api: DesktopApi = {
+const api: DesktopApiWithRecordings = {
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     create: (input) => ipcRenderer.invoke('projects:create', input),
     rename: (input) => ipcRenderer.invoke('projects:rename', input),
     delete: (id) => ipcRenderer.invoke('projects:delete', { id }),
   },
-  runs: { listRecent: (limit) => ipcRenderer.invoke('runs:listRecent', { limit }) },
+  runs: {
+    listRecent: (limit) => ipcRenderer.invoke('runs:listRecent', { limit }),
+    list: (id) => ipcRenderer.invoke('runs:list', { id }),
+    get: (id) => ipcRenderer.invoke('runs:get', { id }),
+    delete: (id) => ipcRenderer.invoke('runs:delete', { id }),
+  },
+  recording: {
+    summary: (id) => ipcRenderer.invoke('recording:summary', { id }),
+    readSamples: (query) => ipcRenderer.invoke('recording:readSamples', query),
+    readRequests: (id) => ipcRenderer.invoke('recording:readRequests', { id }),
+    totalSize: () => ipcRenderer.invoke('recording:totalSize'),
+  },
   tuning: {
     get: (projectId) => ipcRenderer.invoke('tuning:get', { id: projectId }),
     set: (input) => ipcRenderer.invoke('tuning:set', input),

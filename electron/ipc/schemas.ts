@@ -30,6 +30,17 @@ export const createProjectSchema = z.object({ name: projectName, frameType: z.en
 export const renameProjectSchema = z.object({ id: z.uuid(), name: projectName })
 export const projectIdSchema = z.object({ id: z.uuid() })
 export const listRunsSchema = z.object({ limit: z.int().min(1).max(200) })
+export const recordingIdSchema = z.object({ id: z.uuid() })
+export const recordingSampleSchema = recordingIdSchema.extend({
+  channels: z.array(z.string().min(1)).nonempty(),
+  fromS: z.number().nonnegative().optional(),
+  toS: z.number().nonnegative().optional(),
+  maxPoints: z.int().positive().optional(),
+}).refine(({ fromS, toS }) => fromS === undefined || toS === undefined || fromS <= toS, {
+  message: 'Inverted recording time range',
+}).refine(({ channels }) => new Set(channels).size === channels.length, {
+  message: 'Duplicate recording channel',
+})
 
 export const setTuningSchema = z.object({
   id: z.uuid(),

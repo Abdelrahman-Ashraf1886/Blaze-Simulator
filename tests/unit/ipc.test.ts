@@ -2,11 +2,12 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Channels, type IpcResult, type Project } from '../../electron/ipc/contract'
-import { createHandlers, createTerrainHandlers } from '../../electron/ipc/handlers'
+import { createHandlers, createRecordingHandlers, createTerrainHandlers } from '../../electron/ipc/handlers'
+import { RecordingStore } from '../../electron/main/telemetry/store'
 import { openDatabase } from '../../electron/main/db/database'
 import { createRepositories } from '../../electron/main/db/repositories'
 
-let handlers: ReturnType<typeof createHandlers>
+let handlers: Record<string, (payload: unknown) => IpcResult<unknown> | Promise<IpcResult<unknown>>>
 
 beforeEach(() => {
   const repos = createRepositories(openDatabase(':memory:'))
@@ -23,7 +24,7 @@ beforeEach(() => {
     },
     database: { path: ':memory:', schemaVersion: 1 },
     app: { version: '0.1.0', electron: 'x', chrome: 'x', node: 'x', platform: 'test' },
-  })), ...createTerrainHandlers(repos, __dirname) }
+  })), ...createTerrainHandlers(repos, __dirname), ...createRecordingHandlers(new RecordingStore(__dirname, repos.runs)) }
 })
 
 const call = <T>(channel: string, payload?: unknown) => handlers[channel]!(payload) as IpcResult<T>
@@ -60,9 +61,9 @@ describe('IPC handlers', () => {
     })
   })
 
-  it('bounds the run history limit', () => {
-    expect(call(Channels.runsListRecent, { limit: 0 })).toMatchObject({ ok: false })
-    expect(call(Channels.runsListRecent, { limit: 10 })).toEqual({ ok: true, data: [] })
+  it('bounds the run history limit', async () => {
+    expect(await handlers[Channels.runsListRecent]!({ limit: 0 })).toMatchObject({ ok: false })
+    expect(await handlers[Channels.runsListRecent]!({ limit: 10 })).toEqual({ ok: true, data: [] })
   })
 
   it('reports system status with the real component count', () => {

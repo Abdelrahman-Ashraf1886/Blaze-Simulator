@@ -602,6 +602,14 @@ describe('IPC validation', () => {
   })
 })
 
+const sensorEffects = { noiseSigma: 0.03, vibrationSigma: 0.01, bias: null, randomWalk: 0.02, delaySteps: 2, range: null }
+const sensors = {
+  seed: -12, gyro: sensorEffects,
+  accelerometer: { ...sensorEffects, delaySteps: null, mountPositionM: v3(0.01, 0, 0) },
+  barometer: { referenceAltitudeM: 1000, referenceTemperatureK: null, sigmaPa: null, biasPa: null, periodSteps: 3, delaySteps: null },
+  gps: { positionSigmaHorizontalM: null, positionSigmaVerticalM: null, velocitySigmaMps: null, periodSteps: 3, delaySteps: 1 },
+} satisfies SensorPayload
+
 // ---- a real engine session through the same handlers -------------------------------------------------------
 
 const binaryPath = join(__dirname, '../../simulation-engine/target/release', process.platform === 'win32' ? 'drone-engine.exe' : 'drone-engine')
@@ -846,14 +854,6 @@ describe('6.5 on the real NDJSON engine', () => {
     }
     expect(replayed).toEqual(one.rows.filter((_, i) => i % 10 === 0))
   }), 30000)
-
-  const sensorEffects = { noiseSigma: 0.03, vibrationSigma: 0.01, bias: null, randomWalk: 0.02, delaySteps: 2, range: null }
-  const sensors = {
-    seed: -12, gyro: sensorEffects,
-    accelerometer: { ...sensorEffects, delaySteps: null, mountPositionM: v3(0.01, 0, 0) },
-    barometer: { referenceAltitudeM: 1000, referenceTemperatureK: null, sigmaPa: null, biasPa: null, periodSteps: 3, delaySteps: null },
-    gps: { positionSigmaHorizontalM: null, positionSigmaVerticalM: null, velocitySigmaMps: null, periodSteps: 3, delaySteps: 1 },
-  } satisfies SensorPayload
 
   it('records post-step sensors reproducibly across chunks, recording schedules and log replay', async () => withProtocol(async ({ result }) => {
     await result(load)
@@ -1742,6 +1742,29 @@ describe('a real engine session', () => {
       }
       expect(FlightSessionStepResultSchema.parse(final).stateHash).toBe(summary.end?.finalStateHash)
     })
+  }))
+
+  it('records the sensor channels of flights and scenarios, and none when every sensor is off', async () => withRecordingStore(sup, async ({ store, recorder, recording }) => {
+    const { airDensityKgM3, cutoff } = startInput()
+    const record = async (model: SensorPayload) => {
+      const flight = unwrap(await flightStart(sup, { ...startInput(), recording, sensors: model }, recorder))
+      const step = unwrap(await flightStep(sup, recordStep(), recorder))
+      expect([flight, step]).not.toContainEqual(expect.objectContaining({ recordingError: expect.anything() }))
+      unwrap(await flightEnd(sup, recorder))
+      const scenario = unwrap(await scenarioRun(sup, { ...quad, recording, config: { airDensityKgM3, cutoff, sensors: model },
+        scenario: { type: 'builtin', name: 'balanced_hover' },
+      }, recorder))
+      return Promise.all([flight, scenario].map(async ({ recordingId }) => (await getRecording(store, recordingId!)).summary))
+    }
+    const named = (summary: Awaited<ReturnType<typeof record>>[number]) => summary.header!.channels.filter(({ name }) => name.startsWith('sensor.')).length
+    for (const summary of await record(sensors)) {
+      expect(summary.end?.status).toBe('completed')
+      expect(named(summary)).toBeGreaterThan(0)
+    }
+    for (const summary of await record({ seed: 1, gyro: null, accelerometer: null, barometer: null, gps: null })) {
+      expect(summary.end?.status).toBe('completed')
+      expect(named(summary)).toBe(0)
+    }
   }))
 
   it('reads scenario samples and step-test trace channels from disk', async () => withRecordingStore(sup, async ({ store, recorder, recording }) => {

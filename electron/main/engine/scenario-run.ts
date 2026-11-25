@@ -45,7 +45,7 @@ export async function scenarioRun(engine: EngineForScenario, payload: unknown, r
   const parsed = scenarioRunSchema.safeParse(payload)
   if (!parsed.success) return invalid(issues(parsed.error))
   const { vehicle, propulsion, aero, scenario, config, recording } = parsed.data
-  const run = recording && recorder?.startScenario(recording, vehicle.motors.length, scenario)
+  const run = recording && recorder?.startScenario(recording, vehicle.motors.length, scenario, config.sensors)
   try {
     const loaded = await engine.loadVehicle(vehicle, { propulsion, aero }, ...(run ? [run.captureVehicle] : []))
     if (!loaded.valid) throw new Error(`The engine refused the vehicle: ${loaded.errors.map((e) => `${e.path}: ${e.message}`).join('; ')}`)

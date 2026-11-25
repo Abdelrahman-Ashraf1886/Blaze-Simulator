@@ -1,6 +1,7 @@
 # Phase 7 plan: telemetry
 
-Status (2026-11-25): **Proposed, awaiting decisions.** Written against `blaze-sim` at d6f79ca
+Status (2026-11-25): **Approved: D1–D20 decided, every recommendation accepted. 7.10 (attitude
+estimator) and 7.11 (ULog) stay optional, not chosen yet.** Written against `blaze-sim` at d6f79ca
 (Phase 6 done). Earlier phases' decisions are written "P5-D6", "P6-D18".
 
 ## Goal
@@ -27,11 +28,11 @@ A flight stays reproducible. With sensors off, results and hashes are today's, b
 | Seeded noise | SplitMix64 and Box–Muller, platform-independent (`turbulence.rs`, 6.11) | Reused, one stream per sensor |
 | Frame-time gate | `npm run test:flight-perf` (6.0b) | Rerun with recording on, same limits |
 
-## Decisions needed
+## Decisions (made with you)
 
-Each has a recommendation; "accept all" adopts them.
+Decided on 2026-11-25: every recommendation accepted.
 
-| # | Question | Options | Recommendation |
+| # | Question | Options | Decision |
 |---|---|---|---|
 | D1 | What flies on sensors? | (a) nothing: sensor signals are recorded only; (b) the rate loop uses a modelled gyro through PX4's filters, the rest stays true; (c) (b) + attitude from PX4's `attitude_estimator_q` (615 lines); (d) EKF2 (`src/modules/ekf2/EKF`, over 500 kB of source) | **(b)** in the core, **(c)** as optional 7.10. P5-D6 said Phase 7 brings "an estimator": (b) is less than that, and (d) is a phase of its own. `attitude_estimator_q` is not PX4's default for multicopters; the page would say so |
 | D2 | Default | (a) perfect state, sensors off until you turn them on per project; (b) sensors on | **(a)**. Every existing result and hash stays |
@@ -156,5 +157,5 @@ in `controller.rs` and `flight_loop.rs`). 4: 7.10 and 7.11 if chosen, then 7.12.
 - **Verification ages.** A recording verifies only on the engine that made it; samples stay readable.
 - **The 2–5 hitches per 20 s found in 6.0b** are untraced. Recording may make them worse; test 11
   compares.
-- **Scope.** Ten core milestones and two optional. Recording, replay and graphs (7.1–7.6) are useful
+- **Scope.** Eleven core milestones and two optional. Recording, replay and graphs (7.1–7.6) are useful
   without sensors; 7.8 and 7.9 can be cut or moved without touching them.

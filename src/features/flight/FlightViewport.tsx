@@ -14,6 +14,7 @@ import { useComponentIndex } from '../workshop/component-index'
 import { linkedComponent, type ComponentIndex } from '../workshop/links'
 import { PropellerModel } from '@/three/part-models'
 import { toSI, type Unit } from '@/domain/units'
+import { FlightTimingProbe, flightTiming } from './flight-timing'
 import { frameToPose, windArrow, type FlightFrame } from './frame'
 import { integrateRotorAngle, ROTOR_BLUR_THRESHOLD_RADPS, rotorIsBlurred } from './rotor-spin'
 import { readPref, writePref } from '@/lib/prefs'
@@ -212,6 +213,7 @@ export function FlightViewport({ frame, doc, geo, projectId, running = false }: 
       }} />}
       <div className="pointer-events-none relative min-h-[240px] flex-1" aria-label="Z-up flight view" data-testid="flight-viewport" data-camera={activeMode}>
         <Canvas camera={cameraOptions} dpr={[1, 2]} fallback={<p className="p-4 text-warn">WebGL is unavailable. Flight diagnostics remain available.</p>}>
+          {flightTiming && <FlightTimingProbe timing={flightTiming} frame={frame} />}
           <color attach="background" args={['#101215']} />
           <ambientLight intensity={0.8} />
           <directionalLight position={[3, -2, 5]} intensity={2} />

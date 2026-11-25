@@ -15,6 +15,7 @@
     "lint": "eslint .",
     "test": "npm run engine:build && vitest run",
     "test:e2e": "npm run build && playwright test",
+    "test:flight-perf": "node scripts/flight-perf.cjs",
     "test:all": "npm run engine:test && npm run typecheck && npm run lint && npm run test && npm run test:e2e",
     "icon": "node scripts/render-icon.mjs",
     "postinstall": "install-electron && electron-builder install-app-deps",

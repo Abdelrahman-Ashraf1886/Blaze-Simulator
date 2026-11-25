@@ -1,10 +1,6 @@
 import type { RecordingChannel, RecordingSeries } from '../../../../electron/ipc/contract'
 import { reportGraphWidth, reportPlots } from './report-data'
-
-export function reportNumber(value: number) {
-  // Match the instrument numeric typography in DESIGN.md:20–22.
-  return new Intl.NumberFormat('en', { maximumSignificantDigits: 6 }).format(value)
-}
+import { reportNumber } from './ReportFacts'
 
 type Signal = RecordingSeries & RecordingChannel
 
@@ -20,11 +16,15 @@ function Plot({ title, series }: { title: string; series: Signal[] }) {
   const maxY = Math.max(...valid.map(({ value }) => value!))
   const scale = (v: number, min: number, max: number) =>
     min === max ? 0.5 : Number.isFinite(max - min) ? (v - min) / (max - min) : (v / 2 - min / 2) / (max / 2 - min / 2)
+  const yAt = (value: number) => (1 - scale(value, minY, maxY)) * height
+  const zeroY = minY <= 0 && maxY >= 0 ? yAt(0) : undefined
   return (
     <figure className="report-figure">
       <figcaption className="font-medium">{title} ({series[0]!.unit})</figcaption>
       <div className="report-chart-edge num"><span>{reportNumber(maxY)}</span><span>{reportNumber(minY)}</span></div>
       <svg className="report-plot" viewBox={'0 0 ' + width + ' ' + height} role="img" aria-label={title + ' over simulated time'}>
+        {zeroY !== undefined && <line className="report-zero-line" x1={0} x2={width} y1={zeroY} y2={zeroY}
+          stroke="currentColor" vectorEffect="non-scaling-stroke" />}
         {series.map(({ channel, points: line }) => {
           let connected = false
           const target = channel.startsWith('setpoint.') || channel === 'stepTest.setpoint'
@@ -34,7 +34,7 @@ function Plot({ title, series }: { title: string; series: Signal[] }) {
               return null
             }
             const x = scale(timeS, minT, maxT) * width
-            const y = (1 - scale(value, minY, maxY)) * height
+            const y = yAt(value)
             const point = { timeS, x, y, command: connected ? 'L' : 'M' }
             connected = true
             return point

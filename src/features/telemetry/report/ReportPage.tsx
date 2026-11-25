@@ -3,36 +3,45 @@ import { Link, useParams } from 'react-router'
 import { recordingIdSchema } from '../../../../electron/ipc/schemas'
 import { Button } from '@/components/ui/button'
 import { readReport, type ReportData } from './report-data'
-import { ReportGraphs, reportNumber } from './ReportGraphs'
+import { ReportBuild } from './ReportBuild'
+import { ReportConditions, ReportModelLimits } from './ReportConditions'
+import { Facts, Value, quantity, reportNumber } from './ReportFacts'
+import { ReportGraphs } from './ReportGraphs'
+import { ReportMetrics } from './ReportMetrics'
 import './report.css'
-
-function Value({ value }: { value: unknown }) {
-  if (value === undefined) return <span className="report-muted">Not recorded</span>
-  return typeof value === 'object' && value !== null
-    ? <pre className="report-value num">{JSON.stringify(value, null, 2)}</pre>
-    : <span className={typeof value === 'number' ? 'num' : undefined}>{String(value)}</span>
-}
-
-function Facts({ rows }: { rows: [string, unknown][] }) {
-  return (
-    <dl className="report-facts">
-      {rows.map(([label, value]) => (
-        <div key={label}>
-          <dt className="report-muted">{label}</dt><dd><Value value={value} /></dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return <section className="report-section" aria-label={title}><h2>{title}</h2>{children}</section>
 }
 
+function ReportController({ recorded }: { recorded: ReportData['recorded'] }) {
+  const { config, controllerMode, gains, requestKind } = recorded
+  if (!config) return recorded.startLine ? <p>The start request could not be interpreted.</p>
+    : <Facts rows={[['Controller', undefined]]} />
+  // engine.rs:573–607 resolves mixer overrides and defaults FlightLoop airmode to off.
+  // engine.rs:645–658 resolves the thrust factor, defaulting to the linear model.
+  // PX4 v1.13.3 lib/mixer_module/params.c:13–18 gives MC_AIRMODE's labels.
+  const flightLoop = controllerMode?.startsWith('FlightLoop')
+  const airmode = recorded.airmode ?? (flightLoop ? gains?.MC_AIRMODE ?? 0 : 'Does not apply')
+  const mode = controllerMode?.replace('FlightLoop · ', 'Flight loop · ')
+  const knownMode = requestKind !== 'flight' || mode === 'Attitude hold' ||
+    ['rates', 'stabilized', 'altitude', 'position'].some((name) => mode === 'Flight loop · ' + name)
+  return <>
+    <Facts rows={[
+      ['Mode at start', knownMode && mode ? mode : config.controller ?? 'Missing from request'],
+      ['Airmode', airmode === 0 ? 'Disabled' : airmode === 1 ? 'Roll and pitch' : airmode === 2 ? 'Roll, pitch and yaw' : airmode],
+      ['Thrust model factor', recorded.thrustFactor ?? (controllerMode ? '0 (linear)' : 'Unavailable')],
+    ]} />
+    <h3>Gain overrides</h3>
+    {gains && Object.keys(gains).length ? <Facts rows={Object.entries(gains)} />
+      : config.gains === undefined || gains ? <p className="report-muted">None</p> : <Value value={config.gains} />}
+  </>
+}
+
 export function FlightReport({ data, actions }: { data: ReportData; actions?: ReactNode }) {
   const { summary, recorded, metrics, graphs, notices } = data
   const { header, end } = summary
-  const config = recorded.config
+  const scenarioReport = recorded.scenarioReport
   return (
     <article className="flight-report" data-selectable>
       <header className="report-heading">
@@ -54,32 +63,15 @@ export function FlightReport({ data, actions }: { data: ReportData; actions?: Re
       <p className="report-muted">Build, conditions and controller settings come from the requests sent to the engine when this run was recorded. Metrics and graphs use the saved samples.</p>
 
       <Section title="Build">
-        <Facts rows={[
-          ['Vehicle mass (kg)', recorded.vehicle?.totalMassKg], ['Motors', recorded.vehicle?.motors],
-          ['Propulsion', recorded.propulsion], ['Body drag', recorded.aero],
-        ]} />
+        <ReportBuild recorded={recorded} />
       </Section>
 
       <Section title="Conditions">
-        <Facts rows={[
-          ['Air density (kg/m³)', config?.airDensityKgM3], ['Battery cut-off', config?.cutoff],
-          ['Environment', recorded.environment], ['Start position (m)', config?.startPositionM],
-          ['Start clearance (m)', config?.startClearanceM], ['Wind', config?.wind],
-          ['Ground-effect rotor radii (m)', config?.groundEffect], ['Turbulence seed', recorded.turbulence?.seed],
-          ['Sensors', recorded.sensors],
-          ...(header?.kind === 'scenario' ? [['Scenario request', recorded.scenarioRequest] as [string, unknown]] : []),
-          ...(header?.kind === 'step-test' ? [['Step test request', recorded.test] as [string, unknown]] : []),
-        ]} />
+        <ReportConditions recorded={recorded} />
       </Section>
 
       <Section title="Controller">
-        <Facts rows={[
-          ['Mode at start', recorded.controllerMode], ['Airmode', recorded.airmode], ['Thrust model factor', recorded.thrustFactor],
-        ]} />
-        <h3>Gain overrides</h3>
-        {recorded.gains && Object.keys(recorded.gains).length
-          ? <Facts rows={Object.entries(recorded.gains)} />
-          : <p className="report-muted">No gain overrides recorded.</p>}
+        <ReportController recorded={recorded} />
       </Section>
 
       <Section title="Graphs">
@@ -87,39 +79,31 @@ export function FlightReport({ data, actions }: { data: ReportData; actions?: Re
       </Section>
 
       <Section title="Metrics">
-        <dl className="report-metrics">
-          {metrics.map(({ id, name, result, definition, unit }) => (
-            <div key={id}>
-              <dt>{name}</dt>
-              <dd className={'value' in result ? 'num' : 'report-muted'}>
-                {'value' in result ? reportNumber(result.value) + (unit === '1' ? '' : ' ' + unit) : 'Not available: ' + result.reason}
-              </dd>
-              <dd className="report-definition report-muted">{definition}</dd>
-            </div>
-          ))}
-        </dl>
+        <ReportMetrics metrics={metrics} />
       </Section>
 
       {header?.kind === 'scenario' && <Section title="Engine scenario report">
-        {recorded.scenarioReport
-          ? <Value value={recorded.scenarioReport} />
+        {scenarioReport
+          ? <>
+            <Facts rows={[
+              ['Scenario', scenarioReport.name], ['Result', scenarioReport.passed ? 'Passed' : 'Failed'],
+              ['Checks passed', reportNumber(scenarioReport.checks.filter((check) => check.passed).length) +
+                ' of ' + reportNumber(scenarioReport.checks.length)],
+              ['Elapsed time', quantity(scenarioReport.elapsedS, 's')],
+            ]} />
+            <details className="report-screen-only"><summary>Engine response details</summary><Value value={scenarioReport} /></details>
+          </>
           : <p>The engine’s scenario report was not recorded.</p>}
       </Section>}
 
       <Section title="Model limits">
-        <ul>
-          {/* ADR 0010:11–17 and ADR 0009:20–24,30–37. Vibration: phase 7 plan:152–154. */}
-          {recorded.wind && <li>Wind acts directly on body drag only. The model omits rotor inflow and rotor drag from wind.</li>}
-          {Array.isArray(config?.groundEffect) && config.groundEffect.length > 0 &&
-            <li>Ground effect uses a single-rotor thrust correction independently at each rotor. Rotor interactions are omitted and the error for a multirotor is unknown.</li>}
-          {recorded.turbulence?.kind === 'dryden' &&
-            <li>Dryden turbulence uses a frozen field and needs mean wind. It does not apply to hovering flight.</li>}
-          {recorded.sensors != null && recorded.sensors !== false
-            ? <li>The sensor configuration shown above identifies the inputs sent for this run. Motor and propeller vibration is omitted, so the simulated response can look better than the real vehicle’s response.</li>
-            : config && <li>The controller uses exact simulated state. Motor and propeller vibration is omitted, so the simulated response can look better than the real vehicle’s response.</li>}
-          {!config && <li>The recorded start request is needed to identify which model limits apply.</li>}
-        </ul>
+        <ReportModelLimits recorded={recorded} />
       </Section>
+      {(recorded.loadLine || recorded.startLine) && <details className="report-screen-only">
+        <summary>Values as sent to the engine</summary>
+        {recorded.loadLine && <><h3>Vehicle load request</h3><pre className="report-value num">{recorded.loadLine}</pre></>}
+        {recorded.startLine && <><h3>Start request</h3><pre className="report-value num">{recorded.startLine}</pre></>}
+      </details>}
     </article>
   )
 }

@@ -25,6 +25,9 @@
 .report-facts { display: grid; gap: 0.5rem 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); margin-block-end: 0.75rem; }
 .report-facts > div { min-width: 0; }
 .report-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-table { width: 100%; border-collapse: collapse; margin-block-end: 0.75rem; }
+.report-table caption { text-align: start; font-weight: 600; margin-block-end: 0.25rem; }
+.report-table th, .report-table td { text-align: start; vertical-align: top; padding: 0.25rem; border-bottom: 1px solid var(--color-line); }
 
 .report-metrics > div {
   display: grid;
@@ -36,15 +39,16 @@
 
 .report-metrics dt { font-weight: 550; }
 .report-definition { grid-column: 1 / -1; }
-.report-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: 1rem; }
+.report-figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .report-figure { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.25rem 0.5rem; }
 .report-figure figcaption, .report-legend { grid-column: 1 / -1; }
 .report-chart-edge { display: flex; flex-direction: column; justify-content: space-between; }
 .report-chart-time { grid-column: 2; display: flex; justify-content: space-between; }
 .report-plot { width: 100%; border-left: 1px solid var(--color-line-strong); border-bottom: 1px solid var(--color-line-strong); overflow: visible; }
 .report-target { color: var(--color-setpoint); stroke-dasharray: 5 3; }
+.report-zero-line { color: var(--color-line-strong); stroke-dasharray: 4 3; }
 
-@page { size: A4; margin: 12mm; }
+@page { size: A4; margin: 12mm 12mm 16mm; }
 
 @media print {
   html:has(.flight-report), body:has(.flight-report), #root:has(.flight-report) {
@@ -65,7 +69,7 @@
 
   #root:has(.flight-report) aside,
   #root:has(.flight-report) footer,
-  .report-actions { display: none; }
+  .report-actions, .report-screen-only { display: none; }
 
   .flight-report {
     --color-fg-muted: #333;
@@ -77,11 +81,10 @@
     padding: 0;
   }
 
-  .report-section { break-before: page; }
   .report-figures { display: block; }
   .report-figure { margin-block-end: 0.75rem; }
-  .report-metrics > div, .report-figure { break-inside: avoid; }
-  .report-facts { display: block; }
-  .report-facts > div { margin-block-end: 0.5rem; }
-  .flight-report h2, .flight-report h3, .report-facts dt { break-after: avoid; }
+  .report-table, .report-metrics > div, .report-figure, .report-table tr, .report-facts > div { break-inside: avoid; }
+  .report-facts { display: block; columns: 2; column-gap: 1rem; }
+  .report-facts > div { margin-block-end: 0.35rem; }
+  .flight-report h2, .flight-report h3, .report-table caption, .report-table thead { break-after: avoid; }
 }

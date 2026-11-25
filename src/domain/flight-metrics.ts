@@ -1,10 +1,14 @@
 import { telemetryChannels } from './telemetry-channels'
 
+export type FlightMetricGroup = 'Flight' | 'Tracking' | 'Motors' | 'Power' | 'Air' | 'Landing'
+
 export interface FlightMetric {
   id: string
   name: string
   unit: string
   definition: string
+  group: FlightMetricGroup
+  motor?: { label: string; column: 'mean' | 'max' | '0' | '1' }
   result: { value: number } | { reason: string }
 }
 
@@ -138,9 +142,10 @@ function measure(read: Read, reduce: Reduce) {
 /** One pass over chronological raw samples, retaining one row and running aggregates. */
 export function createFlightMetrics({ channels, elapsedS, rateStepAxis }: MetricOptions) {
   const stats: { add: (values: Values, dt: number) => void; result: () => FlightMetric }[] = []
-  const add = (id: string, name: string, unit: string, definition: string, reduce: Reduce, read: Read, missing: string) => {
+  const add = (group: FlightMetricGroup, id: string, name: string, unit: string, definition: string,
+    reduce: Reduce, read: Read, missing: string, motor?: FlightMetric['motor']) => {
     const stat = measure(read, reduce)
-    stats.push({ add: stat.add, result: () => ({ id, name, unit, definition, result: stat.result(missing) }) })
+    stats.push({ add: stat.add, result: () => ({ id, name, unit, definition, group, ...(motor && { motor }), result: stat.result(missing) }) })
   }
   const intervals = 'Uses the first value of each adjacent pair with valid data at both ends.'
   const tiltDefinition = 'Angle between body up and world up from the recorded body-to-world quaternion.'
@@ -148,16 +153,16 @@ export function createFlightMetrics({ channels, elapsedS, rateStepAxis }: Metric
 
   // PX4 v1.13.3 modules/land_detector/LandDetector.cpp:139–171 publishes
   // these hysteresis states. Use the recorded flags without rerunning PX4.
-  add('airtime', 'Time in the air', 's', 'Time with ground contact, maybe landed and landed all clear. ' + intervals,
+  add('Flight', 'airtime', 'Time in the air', 's', 'Time with ground contact, maybe landed and landed all clear. ' + intervals,
     'time', (v) => {
       const contact = anyFlag(v, landFlags)
       if (contact !== undefined) return 1 - contact
     }, noFlags)
-  add('tilt-max', 'Largest tilt', '°', tiltDefinition, 'max', tilt, 'No valid attitude quaternion')
-  add('tilt-rms', 'RMS tilt', '°', 'Sample RMS of the angle. ' + tiltDefinition, 'rms', tilt, 'No valid attitude quaternion')
+  add('Flight', 'tilt-max', 'Largest tilt', '°', tiltDefinition, 'max', tilt, 'No valid attitude quaternion')
+  add('Flight', 'tilt-rms', 'RMS tilt', '°', 'Sample RMS of the angle. ' + tiltDefinition, 'rms', tilt, 'No valid attitude quaternion')
   axes.forEach((axis, i) => {
     const step = rateStepAxis === axis
-    add('rate-' + axis, axis.toUpperCase() + ' body-rate tracking RMS', 'rad/s',
+    add('Tracking', 'rate-' + axis, axis.toUpperCase() + ' body-rate tracking RMS', 'rad/s',
       step ? 'Sample RMS of recorded rate-step target minus measured response on the tested body axis.'
         : 'Sample RMS of body-rate setpoint minus recorded simulated body rate, using paired values on this axis.',
       'rms', (v) => step ? difference(v, 'stepTest.setpoint', 'stepTest.measured') : difference(v, rateTargets[i]!, rates[i]!),
@@ -167,11 +172,11 @@ export function createFlightMetrics({ channels, elapsedS, rateStepAxis }: Metric
     ['auto', 'Auto hold', true, 'Samples with controller auto mode Hold.'],
     ['centred', 'Centred position flight', false, 'Samples in manual Position mode with centred forward, right and throttle sticks and a recorded position lock for the measured axes.'],
   ] as const) {
-    add(id + '-altitude', label + ' altitude error RMS', 'm',
+    add('Tracking', id + '-altitude', label + ' altitude error RMS', 'm',
       'Sample RMS of CoM height minus height target. ' + window, 'rms',
       (v) => holdWindow(v, auto) ? difference(v, positionTargets[2]!, position[2]!) : undefined,
       'No altitude and target pairs in this hold window')
-    add(id + '-horizontal', label + ' horizontal error RMS', 'm',
+    add('Tracking', id + '-horizontal', label + ' horizontal error RMS', 'm',
       'Sample RMS of horizontal CoM distance from its target. ' + window, 'rms', (v) => {
         if (!holdWindow(v, auto)) return
         const x = difference(v, positionTargets[0]!, position[0]!)
@@ -179,10 +184,10 @@ export function createFlightMetrics({ channels, elapsedS, rateStepAxis }: Metric
         if (finite(x) && finite(y)) return Math.hypot(x, y)
       }, 'No horizontal position and target pairs in this hold window')
   }
-  add('speed', 'Largest speed', 'm/s', 'Largest magnitude of the three world-frame CoM velocity components.',
+  add('Flight', 'speed', 'Largest speed', 'm/s', 'Largest magnitude of the three world-frame CoM velocity components.',
     'max', (v) => magnitude(v, velocity), 'No complete velocity vector')
   for (const [id, label, direction, sign] of [['climb', 'climb', 'upward', 1], ['sink', 'sink', 'downward', -1]] as const) {
-    add(id, 'Largest ' + label + ' speed', 'm/s', 'Largest ' + direction + ' CoM speed, reported as a nonnegative value.',
+    add('Flight', id, 'Largest ' + label + ' speed', 'm/s', 'Largest ' + direction + ' CoM speed, reported as a nonnegative value.',
       'max', (v) => {
         const vz = v[velocity[2]!]
         if (finite(vz)) return Math.max(0, sign * vz)
@@ -193,37 +198,37 @@ export function createFlightMetrics({ channels, elapsedS, rateStepAxis }: Metric
     const label = channel === 'motor' ? 'Motor' : 'Motor ' + (Number(channel.split('.')[1]) + 1)
     const read = readChannel(channel)
     for (const id of ['mean', 'max'] as const) {
-      add(channel + '-' + id, label + ' throttle ' + id, '1',
+      add('Motors', channel + '-' + id, label + ' throttle ' + id, '1',
         'Sample ' + (id === 'max' ? 'maximum' : 'mean') + ' of the recorded normalized motor command.',
-        id, read, 'No recorded motor commands')
+        id, read, 'No recorded motor commands', { label, column: id })
     }
-    for (const endpoint of [0, 1]) {
-      add(channel + '-' + endpoint, label + ' time at ' + endpoint, 's',
+    for (const endpoint of [0, 1] as const) {
+      add('Motors', channel + '-' + endpoint, label + ' time at ' + endpoint, 's',
         'Time with the recorded normalized motor command exactly at ' + endpoint + '. ' + intervals, 'time', (v) => {
           const command = read(v)
           if (finite(command)) return Number(command === endpoint)
-        }, 'No adjacent valid motor commands')
+        }, 'No adjacent valid motor commands', { label, column: endpoint === 0 ? '0' : '1' })
     }
   }
-  add('allocation-saturation', 'Time with allocation saturation', 's',
+  add('Motors', 'allocation-saturation', 'Time with allocation saturation', 's',
     'Time with any recorded positive or negative roll, pitch, yaw or collective saturation flag set. ' + intervals,
     'time', (v) => anyFlag(v, allocation), noFlags)
-  add('voltage', 'Minimum pack voltage', 'V', 'Smallest recorded pack terminal voltage.',
+  add('Power', 'voltage', 'Minimum pack voltage', 'V', 'Smallest recorded pack terminal voltage.',
     'min', readChannel('pack.voltage'), 'No pack voltage samples')
-  add('current', 'Peak pack current', 'A', 'Largest recorded pack current.',
+  add('Power', 'current', 'Peak pack current', 'A', 'Largest recorded pack current.',
     'max', readChannel('pack.current'), 'No pack current samples')
-  add('charge', 'Charge used', 'C', 'Last valid cumulative pack charge used since run start.',
+  add('Power', 'charge', 'Charge used', 'C', 'Last valid cumulative pack charge used since run start.',
     'last', readChannel('pack.chargeUsed'), 'No cumulative charge samples')
-  add('energy', 'Pack energy used', 'J',
+  add('Power', 'energy', 'Pack energy used', 'J',
     'Trapezoidal sum of voltage times current over adjacent samples with both channels valid at both ends. Covers the sampled span only.',
     'energy', (v) => {
       const voltage = v['pack.voltage']
       const current = v['pack.current']
       if (finite(voltage) && finite(current)) return voltage * current
     }, 'No adjacent samples with paired pack voltage and current')
-  add('wind-mean', 'Mean wind speed at the CoM', 'm/s', 'Sample mean of recorded wind vector magnitudes at the centre of mass.',
+  add('Air', 'wind-mean', 'Mean wind speed at the CoM', 'm/s', 'Sample mean of recorded wind vector magnitudes at the centre of mass.',
     'mean', (v) => magnitude(v, wind), 'No complete CoM wind vector')
-  add('wind-max', 'Largest wind speed at the CoM', 'm/s', 'Largest recorded wind vector magnitude at the centre of mass.',
+  add('Air', 'wind-max', 'Largest wind speed at the CoM', 'm/s', 'Largest recorded wind vector magnitude at the centre of mass.',
     'max', (v) => magnitude(v, wind), 'No complete CoM wind vector')
   const belowRange = channels.filter((name) => groundEffectFlag.test(name))
   for (const [id, name, definition, flags] of [
@@ -231,7 +236,7 @@ export function createFlightMetrics({ channels, elapsedS, rateStepAxis }: Metric
     ['ground-effect-range', 'Time with ground effect below tested range', 'Time with any rotor’s ground-effect-below-tested-range flag set.', belowRange],
     ['wind-invalid', 'Time with invalid wind', 'Time with the wind-invalid flag set.', ['loads.windInvalid']],
   ] as const) {
-    add(id, name, 's', definition + ' ' + intervals, 'time', (v) => anyFlag(v, flags), noFlags)
+    add('Air', id, name, 's', definition + ' ' + intervals, 'time', (v) => anyFlag(v, flags), noFlags)
   }
 
   let previous: FlightMetricSample | undefined
@@ -252,11 +257,11 @@ export function createFlightMetrics({ channels, elapsedS, rateStepAxis }: Metric
     results(): FlightMetric[] {
       const duration = finite(elapsedS) ? elapsedS : previous?.timeS
       return [{
-        id: 'duration', name: 'Duration flown', unit: 's',
+        id: 'duration', name: 'Duration flown', unit: 's', group: 'Flight',
         definition: 'Elapsed simulation time in the recorded end frame, or the last recorded sample time since run start.',
         result: duration === undefined ? { reason: 'No recorded end time or samples' } : { value: duration },
       }, ...stats.map((stat) => stat.result()), {
-        id: 'touchdown', name: 'Touchdown vertical speed', unit: 'm/s',
+        id: 'touchdown', name: 'Touchdown vertical speed', unit: 'm/s', group: 'Landing',
         definition: 'Downward CoM speed in the sample just before the first physical ground-contact flag changes from clear to set.',
         result: touchdown === undefined ? { reason: 'No descending sample immediately before the first recorded ground contact' } : { value: touchdown },
       }]

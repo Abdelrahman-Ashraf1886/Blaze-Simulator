@@ -22,7 +22,7 @@ export function parseReportRequests(header: Pick<RecordingHeader, 'vehicleLoad' 
   const flight = start?.type === 'flight.session.start'
   const scenario = start?.type === 'scenario.run'
   const stepTest = start?.type === 'stepTest.run'
-  // protocol.ts:418–435,631–650,715–739. Keep optional fields and values as sent.
+  // protocol.ts:462–479, 663–692, 768–785. Keep optional fields and values as sent.
   const config = flight ? start : scenario || stepTest ? fields(start.config) : undefined
   const controller = flight ? fields(start.controller) : undefined
   const step = stepTest ? fields(fields(start.test)?.step) : undefined
@@ -53,21 +53,19 @@ export function parseReportRequests(header: Pick<RecordingHeader, 'vehicleLoad' 
   const scenarioReport = ScenarioReportSchema.safeParse(fields(scenarioResponse?.result)?.report).data
   const gains = fields(config?.gains)
   const wind = fields(config?.wind)
-  const environment = fields(config?.environment)
-  const terrain = fields(environment?.terrain)
-  const surfaces = terrain && Array.isArray(terrain.heightsM)
-    ? { ...environment, terrain: { ...terrain, heightsM: { recordedSampleCount: terrain.heightsM.length } } }
-    : config?.environment
   const rateStepAxis = step?.type === 'rate' && typeof step.axis === 'string' && Object.hasOwn(rotationAxis, step.axis)
     ? rotationAxis[step.axis as keyof typeof rotationAxis] : undefined
   return {
-    vehicle, propulsion: load?.type === 'vehicle.load' ? load.propulsion : undefined,
+    vehicle, vehicleValue: load?.type === 'vehicle.load' ? load.vehicle : undefined,
+    propulsion: load?.type === 'vehicle.load' ? load.propulsion : undefined,
     aero: load?.type === 'vehicle.load' ? load.aero : undefined,
-    config, environment: surfaces, wind, controllerMode, gains, rateStepAxis, scenarioReport,
+    config, environment: config?.environment, wind, controllerMode, gains, rateStepAxis, scenarioReport,
     thrustFactor: (flight ? controller?.thrustModelFactor : config?.thrustModelFactor) ?? gains?.THR_MDL_FAC,
     turbulence: fields(wind?.turbulence), sensors: config?.sensors, scenarioRequest, test: stepTest ? start.test : undefined,
     airmode: flight ? controller?.airmode : config?.airmode,
     loadMissing: load?.type !== 'vehicle.load', startMissing: config === undefined,
+    loadLine: header.vehicleLoad, startLine: header.startRequest,
+    requestKind: flight ? 'flight' : scenario ? 'scenario' : stepTest ? 'step-test' : undefined,
   }
 }
 

@@ -32,6 +32,7 @@ import { verifyRecording } from '../../electron/main/telemetry/verify'
 import { flightStartForView, flightStepForView } from '../../electron/ipc/handlers'
 import { unwrap } from '../../src/services/api'
 import type { ReadyItem } from '../../src/domain/propulsion'
+import type { SensorPayload } from '../../src/domain/sensors'
 import { telemetryChannels } from '../../src/domain/telemetry-channels'
 import { simWind } from '../../src/domain/wind'
 import { EngineFlightSource, idleFrame, MAX_STEP_MS, stepsForElapsed, toEngineSetpoint, toFlightFrame, type EngineFlightSourceOptions } from '../../src/features/flight/EngineFlightSource'
@@ -630,6 +631,14 @@ describe('IPC validation', () => {
   })
 })
 
+const sensorEffects = { noiseSigma: 0.03, vibrationSigma: 0.01, bias: null, randomWalk: 0.02, delaySteps: 2, range: null }
+const sensors = {
+  seed: -12, gyro: sensorEffects,
+  accelerometer: { ...sensorEffects, delaySteps: null, mountPositionM: v3(0.01, 0, 0) },
+  barometer: { referenceAltitudeM: 1000, referenceTemperatureK: null, sigmaPa: null, biasPa: null, periodSteps: 3, delaySteps: null },
+  gps: { positionSigmaHorizontalM: null, positionSigmaVerticalM: null, velocitySigmaMps: null, periodSteps: 3, delaySteps: 1 },
+} satisfies SensorPayload
+
 // ---- a real engine session through the same handlers -------------------------------------------------------
 
 const binaryPath = join(__dirname, '../../simulation-engine/target/release', process.platform === 'win32' ? 'drone-engine.exe' : 'drone-engine')
@@ -874,6 +883,126 @@ describe('6.5 on the real NDJSON engine', () => {
     }
     expect(replayed).toEqual(one.rows.filter((_, i) => i % 10 === 0))
   }), 30000)
+
+  it('records post-step sensors reproducibly across chunks, recording schedules and log replay', async () => withProtocol(async ({ result }) => {
+    await result(load)
+    const initial = { ...baseStart, environment: free }
+    const duration = 12
+    const fly = async (chunk: number, model?: SensorPayload | null, sampleEverySteps?: number) => {
+      const started = FlightSessionStartResultSchema.parse(await result(start({ ...initial, sensors: model, sampleEverySteps })))
+      const rows = [...(started.samples?.rows ?? [])]
+      let advanced!: ReturnType<typeof FlightSessionStepResultSchema.parse>
+      for (let left = duration; left > 0; left -= chunk) {
+        advanced = FlightSessionStepResultSchema.parse(await result(step(Math.min(left, chunk), rates)))
+        rows.push(...(advanced.samples?.rows ?? []))
+      }
+      return { started, advanced, rows }
+    }
+    const off = await fly(duration)
+    expect(await fly(duration, null)).toEqual(off)
+    expect(await fly(duration, { seed: 9, gyro: null, accelerometer: null, barometer: null, gps: null })).toEqual(off)
+    expect(off.started.channels).toBeUndefined()
+
+    const plain = await fly(duration, undefined, 1)
+    const run = await fly(duration, sensors, 1)
+    const { channels } = run.started
+    const read = (row: number, channel: string) => run.rows[row]?.[channels!.indexOf(channel)]
+    expect(channels?.slice(0, plain.started.channels!.length)).toEqual(plain.started.channels)
+    expect(run.rows.map((row) => row.slice(0, plain.started.channels!.length))).toEqual(plain.rows)
+    expect(run.advanced.diagnostic).toEqual(off.advanced.diagnostic)
+    expect(run.advanced.stateHash).not.toBe(off.advanced.stateHash)
+    expect(run.rows[0]!.slice(plain.started.channels!.length).every((value) => value === null)).toBe(true)
+    expect(read(1, 'sensor.gyro.x')).toBeNull()
+    expect(read(2, 'sensor.gyro.x')).toBeNull()
+    expect(read(3, 'sensor.gyro.x')).toEqual(expect.any(Number))
+    expect(read(1, 'sensor.gps.position.z')).toBeNull()
+    expect(read(2, 'sensor.gps.position.z')).toBe(read(1, 'state.com.z'))
+    expect(read(2, 'sensor.gps.velocity.z')).toBe(read(1, 'state.velocity.z'))
+    expect(read(2, 'sensor.gps.velocity.z')).not.toBe(read(0, 'state.velocity.z'))
+    expect(read(4, 'sensor.gps.position.z')).toBe(read(2, 'sensor.gps.position.z'))
+    expect(read(5, 'sensor.gps.position.z')).toBe(read(4, 'state.com.z'))
+    expect(read(1, 'sensor.barometer.altitude')).toBeCloseTo(sensors.barometer.referenceAltitudeM + read(1, 'state.com.z')!, 8)
+    expect(read(3, 'sensor.barometer.pressure')).toBe(read(1, 'sensor.barometer.pressure'))
+    expect(read(4, 'sensor.barometer.pressure')).not.toBe(read(3, 'sensor.barometer.pressure'))
+
+    const otherSeed = await fly(duration, { ...sensors, seed: sensors.seed + 1 }, 1)
+    const gyroX = channels!.indexOf('sensor.gyro.x')
+    expect(otherSeed.rows.map((row) => row[gyroX])).not.toEqual(run.rows.map((row) => row[gyroX]))
+    expect(otherSeed.advanced.stateHash).not.toBe(run.advanced.stateHash)
+    expect((await fly(5, sensors)).advanced.stateHash).toBe(run.advanced.stateHash)
+    const decimated = await fly(5, sensors, 3)
+    expect(decimated.advanced.stateHash).toBe(run.advanced.stateHash)
+    expect(decimated.rows).toEqual(run.rows.filter((_, i) => i % 3 === 0))
+    const chunked = await fly(5, sensors, 1)
+    expect(chunked.rows).toEqual(run.rows)
+    expect(chunked.advanced.stateHash).toBe(run.advanced.stateHash)
+
+    const log = FlightSessionLogResultSchema.parse(await result(getLog))
+    expect(log.start.sensors).toEqual(sensors)
+    const restarted = FlightSessionStartResultSchema.parse(await result(log.start))
+    const replayed = [...restarted.samples!.rows]
+    let replayedHash = ''
+    for (const input of log.steps) {
+      const advanced = FlightSessionStepResultSchema.parse(await result(input))
+      replayed.push(...advanced.samples!.rows)
+      replayedHash = advanced.stateHash
+    }
+    expect(replayed).toEqual(run.rows)
+    expect(replayedHash).toBe(run.advanced.stateHash)
+  }))
+
+  it('records sensors for both scenario controllers and rejects bad inputs at their paths', async () => withProtocol(async ({ request, result }) => {
+    await result(load)
+    const config = { airDensityKgM3, cutoff }
+    const script = [{ fromS: 0, attitude: { type: 'euler', roll: 0, pitch: 0, yaw: 0 }, yawRateRadps: 0, zM: null, zVelocityMps: 0 }]
+    for (const control of [
+      { script },
+      { script: [], flightScript: [{ fromS: 0, command: { type: 'hold' } }] },
+    ]) {
+      const scenario = { type: 'custom', scenario: { name: 'sensor readings', durationS: dtS * 5, modifications: [], checks: [], ...control } }
+      const run = async (overrides: object) => ScenarioRunResultSchema.parse(await result({
+        type: 'scenario.run', ...ScenarioRunParamsSchema.parse({ scenario, config: { ...config, ...overrides } }),
+      }))
+      const off = await run({})
+      expect(await run({ sensors: null })).toEqual(off)
+      const active = await run({ sensors, sampleEverySteps: 1 })
+      expect(active.stateHash).not.toBe(off.stateHash)
+      expect(active.report).toEqual({ ...off.report, finalStateHash: active.stateHash })
+      expect(active.channels).toContain('sensor.gps.velocity.z')
+      expect(active.samples?.steps).toEqual([0, 1, 2, 3, 4, 5])
+      const gpsZ = active.channels!.indexOf('sensor.gps.velocity.z')
+      const plantZ = active.channels!.indexOf('state.velocity.z')
+      expect(active.samples?.rows[1]?.[gpsZ]).toBeNull()
+      expect(active.samples?.rows[2]?.[gpsZ]).toBe(active.samples?.rows[1]?.[plantZ])
+      expect((await run({ sensors })).stateHash).toBe(active.stateHash)
+    }
+
+    const scenario = { type: 'builtin', name: 'balanced_hover' }
+    for (const [model, path] of [
+      [{ ...sensors, seed: Number.MAX_SAFE_INTEGER + 1 }, 'seed'],
+      [{ ...sensors, gyro: { ...sensors.gyro, delaySteps: 0.5 } }, 'gyro.delaySteps'],
+      [{ ...sensors, gyro: { ...sensors.gyro, noiseSigma: -1 } }, 'gyro.noiseSigma'],
+      [{ ...sensors, gyro: { ...sensors.gyro, range: 0 } }, 'gyro.range'],
+      [{ ...sensors, accelerometer: { ...sensors.accelerometer, mountPositionM: [0, 0] } }, 'accelerometer.mountPositionM'],
+      [{ ...sensors, barometer: { ...sensors.barometer, referenceAltitudeM: 11001 } }, 'barometer.referenceAltitudeM'],
+      [{ ...sensors, barometer: { ...sensors.barometer, referenceTemperatureK: 0 } }, 'barometer.referenceTemperatureK'],
+      [{ ...sensors, barometer: { ...sensors.barometer, periodSteps: 0 } }, 'barometer.periodSteps'],
+      [{ ...sensors, gps: { ...sensors.gps, velocitySigmaMps: -1 } }, 'gps.velocitySigmaMps'],
+      [{ ...sensors, gps: { ...sensors.gps, delaySteps: undefined } }, 'gps.delaySteps'],
+      [{ ...sensors, gps: { ...sensors.gps, delayMs: 1 } }, 'gps.delayMs'],
+    ] as const) {
+      const params = { ...baseStart, sensors: model }
+      const scenarioParams = { scenario, config: { ...config, sensors: model } }
+      expect(FlightSessionStartParamsSchema.safeParse(params).success).toBe(false)
+      expect(ScenarioRunParamsSchema.safeParse(scenarioParams).success).toBe(false)
+      expect(await request({ type: 'flight.session.start', ...params })).toMatchObject({
+        ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining(`sensors.${path}`) },
+      })
+      expect(await request({ type: 'scenario.run', ...scenarioParams })).toMatchObject({
+        ok: false, error: { code: 'INVALID_PARAMS', message: expect.stringContaining(`config.sensors.${path}`) },
+      })
+    }
+  }))
 
   it('samples the step that reaches cut-off and sends empty arrays after it', async () => withProtocol(async ({ result }) => {
     await result(load)
@@ -1723,6 +1852,29 @@ describe('a real engine session', () => {
     await writeFile(path, original)
     const controller = new AbortController()
     expect(await verify(controller.signal, vi.fn((step) => { if (step > 0) controller.abort() }))).toEqual({ status: 'cancelled' })
+  }))
+
+  it('records the sensor channels of flights and scenarios, and none when every sensor is off', async () => withRecordingStore(sup, async ({ store, recorder, recording }) => {
+    const { airDensityKgM3, cutoff } = startInput()
+    const record = async (model: SensorPayload) => {
+      const flight = unwrap(await flightStart(sup, { ...startInput(), recording, sensors: model }, recorder))
+      const step = unwrap(await flightStep(sup, recordStep(), recorder))
+      expect([flight, step]).not.toContainEqual(expect.objectContaining({ recordingError: expect.anything() }))
+      unwrap(await flightEnd(sup, recorder))
+      const scenario = unwrap(await scenarioRun(sup, { ...quad, recording, config: { airDensityKgM3, cutoff, sensors: model },
+        scenario: { type: 'builtin', name: 'balanced_hover' },
+      }, recorder))
+      return Promise.all([flight, scenario].map(async ({ recordingId }) => (await getRecording(store, recordingId!)).summary))
+    }
+    const named = (summary: Awaited<ReturnType<typeof record>>[number]) => summary.header!.channels.filter(({ name }) => name.startsWith('sensor.')).length
+    for (const summary of await record(sensors)) {
+      expect(summary.end?.status).toBe('completed')
+      expect(named(summary)).toBeGreaterThan(0)
+    }
+    for (const summary of await record({ seed: 1, gyro: null, accelerometer: null, barometer: null, gps: null })) {
+      expect(summary.end?.status).toBe('completed')
+      expect(named(summary)).toBe(0)
+    }
   }))
 
   it('reads scenario samples and step-test trace channels from disk', async () => withRecordingStore(sup, async ({ store, recorder, recording }) => {

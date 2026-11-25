@@ -10,7 +10,9 @@
  * we do not trust blindly).
  */
 import { z } from 'zod'
+import { ISA_MAX_ALTITUDE_M, ISA_MIN_ALTITUDE_M } from '../../../src/domain/atmosphere'
 import type { SimFlightEnvironment } from '../../../src/domain/environment'
+import type { SensorPayload } from '../../../src/domain/sensors'
 
 export const PROTOCOL_VERSION = 2
 
@@ -399,6 +401,38 @@ export const MAX_SESSION_STEPS = 100
 
 // Zod's int() limits JSON numbers to the safe integer range, as in engine-host/src/telemetry.rs.
 const sampleEverySteps = z.number().int().positive().optional()
+const delaySteps = z.int().nonnegative().nullable()
+const periodSteps = z.int().positive()
+const sigma = nonnegative.nullable()
+const imuSensor = z.strictObject({
+  noiseSigma: sigma,
+  vibrationSigma: sigma,
+  bias: vec3.nullable(),
+  randomWalk: sigma,
+  delaySteps,
+  range: positive.nullable(),
+})
+export const SensorsSchema = z.strictObject({
+  seed: z.int(),
+  gyro: imuSensor.nullable(),
+  accelerometer: imuSensor.extend({ mountPositionM: vec3 }).nullable(),
+  barometer: z.strictObject({
+    referenceAltitudeM: num.min(ISA_MIN_ALTITUDE_M).max(ISA_MAX_ALTITUDE_M),
+    referenceTemperatureK: positive.nullable(),
+    sigmaPa: sigma,
+    biasPa: num.nullable(),
+    periodSteps,
+    delaySteps,
+  }).nullable(),
+  gps: z.strictObject({
+    positionSigmaHorizontalM: sigma,
+    positionSigmaVerticalM: sigma,
+    velocitySigmaMps: sigma,
+    periodSteps,
+    delaySteps,
+  }).nullable(),
+}) satisfies z.ZodType<SensorPayload>
+
 const telemetrySamples = z.strictObject({
   steps: z.array(z.number().int().nonnegative()),
   rows: z.array(z.array(z.number().nullable())),
@@ -432,6 +466,7 @@ export const FlightSessionStartParamsSchema = z.strictObject({
   /** Selects FlightLoop for the session, with the initial mode and fixed mixer settings. */
   controller: z.strictObject({ mode: flightMode, ...mixerShape }).optional(),
   sampleEverySteps,
+  sensors: SensorsSchema.nullable().optional(),
 })
 export type FlightSessionStartParams = z.infer<typeof FlightSessionStartParamsSchema>
 
@@ -644,6 +679,7 @@ export const ScenarioConfigSchema = z.strictObject({
   startPositionM: vec3.optional(),
   startClearanceM: StartClearanceSchema.optional(),
   sampleEverySteps,
+  sensors: SensorsSchema.nullable().optional(),
 })
 export type ScenarioConfigParams = z.infer<typeof ScenarioConfigSchema>
 

@@ -11,7 +11,7 @@
 use crate::engine::{controlled, loaded_vehicle, manual_flight, parse_environment, setpoint, step_manual, step_manual_observed};
 use crate::flight_environment;
 use crate::telemetry::{ControllerKind, SampleEverySteps, Samples, Sampling};
-use crate::protocol::{present, ControllerRequest, ErrorCode, FlightLoopDiagnostic, FlightModeRequest, Response};
+use crate::protocol::{parse_sensors, present, ControllerRequest, ErrorCode, FlightLoopDiagnostic, FlightModeRequest, Response};
 use engine_core::aero::BodyDrag;
 use engine_core::auto_modes::ReturnParams;
 use engine_core::closed_loop::{ClosedLoop, ControlDiagnostic};
@@ -85,6 +85,7 @@ struct StartParams {
     controller: Option<ManualControllerParams>,
     #[serde(default, deserialize_with = "present")]
     sample_every_steps: Option<SampleEverySteps>,
+    sensors: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -301,14 +302,16 @@ pub fn start(
             Err(e) => return bad(e),
         }
     };
-    let sampling = p.sample_every_steps.map(|every| {
-        let kind = match &controller {
-            SessionController::Legacy(_) => ControllerKind::AttitudeHold,
-            SessionController::Manual { .. } => ControllerKind::FlightLoop,
-        };
-        Sampling::new(every, vehicle, propulsion, kind)
-    });
-    let session = Session {
+    let sensors = match parse_sensors(p.sensors, "sensors") {
+        Ok(sensors) => sensors,
+        Err(e) => return bad(e),
+    };
+    let kind = match &controller {
+        SessionController::Legacy(_) => ControllerKind::AttitudeHold,
+        SessionController::Manual { .. } => ControllerKind::FlightLoop,
+    };
+    let sampling = Sampling::new(p.sample_every_steps, sensors, vehicle, propulsion, kind);
+    let mut session = Session {
         sim, controller, air_density_kg_m3: rho, start_request: line, step_requests: Vec::new(), sampling,
     };
     let result = json!({
@@ -316,12 +319,14 @@ pub fn start(
         "maxStepsPerRequest": MAX_SESSION_STEPS,
         "diagnostic": diagnostic(&session),
     });
-    let response = if let Some(sampling) = &session.sampling {
-        let mut samples = Samples::default();
+    let mut samples = Samples::default();
+    if let Some(sampling) = &mut session.sampling {
         match &session.controller {
             SessionController::Legacy(cl) => sampling.attitude(&mut samples, &session.sim, cl, None),
             SessionController::Manual { loop_, .. } => sampling.flight_loop(&mut samples, &session.sim, loop_, None),
         }
+    }
+    let response = if let Some(sampling) = session.sampling.as_ref().filter(|s| s.recording()) {
         sampled_result(id, result, Some(sampling.channels()), samples)
     } else {
         Response::ok(id, result)
@@ -385,7 +390,7 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
                 Ok(s) => s,
                 Err(e) => return bad(format!("setpoint: {e}")),
             };
-            if let Some(sampling) = &session.sampling {
+            if let Some(sampling) = &mut session.sampling {
                 advance(&mut session.sim, cl.as_mut(), p.steps, ClosedLoop::flight, |cl, sim| {
                     let mut inputs = None;
                     cl.step_observed(sim, &sp, |rates| inputs = Some((sp, rates)));
@@ -408,7 +413,7 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
                     Err(e) => return bad(format!("setpoint: {e}")),
                 },
             };
-            let ran = if let Some(sampling) = &session.sampling {
+            let ran = if let Some(sampling) = &mut session.sampling {
                 advance(&mut session.sim, loop_.as_mut(), p.steps, FlightLoop::flight, |loop_, sim| {
                     let mut inputs = None;
                     step_manual_observed(loop_, sim, command, |sp| inputs = Some((command, sp)))?;
@@ -441,6 +446,7 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
     let (all, contacts_dropped) = session.sim.contacts();
     let contacts: Vec<_> = all.into_iter().filter(|c| within(c.start_s) || c.end_s.is_some_and(within)).collect();
     let hash = session.sim.state_hash_with(&session.controller.hash_words());
+    let hash = session.sampling.as_ref().map_or(hash, |sampling| sampling.extend_hash(hash));
     let result = json!({
         "stepsRun": ran,
         "diagnostic": diagnostic(session),
@@ -449,7 +455,7 @@ pub fn step(id: u64, mut params: Map<String, Value>, line: String, slot: &mut Op
         "endReason": end_reason(session),
         "stateHash": hash_hex(hash),
     });
-    if session.sampling.is_some() {
+    if session.sampling.as_ref().is_some_and(Sampling::recording) {
         sampled_result(id, result, None, samples)
     } else {
         Response::ok(id, result)

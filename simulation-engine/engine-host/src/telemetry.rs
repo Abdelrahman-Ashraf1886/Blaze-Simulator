@@ -9,6 +9,7 @@ use engine_core::{
     ground_effect::InvalidInput,
     hover_thrust::HoverThrustEstimate,
     propulsion::{MotorModel, Propulsion},
+    sensors::{ImuSample, Sensors},
     sim::Simulation,
     takeoff::TakeoffState,
     vehicle::Vehicle,
@@ -49,36 +50,59 @@ pub enum ControllerKind {
 }
 
 pub struct Sampling {
-    every: SampleEverySteps,
+    every: Option<SampleEverySteps>,
+    sensors: Option<Sensors>,
+    base_columns: usize,
     motors: Vec<MotorModel>,
     columns: Vec<String>,
     hover_column: usize,
 }
 
 impl Sampling {
-    pub fn new(every: SampleEverySteps, vehicle: &Vehicle, propulsion: &Propulsion, kind: ControllerKind) -> Self {
+    pub fn new(
+        every: Option<SampleEverySteps>, sensors: Option<Sensors>, vehicle: &Vehicle,
+        propulsion: &Propulsion, kind: ControllerKind,
+    ) -> Option<Self> {
+        if every.is_none() && sensors.is_none() {
+            return None;
+        }
         // Match Flight::new's definition/vehicle mapping (flight.rs:304-324).
         let motors = vehicle.definition.motors.iter().map(|motor| {
             let index = propulsion.definition.motors.iter().position(|p| p.part_id == motor.part_id)
                 .expect("Flight already checked motor propulsion data");
             propulsion.motors[index].clone()
         }).collect();
-        let (columns, hover_column) = channels(vehicle.definition.motors.len(), kind);
-        Self { every, motors, columns, hover_column }
+        let (mut columns, hover_column) = channels(vehicle.definition.motors.len(), kind);
+        let base_columns = columns.len();
+        if sensors.is_some() {
+            axes(&mut columns, "sensor.gyro", XYZ);
+            axes(&mut columns, "sensor.gyroClipped", XYZ);
+            axes(&mut columns, "sensor.accelerometer", XYZ);
+            axes(&mut columns, "sensor.accelerometerClipped", XYZ);
+            names(&mut columns, &["sensor.barometer.pressure", "sensor.barometer.altitude"]);
+            axes(&mut columns, "sensor.gps.position", XYZ);
+            axes(&mut columns, "sensor.gps.velocity", XYZ);
+        }
+        Some(Self { every, motors, columns, base_columns, hover_column, sensors })
     }
 
     pub fn channels(&self) -> &[String] {
         &self.columns
     }
 
-    pub fn due(&self, step: u64) -> bool {
-        step.is_multiple_of(self.every.0)
+    pub fn recording(&self) -> bool {
+        self.every.is_some()
+    }
+
+    pub fn extend_hash(&self, hash: u64) -> u64 {
+        self.sensors.as_ref().map_or(hash, |sensors| sensors.extend_hash(hash))
     }
 
     pub fn attitude(
-        &self, samples: &mut Samples, sim: &Simulation, controller: &ClosedLoop,
+        &mut self, samples: &mut Samples, sim: &Simulation, controller: &ClosedLoop,
         input: Option<(Setpoint, [f64; 3])>,
     ) {
+        let hover_column = self.hover_column;
         self.record(samples, sim, controller.flight(), |row| {
             row.push(0.0); // attitudeHold
             if let Some((sp, rates)) = input {
@@ -94,16 +118,17 @@ impl Sampling {
                 row.extend([sp.yaw_rate, sp.z.unwrap_or(MISSING), sp.z_velocity]);
             } else {
                 // The estimate is available before any controller step.
-                row.resize(self.hover_column, MISSING);
+                row.resize(hover_column, MISSING);
                 hover(row, controller.hover_thrust_estimate());
             }
         });
     }
 
     pub fn flight_loop(
-        &self, samples: &mut Samples, sim: &Simulation, controller: &FlightLoop,
+        &mut self, samples: &mut Samples, sim: &Simulation, controller: &FlightLoop,
         input: Option<(FlightCommand, FlightSetpoints)>,
     ) {
+        let hover_column = self.hover_column;
         self.record(samples, sim, controller.flight(), |row| {
             if let Some(((command, sp), snap)) = input.zip(controller.last_step()) {
                 row.extend([
@@ -152,15 +177,18 @@ impl Sampling {
                 hover(row, snap.hover_thrust);
                 flight_input(row, command);
             } else {
-                row.resize(self.hover_column, MISSING);
+                row.resize(hover_column, MISSING);
                 hover(row, controller.hover_thrust_estimate());
             }
         });
     }
 
-    fn record(&self, samples: &mut Samples, sim: &Simulation, flight: &Flight, controller: impl FnOnce(&mut Vec<f64>)) {
+    fn record(&mut self, samples: &mut Samples, sim: &Simulation, flight: &Flight, controller: impl FnOnce(&mut Vec<f64>)) {
         let state = sim.state();
-        if !self.due(state.steps) {
+        if let Some(sensors) = &mut self.sensors {
+            sensors.observe(state, sim.config());
+        }
+        if !self.every.is_some_and(|every| state.steps.is_multiple_of(every.0)) {
             return;
         }
         let mut row = Vec::with_capacity(self.columns.len());
@@ -199,12 +227,27 @@ impl Sampling {
         row.extend([loads.ground_effect_added_thrust_n, flag(loads.wind_above_range), flag(loads.wind_invalid)]);
         controller(&mut row);
         if state.steps == 0 {
-            row.resize(self.columns.len(), MISSING);
+            row.resize(self.base_columns, MISSING);
+        }
+        if let Some(sensors) = &self.sensors {
+            imu_sample(&mut row, sensors.gyro());
+            imu_sample(&mut row, sensors.accelerometer());
+            row.extend(sensors.barometer().map_or([MISSING; 2], |sample| {
+                [sample.pressure_pa, sample.altitude_m.unwrap_or(MISSING)]
+            }));
+            let gps = sensors.gps();
+            row.extend(gps.map_or([MISSING; 3], |sample| sample.position_m));
+            row.extend(gps.map_or([MISSING; 3], |sample| sample.velocity_mps));
         }
         debug_assert_eq!(row.len(), self.columns.len());
         samples.steps.push(state.steps);
         samples.rows.push(row);
     }
+}
+
+fn imu_sample(row: &mut Vec<f64>, sample: Option<ImuSample>) {
+    row.extend(sample.map_or([MISSING; 3], |s| s.value));
+    row.extend(sample.map_or([MISSING; 3], |s| s.clipped.map(flag)));
 }
 
 fn flag(value: bool) -> f64 {

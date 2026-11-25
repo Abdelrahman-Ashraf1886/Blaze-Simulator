@@ -41,10 +41,15 @@ function vehicleLoad(motorCount: number) {
 }
 
 describe('telemetry channel table against the real engine', () => {
-  it.each([4, 6])('matches both controllers with %i motors', (count) => {
+  it.each([[4, false], [6, false], [4, true], [6, true]] as const)(
+    'matches both controllers with %i motors and sensors enabled = %s', (count, enabled) => {
+    const sensors = enabled ? {
+      seed: 0, gyro: null, accelerometer: null, barometer: null,
+      gps: { positionSigmaHorizontalM: null, positionSigmaVerticalM: null, velocitySigmaMps: null, periodSteps: 2, delaySteps: null },
+    } : undefined
     const start = {
       type: 'flight.session.start', environment: { ground: null, obstacles: [] },
-      cutoff: { type: 'chargeMah', value: 1000 }, airDensityKgM3: 1.225, sampleEverySteps: 1,
+      cutoff: { type: 'chargeMah', value: 1000 }, airDensityKgM3: 1.225, sampleEverySteps: 1, sensors,
     }
     const inputs = [
       vehicleLoad(count),
@@ -70,7 +75,13 @@ describe('telemetry channel table against the real engine', () => {
     for (const [kind, id] of [['attitudeHold', 1], ['flightLoop', 3]] as const) {
       const initial = FlightSessionStartResultSchema.parse(results[id])
       const next = FlightSessionStepResultSchema.parse(results[id + 1])
-      const table = telemetryChannels(count, kind)
+      const table = telemetryChannels(count, kind, enabled)
+      if (enabled) {
+        const gpsZ = table.findIndex(({ name }) => name === 'sensor.gps.position.z')
+        expect(gpsZ).toBeGreaterThanOrEqual(0)
+        expect(initial.samples?.rows[0]?.[gpsZ]).toBeNull()
+        expect(next.samples?.rows[0]?.[gpsZ]).toBe(next.diagnostic.state.comM[2])
+      }
       expect(initial.channels).toEqual(table.map(({ name }) => name))
       expect(new Set(initial.channels).size).toBe(table.length)
       expect(initial.samples?.steps).toEqual([0])

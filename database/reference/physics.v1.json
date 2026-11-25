@@ -1532,6 +1532,139 @@
       ]
     },
     {
+      "id": "sensorFiltersPx4",
+      "title": "PX4 v1.13.3 sensor filters, gyro publication rate and GPS delay suggestion",
+      "note": "Firmware reference for telemetry sensor modelling. EKF2_GPS_DELAY is a labelled suggestion for a user-supplied receiver delay.",
+      "values": [
+        {
+          "key": "IMU_GYRO_CUTOFF",
+          "value": 40,
+          "unit": "Hz",
+          "min": 0,
+          "max": 1000,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/sensors/vehicle_angular_velocity/imu_gyro_parameters.c#L118",
+            "locator": "imu_gyro_parameters.c line 118: PARAM_DEFINE_FLOAT(IMU_GYRO_CUTOFF, 40.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Low-pass cutoff for gyro angular velocity. Zero disables the filter."
+        },
+        {
+          "key": "IMU_DGYRO_CUTOFF",
+          "value": 30,
+          "unit": "Hz",
+          "min": 0,
+          "max": 1000,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/sensors/vehicle_angular_velocity/imu_gyro_parameters.c#L160",
+            "locator": "imu_gyro_parameters.c line 160: PARAM_DEFINE_FLOAT(IMU_DGYRO_CUTOFF, 30.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Low-pass cutoff for gyro angular acceleration. Zero disables the filter."
+        },
+        {
+          "key": "IMU_ACCEL_CUTOFF",
+          "value": 30,
+          "unit": "Hz",
+          "min": 0,
+          "max": 1000,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/sensors/vehicle_acceleration/imu_accel_parameters.c#L46",
+            "locator": "imu_accel_parameters.c line 46: PARAM_DEFINE_FLOAT(IMU_ACCEL_CUTOFF, 30.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Low-pass cutoff for the primary accelerometer signal sent to controllers. Zero disables the filter."
+        },
+        {
+          "key": "IMU_GYRO_NF0_FRQ",
+          "value": 0,
+          "unit": "Hz",
+          "min": 0,
+          "max": 1000,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/sensors/vehicle_angular_velocity/imu_gyro_parameters.c#L51",
+            "locator": "imu_gyro_parameters.c line 51: PARAM_DEFINE_FLOAT(IMU_GYRO_NF0_FRQ, 0.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "First static gyro notch centre frequency. Zero disables this notch."
+        },
+        {
+          "key": "IMU_GYRO_NF0_BW",
+          "value": 20,
+          "unit": "Hz",
+          "min": 0,
+          "max": 100,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/sensors/vehicle_angular_velocity/imu_gyro_parameters.c#L66",
+            "locator": "imu_gyro_parameters.c line 66: PARAM_DEFINE_FLOAT(IMU_GYRO_NF0_BW, 20.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "First static gyro notch bandwidth. The notch is enabled by IMU_GYRO_NF0_FRQ."
+        },
+        {
+          "key": "IMU_GYRO_NF1_FRQ",
+          "value": 0,
+          "unit": "Hz",
+          "min": 0,
+          "max": 1000,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/sensors/vehicle_angular_velocity/imu_gyro_parameters.c#L85",
+            "locator": "imu_gyro_parameters.c line 85: PARAM_DEFINE_FLOAT(IMU_GYRO_NF1_FRQ, 0.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Second static gyro notch centre frequency. Zero disables this notch."
+        },
+        {
+          "key": "IMU_GYRO_NF1_BW",
+          "value": 20,
+          "unit": "Hz",
+          "min": 0,
+          "max": 100,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/sensors/vehicle_angular_velocity/imu_gyro_parameters.c#L100",
+            "locator": "imu_gyro_parameters.c line 100: PARAM_DEFINE_FLOAT(IMU_GYRO_NF1_BW, 20.0f);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Second static gyro notch bandwidth. The notch is enabled by IMU_GYRO_NF1_FRQ."
+        },
+        {
+          "key": "IMU_GYRO_RATEMAX",
+          "value": 400,
+          "unit": "Hz",
+          "min": 100,
+          "max": 2000,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/sensors/vehicle_angular_velocity/imu_gyro_parameters.c#L140",
+            "locator": "imu_gyro_parameters.c line 140: PARAM_DEFINE_INT32(IMU_GYRO_RATEMAX, 400);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Generic maximum gyro control-data publication rate. Multicopter startup sets the default to 800 Hz when the parameter is 400 Hz (rc.mc_defaults lines 13–16). Sensor filtering runs at the full raw rate."
+        },
+        {
+          "key": "EKF2_GPS_DELAY",
+          "value": 110,
+          "unit": "ms",
+          "min": 0,
+          "max": 300,
+          "source": "software-default",
+          "reference": {
+            "url": "https://github.com/PX4/PX4-Autopilot/blob/v1.13.3/src/modules/ekf2/ekf2_params.c#L89",
+            "locator": "ekf2_params.c line 89: PARAM_DEFINE_FLOAT(EKF2_GPS_DELAY, 110);",
+            "retrieved": "2026-11-25"
+          },
+          "condition": "Suggestion only: PX4 EKF2 assumes this GPS measurement delay relative to the IMU. Enter the delay for the configured receiver as its GPS position delay."
+        }
+      ]
+    },
+    {
       "id": "windShear",
       "title": "Wind shear roughness length (MIL-F-8785C)",
       "note": "Primary text read: MIL-F-8785C, 5 November 1980, from the EverySpec scan (the scan's text layer is poor; equations were read from page images). The unit ft is the specification's own and has no conversion in src/domain/units.ts: check isUnit before calling toSI (1 ft = 0.3048 m, exact). MIL-HDBK-1797 and 1797B were not obtained.",

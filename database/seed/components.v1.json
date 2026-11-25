@@ -1,7 +1,7 @@
 {
   "format": "blaze-uav.components",
   "version": 1,
-  "seedVersion": 4,
+  "seedVersion": 5,
   "note": "Built-in components. Every value was read on the manufacturer's page given in its reference on the date shown.",
   "components": [
     {
@@ -11,6 +11,49 @@
       "manufacturer": "Holybro",
       "notes": "USB power input 4.75–5.25 V; servo rail input 0–36 V (manufacturer page).",
       "specs": {
+        "imuName": {
+          "value": "ICM-42688-P",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://invensense.tdk.com/products/motion-tracking/6-axis/icm-42688-p/",
+            "retrieved": "2026-11-25",
+            "locator": "Product Features and Benefits"
+          },
+          "condition": "Low-noise figure from the sensor maker's product page; Holybro lists ICM-42688-P and BMI088 for this board, and DSK320X with BMI423 on the newer hardware version. Check which your board has."
+        },
+        "gyroNoiseDensity": {
+          "value": 2.8,
+          "unit": "mdps/√Hz",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://invensense.tdk.com/products/motion-tracking/6-axis/icm-42688-p/",
+            "retrieved": "2026-11-25",
+            "locator": "Product Features and Benefits"
+          },
+          "condition": "Low-noise figure from the sensor maker's product page; Holybro lists ICM-42688-P and BMI088 for this board, and DSK320X with BMI423 on the newer hardware version. Check which your board has."
+        },
+        "accelNoiseDensity": {
+          "value": 70,
+          "unit": "µg/√Hz",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://invensense.tdk.com/products/motion-tracking/6-axis/icm-42688-p/",
+            "retrieved": "2026-11-25",
+            "locator": "Product Features and Benefits"
+          },
+          "condition": "Low-noise figure from the sensor maker's product page; Holybro lists ICM-42688-P and BMI088 for this board, and DSK320X with BMI423 on the newer hardware version. Check which your board has."
+        },
+        "baroRmsNoise": {
+          "value": 0.012,
+          "unit": "mbar",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://www.te.com/usa-en/product-MS561101BA03-50.html",
+            "retrieved": "2026-11-25",
+            "locator": "p. 4, Resolution RMS, OSR 4096"
+          },
+          "condition": "VDD = 3 V, 25 deg C, oversampling 4096 (conversion time 8.22 ms typ., p. 3); the autopilot's actual oversampling setting may differ"
+        },
         "processor": {
           "value": "STM32H743 (FMU), STM32F103 (IO)",
           "source": "manufacturer",
@@ -517,6 +560,16 @@
       "manufacturer": "Holybro",
       "notes": "u-blox M10, IST8310 compass, 2.0 m CEP. Port type JST-GH-10P.",
       "specs": {
+        "gpsHorizontalCep": {
+          "value": 2.0,
+          "unit": "m",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-25",
+            "locator": "Holybro M10 GPS column"
+          }
+        },
         "role": {
           "value": "gps",
           "source": "manufacturer",
@@ -589,6 +642,16 @@
       "manufacturer": "Holybro",
       "notes": "u-blox M9N, IST8310 compass, 1.5 m CEP. Port type JST-GH-10P.",
       "specs": {
+        "gpsHorizontalCep": {
+          "value": 1.5,
+          "unit": "m",
+          "source": "manufacturer",
+          "reference": {
+            "url": "https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/standard-m10-m9n-m8n-gps/overview",
+            "retrieved": "2026-11-25",
+            "locator": "Holybro M9N GPS column"
+          }
+        },
         "role": {
           "value": "gps",
           "source": "manufacturer",

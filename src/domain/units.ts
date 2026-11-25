@@ -23,6 +23,8 @@
  * - AWG → cross-section (ASTM B258): d = 0.127 mm × 92^((36 − n)/39), A = π·d²/4.
  */
 
+import { STANDARD_GRAVITY } from './mass'
+
 export type Dimension =
   | 'length'
   | 'mass'
@@ -51,6 +53,9 @@ export type Dimension =
   | 'specificGasConstant'
   | 'inertia'
   | 'time'
+  | 'frequency'
+  | 'angularSpeedNoiseDensity'
+  | 'accelerationNoiseDensity'
 
 interface UnitDef {
   dimension: Dimension
@@ -63,6 +68,7 @@ interface UnitDef {
 }
 
 const LBF_N = 0.45359237 * 9.80665
+const RAD_PER_DEG = Math.PI / 180
 
 const awgDiameterM = (n: number) => 0.127e-3 * 92 ** ((36 - n) / 39)
 
@@ -98,12 +104,17 @@ export const UNITS = {
   'm/s': { dimension: 'speed', factor: 1 },
   mph: { dimension: 'speed', factor: 0.44704 },
   'm/s²': { dimension: 'acceleration', factor: 1 },
+  // Standard gravity uses g₀ here because g already denotes gram.
+  'g₀': { dimension: 'acceleration', factor: STANDARD_GRAVITY },
+  'm/s²/√Hz': { dimension: 'accelerationNoiseDensity', factor: 1 },
+  'µg/√Hz': { dimension: 'accelerationNoiseDensity', factor: 1e-6 * STANDARD_GRAVITY },
   // Gram-force of thrust per watt, as propeller and motor tables state efficiency.
   'g/W': { dimension: 'thrustPerPower', factor: 0.00980665 },
   '1': { dimension: 'dimensionless', factor: 1 },
   'kg/m³': { dimension: 'density', factor: 1 },
   'g/cm³': { dimension: 'density', factor: 1000 },
   Pa: { dimension: 'pressure', factor: 1 },
+  mbar: { dimension: 'pressure', factor: 100 }, // 1 bar = 100,000 Pa
   K: { dimension: 'temperature', factor: 1 },
   'K/km': { dimension: 'temperatureGradient', factor: 0.001 },
   'kg/kmol': { dimension: 'molarMass', factor: 0.001 },
@@ -111,12 +122,16 @@ export const UNITS = {
   'J/(kg·K)': { dimension: 'specificGasConstant', factor: 1 },
   '%': { dimension: 'ratio', factor: 0.01 },
   rpm: { dimension: 'angularSpeed', factor: (2 * Math.PI) / 60 },
-  'deg/s': { dimension: 'angularSpeed', factor: Math.PI / 180 },
+  'deg/s': { dimension: 'angularSpeed', factor: RAD_PER_DEG },
+  'rad/s/√Hz': { dimension: 'angularSpeedNoiseDensity', factor: 1 },
+  'deg/s/√Hz': { dimension: 'angularSpeedNoiseDensity', factor: RAD_PER_DEG },
+  'mdps/√Hz': { dimension: 'angularSpeedNoiseDensity', factor: 1e-3 * RAD_PER_DEG },
   'mm²': { dimension: 'area', factor: 1e-6 },
   'kg·m²': { dimension: 'inertia', factor: 1 },
   'g·cm²': { dimension: 'inertia', factor: 1e-7 },
   s: { dimension: 'time', factor: 1 },
   ms: { dimension: 'time', factor: 0.001 },
+  Hz: { dimension: 'frequency', factor: 1 },
   AWG: {
     dimension: 'area',
     toSI: (n) => (Math.PI * awgDiameterM(n) ** 2) / 4,

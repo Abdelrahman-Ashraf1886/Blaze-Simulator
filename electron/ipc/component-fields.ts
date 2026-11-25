@@ -7,6 +7,7 @@
  * a missing value stays missing, and checks report "cannot check" instead of
  * assuming one.
  */
+import { FLIGHT_CONTROLLER_SENSOR_FIELDS, GPS_SENSOR_FIELDS } from '../../src/domain/sensor-specs'
 import type { Dimension, Unit } from '../../src/domain/units'
 
 export const COMPONENT_CATEGORIES = [
@@ -261,6 +262,7 @@ export const COMPONENT_FIELDS: Record<ComponentCategory, readonly FieldDef[]> = 
     q('inputVoltageMax', 'Input voltage, maximum', 'voltage', 'V'),
     { key: 'ports', label: 'Ports', kind: 'ports' },
     int('pwmOutputs', 'PWM outputs', 0, 32),
+    ...FLIGHT_CONTROLLER_SENSOR_FIELDS,
     mass,
     ...size,
     mountPattern,
@@ -299,6 +301,7 @@ export const COMPONENT_FIELDS: Record<ComponentCategory, readonly FieldDef[]> = 
     q('supplyVoltageMin', 'Supply voltage, minimum', 'voltage', 'V'),
     q('supplyVoltageMax', 'Supply voltage, maximum', 'voltage', 'V'),
     q('supplyCurrent', 'Supply current', 'current', 'A', 'Put the operating state in the condition'),
+    ...GPS_SENSOR_FIELDS,
     mass,
     ...size,
   ],

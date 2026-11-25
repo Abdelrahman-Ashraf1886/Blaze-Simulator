@@ -60,6 +60,43 @@ describe('EngineSupervisor (real engine binary)', () => {
     expect(s.latencyMs).toBeGreaterThan(0)
   })
 
+
+  it('requests sent while the engine is dying fail on their own, not as an uncaught pipe error', async () => {
+    const uncaught: Error[] = []
+    const onUncaught = (e: Error) => { uncaught.push(e) }
+    process.on('uncaughtException', onUncaught)
+    try {
+      sup = new EngineSupervisor({ binaryPath, backoffMs: [50] })
+      sup.start()
+      // Several deaths: the write has to fall between the process ending and its 'exit' event.
+      for (let death = 0; death < 3; death++) {
+        await waitFor(sup, (s) => s.state === 'connected')
+        process.kill(sup.pid!)
+        const requests: Promise<unknown>[] = []
+        while (sup.status.state === 'connected') {
+          requests.push(sup.ping().catch((e: Error) => e))
+          await new Promise((r) => setImmediate(r))
+        }
+        for (const outcome of await Promise.all(requests)) expect(outcome).toBeDefined()
+      }
+      await waitFor(sup, (s) => s.state === 'connected')
+      await new Promise((r) => setTimeout(r, 50)) // let a late pipe error surface
+      expect(uncaught).toEqual([])
+    } finally {
+      process.off('uncaughtException', onUncaught)
+    }
+  }, 20_000)
+
+  it('refuses requests while it is stopping', async () => {
+    sup = new EngineSupervisor({ binaryPath })
+    sup.start()
+    await waitFor(sup, (s) => s.state === 'connected')
+    const stopped = sup.stop()
+    await expect(sup.ping()).rejects.toThrow('engine is stopping')
+    await stopped
+    expect(sup.status.state).toBe('stopped')
+  })
+
   it('restarts the engine after a crash', async () => {
     sup = new EngineSupervisor({ binaryPath, healthIntervalMs: 200, backoffMs: [50] })
     sup.start()

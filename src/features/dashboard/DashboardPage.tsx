@@ -112,6 +112,7 @@ export function DashboardPage() {
                         {r.title ?? r.projectName}
                         {r.title && <div className="truncate text-fg-muted">{r.projectName}</div>}
                       </Td>
+                      <Td className="text-fg-muted">{r.kind ?? '—'}</Td>
                       <Td className="num text-fg-muted">{formatTimestamp(r.startedAt)}</Td>
                       <Td className="num text-right">
                         {r.durationS.toFixed(1)}

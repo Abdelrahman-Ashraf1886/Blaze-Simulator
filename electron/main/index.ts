@@ -360,8 +360,11 @@ async function start(): Promise<void> {
   engine.start()
 
   mainWindow = createWindow()
-  mainWindow.on('close', () => { void recorder?.shutdown('window closed') })
-  mainWindow.on('closed', () => (mainWindow = null))
+  // 'closed', not 'close': a cancelled close must not end recording.
+  mainWindow.on('closed', () => {
+    mainWindow = null
+    void recorder?.shutdown('window closed')
+  })
 }
 
 app.on('window-all-closed', () => app.quit())

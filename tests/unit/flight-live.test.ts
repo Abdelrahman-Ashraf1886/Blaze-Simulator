@@ -2008,9 +2008,15 @@ describe('a real engine session', () => {
       return Promise.all([flight, scenario].map(async ({ recordingId }) => (await getRecording(store, recordingId!)).summary))
     }
     const named = (summary: Awaited<ReturnType<typeof record>>[number]) => summary.header!.channels.filter(({ name }) => name.startsWith('sensor.')).length
-    for (const summary of await record(sensors)) {
+    const recordedOnly = await record(sensors)
+    for (const summary of recordedOnly) {
       expect(summary.end?.status).toBe('completed')
       expect(named(summary)).toBeGreaterThan(0)
+    }
+    // Filtered rate and angular acceleration, three axes each.
+    for (const [i, summary] of (await record({ ...sensors, flyOnGyro: gyroFilters })).entries()) {
+      expect(summary.end?.status).toBe('completed')
+      expect(named(summary)).toBe(named(recordedOnly[i]!) + 6)
     }
     for (const summary of await record({ seed: 1, gyro: null, accelerometer: null, barometer: null, gps: null })) {
       expect(summary.end?.status).toBe('completed')

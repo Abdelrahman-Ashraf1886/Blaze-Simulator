@@ -43,17 +43,19 @@ function PropulsionTable({ propulsion, motors }: { propulsion: Propulsion; motor
     if (group) group.numbers.push(number)
     else groups.set(key, { settings, numbers: [number] })
   }
-  return <ReportTable title="Propulsion" columns={[
-    'Motors', 'kV (rpm/V)', 'Resistance (Ω)', 'No-load current (A)', 'Thrust coefficient (N·s²)',
-    'Torque coefficient (N·m·s²)', 'Inertia (kg·m²)', 'Reference density (kg/m³)', 'Throttle map',
-  ]} rows={Array.from(groups.values(), ({ numbers, settings: m }) => [
+  const columns = Array.from(groups.values(), ({ numbers, settings: m }) => [
     motorLabel(numbers), reportNumber(fromSI(m.kvRadPerSV, 'rpm/V')), reportNumber(m.resistanceOhm),
     reportNumber(m.noLoadCurrentA), reportNumber(m.thrustCoefNs2), reportNumber(m.torqueCoefNms2),
     reportNumber(m.inertiaKgM2), reportNumber(m.referenceDensityKgM3),
     m.throttleMap ? 'Measured points: ' + m.throttleMap.map(([throttle, duty]) =>
       quantity(fromSI(throttle, '%'), '%') + ' → ' + quantity(fromSI(duty, '%'), '%')).join(', ')
       : 'No measured map recorded (ideal ESC)',
-  ])} />
+  ])
+  // One column per group of identical motors, so a page is never as wide as the list of properties.
+  return <ReportTable title="Propulsion" columns={['Property', ...columns.map(([label]) => label!)]} rows={[
+    'kV (rpm/V)', 'Resistance (Ω)', 'No-load current (A)', 'Thrust coefficient (N·s²)', 'Torque coefficient (N·m·s²)',
+    'Inertia (kg·m²)', 'Reference density (kg/m³)', 'Throttle map',
+  ].map((property, index) => [property, ...columns.map((cells) => cells[index + 1]!)])} />
 }
 
 export function ReportBuild({ recorded }: { recorded: ReportData['recorded'] }) {

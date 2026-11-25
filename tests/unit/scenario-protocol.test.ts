@@ -693,9 +693,10 @@ describe('a real engine', () => {
     // Acceptance limits fixed before running. True hover rate RMS must be below
     // the raw per-axis sample sigma. Tilt RMS must stay below that rate applied
     // for the one-second hold. The 10–90% rise must fit in one hold interval.
-    // Overshoot must stay within the 10% margin above the 90% rise crossing,
-    // symmetric about the command. These are fixture criteria.
-    const limits = { rateRms: sigma, tiltRms: sigma * holdS, riseS: holdS, overshootPct: (1 - opts.riseUpper) * 100 }
+    // Overshoot is reported, not judged (user, 2026-11-25): no PX4 acceptance figure
+    // was found (phase-5-flight-control.md, step definitions), and the 10% set before
+    // the first run failed with perfect state too (11.8% against 13.2% on the gyro).
+    const limits = { rateRms: sigma, tiltRms: sigma * holdS, riseS: holdS }
     const input = stepTestInput(gate, {
       step: { type: 'rate', axis: 'roll', amplitudeRadps }, holdS, durationS, decimationSteps: 10,
     }, {})!
@@ -748,13 +749,12 @@ describe('a real engine', () => {
     }
     const { response, measured, riseS, overshootPct } = await stepRun(model)
     const perfect = await stepRun(undefined)
-    console.info('GYRO step, perfect state', perfect.riseS, perfect.overshootPct)
+    console.info('GYRO step, perfect state', JSON.stringify({ riseS: perfect.riseS, overshootPct: perfect.overshootPct }))
     console.info('GYRO catalogue', JSON.stringify({ sigma, limits, nominal, riseS, overshootPct, excessiveSigma, excessive }))
     expect.soft(nominal.tiltRmsRad).toBeLessThan(limits.tiltRms)
     expect.soft(nominal.rateRmsRadps).toBeLessThan(limits.rateRms)
     expect.soft(riseS).not.toBeNull()
     expect.soft(riseS!).toBeLessThan(limits.riseS)
-    expect.soft(overshootPct).toBeLessThan(limits.overshootPct)
     expect.soft(excessive.rawGyroRmsRadps).toBeGreaterThan(excessiveSigma / 2)
     expect.soft(excessive.clipped).toBe(0)
     expect.soft(excessive.motorActivityRms).toBeGreaterThan(nominal.motorActivityRms * 10)

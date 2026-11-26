@@ -32,6 +32,26 @@ describe('third-party notices', () => {
     })
   })
 
+  it('uses upstream licence evidence only for the reviewed package version and ecosystem', () => {
+    const pkg = { ...sample, name: 'rstar', version: '0.13.1', kind: 'crate', licence: 'MIT OR Apache-2.0' }
+    fixture({ NOTICE: 'Local attribution' }, (directory) => {
+      const entry = packageNotice({ ...pkg, directory })
+      expect(entry.texts.map(([file]: [string, string]) => file)).toEqual([
+        'NOTICE', 'rstar-LICENSE-APACHE', 'rstar-LICENSE-MIT',
+      ])
+      expect(renderNotices([entry])).toContain(
+        'https://github.com/georust/rstar (default branch, retrieved 2026-11-26)',
+      )
+      expect(() => packageNotice({ ...pkg, directory, version: '0.13.2' }))
+        .toThrow('crate rstar@0.13.2: missing licence file')
+      expect(() => packageNotice({ ...pkg, directory, kind: 'npm' }))
+        .toThrow('npm rstar@0.13.1: missing licence file')
+    })
+    fixture({ LICENSE: 'Local licence' }, (directory) => {
+      expect(packageNotice({ ...pkg, directory }).texts).toEqual([['LICENSE', 'Local licence']])
+    })
+  })
+
   it('rejects unknown identifiers even when an alternative is known', () => {
     fixture({ LICENSE: 'Licence text' }, (directory) => {
       expect(() => packageNotice({ ...sample, directory, licence: 'MIT OR MadeUp-1.0' }))
@@ -63,7 +83,9 @@ describe('third-party notices', () => {
 
   it('lists all discovered runtime crates and npm packages and matches the generated file', async () => {
     const notice = read(thirdPartyNoticesPath(false, '', root))
-    const { entries, issues, otherSources } = await collectNotices({ draft: true })
+    const { entries, issues, otherSources } = await collectNotices()
+    expect(issues).toEqual([])
+    expect(notice).not.toContain('DRAFT')
     for (const entry of entries) expect(notice).toContain(`${entry.name}@${entry.version} [${entry.kind}]`)
     expect(notice).toBe(renderNotices(entries, issues, otherSources))
     expect(notice).toContain(read(join(root, 'simulation-engine/NOTICE-PX4.md')).trimEnd())

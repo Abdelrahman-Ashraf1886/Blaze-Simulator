@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const output = join(root, 'build/notices/THIRD-PARTY-NOTICES.txt')
+const upstreamDirectory = join(root, 'build/notices/upstream')
 const read = (file) => readFileSync(file, 'utf8')
 const json = (file) => JSON.parse(read(file))
 const slash = (path) => path.replaceAll('\\', '/')
@@ -69,6 +70,8 @@ const nonTextFile = /\.(?:html?|json|spdx)$/i
 
 class MissingLicence extends Error {}
 
+const upstreamLicences = json(join(upstreamDirectory, 'manifest.json'))
+
 export function packageNotice({ name, version, licence, directory, source, kind, declaredFile }) {
   const key = name + '@' + version
   const label = kind + ' ' + key
@@ -84,7 +87,14 @@ export function packageNotice({ name, version, licence, directory, source, kind,
   const texts = files.sort(compare).map((file) => [slash(file), read(join(directory, file)).trimEnd()])
     .filter(([, body]) => body.trim())
   if (!texts.some(([file]) => file === slash(declaredFile ?? '') || !/^notice(?:$|[._-])/i.test(file))) {
-    throw new MissingLicence(label + ': missing licence file')
+    const upstream = upstreamLicences.find((evidence) =>
+      evidence.kind === kind && evidence.package === name && evidence.version === version)
+    if (!upstream) throw new MissingLicence(label + ': missing licence file')
+    const upstreamTexts = upstream.files.map((file) => [file, read(join(upstreamDirectory, file)).trimEnd()])
+    if (!upstreamTexts.length || upstreamTexts.some(([, body]) => !body.trim())) {
+      throw new Error(label + ': empty upstream licence evidence')
+    }
+    return { name, version, expression, source, kind, texts: [...texts, ...upstreamTexts], upstream }
   }
   return { name, version, expression, source, kind, texts }
 }
@@ -235,8 +245,12 @@ export function renderNotices(entries, issues = [], otherSources = '') {
     sections.push('=== ' + expression + ' ===')
     const sorted = groups.get(expression).sort((a, b) =>
       compare(a.name, b.name) || compare(a.version, b.version) || compare(a.kind, b.kind))
-    for (const { name, version, kind, source, texts } of sorted) {
-      sections.push([name + '@' + version + ' [' + kind + ']', 'Source: ' + source,
+    for (const { name, version, kind, source, texts, upstream } of sorted) {
+      const provenance = upstream
+        ? ['Upstream licence evidence: ' + upstream.url + ' (' + upstream.reference +
+          ', retrieved ' + upstream.retrieved + ')']
+        : []
+      sections.push([name + '@' + version + ' [' + kind + ']', 'Source: ' + source, ...provenance,
         ...texts.map(([file, body]) => (file ? '\n-- ' + file + ' --\n' : '\n') + body)].join('\n'))
     }
   }

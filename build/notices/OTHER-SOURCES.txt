@@ -14,8 +14,25 @@ simulation-engine/engine-core/src/ground_effect.rs:1–86.
 
 SplitMix64
 The constants and transition in simulation-engine/engine-core/src/turbulence.rs:54–70
-cite https://prng.di.unimi.it/splitmix64.c. The cited upstream file was unavailable in
-the local source materials used for this notice. Its licence header remains unverified.
+cite https://prng.di.unimi.it/splitmix64.c. The upstream licence statement
+in splitmix64.c:1–16 reads as follows.
+
+/*  Written in 2015 by Sebastiano Vigna (vigna@acm.org)
+
+To the extent possible under law, the author has dedicated all copyright
+and related and neighboring rights to this software to the public domain
+worldwide.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 
 Chromium gamepad tables (BSD-style)
 src/features/input/playstation.ts:1,16–20 follows device/gamepad/gamepad_id_list.cc:153–158,

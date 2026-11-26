@@ -13,9 +13,11 @@ export const ignoreRealMouse = (app: ElectronApplication) =>
 export async function launchApp(
   userData: string,
   extraEnv: Record<string, string> = {},
+  /** Chromium switches before the app path, e.g. --force_high_performance_gpu. */
+  switches: string[] = [],
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({
-    args: [root],
+    args: [...switches, root],
     cwd: root,
     // BLAZE_UAV_TEST_HOOKS exposes window.__blazeTest (src/lib/test-hooks.ts); pass '0' to launch without.
     env: { ...process.env, BLAZE_UAV_USER_DATA: userData, ELECTRON_RENDERER_URL: '', BLAZE_UAV_TEST_HOOKS: '1', ...extraEnv },

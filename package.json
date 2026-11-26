@@ -16,6 +16,7 @@
     "test": "npm run engine:build && vitest run",
     "test:e2e": "npm run build && playwright test",
     "test:flight-perf": "node scripts/flight-perf.cjs",
+    "profile": "node scripts/profile/profile.cjs",
     "test:all": "npm run engine:test && npm run typecheck && npm run lint && npm run test && npm run test:e2e",
     "icon": "node scripts/render-icon.mjs",
     "notices": "node scripts/notices.mjs",

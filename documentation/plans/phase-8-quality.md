@@ -37,7 +37,7 @@ a fix that must change one (8.10) is listed, justified and approved on its own.
 | K1 | Two to five hitches per 20 s of flight, up to 426 ms, cause not traced | DEVLOG 6.0b, 7.12 |
 | K2 | One ground run at 64.6 ms stick to draw (limit 67), not traced | DEVLOG 7.12 |
 | K3 | The app draws on the Intel UHD 630, not the GTX 1650; 4K workshop p95 33 ms (43 fps) | DEVLOG 6.0b, e2e output |
-| K4 | A flat box rebounds about half the expected height (rapier contact) | DEVLOG 4.4 follow-ups |
+| K4 | Rapier's single restitution sweep leaves flat multi-point impacts with a short rebound (65.7 mm vs 120 mm for the reference box) | [K4 investigation and upstream reproduction](../validation/k4-rebound.md) |
 | K5 | Landing on the 45° terrain fixture never completes (friction 0.4 is below tan 45°; not traced further) | DEVLOG 6.10 |
 | K6 | Sensors-off step timed at 31 µs instead of 12 µs in two of three runs | DEVLOG 7.12 |
 | K7 | Return parameters are not in the tuning editor; GPS spec fields show on every peripheral | Phase 6 and 7 notes |

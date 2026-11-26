@@ -34,12 +34,12 @@ a fix that must change one (8.10) is listed, justified and approved on its own.
 
 | # | Item | Where recorded |
 |---|---|---|
-| K1 | Two to five hitches per 20 s of flight, up to 426 ms, cause not traced | DEVLOG 6.0b, 7.12 |
-| K2 | One ground run at 64.6 ms stick to draw (limit 67), not traced | DEVLOG 7.12 |
-| K3 | The app draws on the Intel UHD 630, not the GTX 1650; 4K workshop p95 33 ms (43 fps) | DEVLOG 6.0b, e2e output |
+| K1 | Two to five hitches per 20 s of flight, up to 426 ms. **Traced 2026-11-26:** each long hitch is one WebGL command-buffer flush taking 55–832 ms inside the GPU process on the Intel UHD 630, while page, engine and pipe wait. Detailed GPU trace categories show no work inside it, so the time is in the driver. On the GTX 1650 (forced high-performance GPU) the same flights had 0–1 frames over two periods, longest 29 and 40 ms, against 612 and 193 ms on the Intel (one run each, with tracing on) | DEVLOG 6.0b, 7.12; traces in the 8.3 tools |
+| K2 | One ground run at 64.6 ms stick to draw (limit 67). **Traced 2026-11-26:** not a hitch; four refresh periods end to end (read stick, step request, reply, draw, swap at the next refresh). The renderer frame work is 12–14 ms of it. 49–53 ms p95 on the GTX 1650. Shortening it needs D18(b) (step in flight while the frame draws) | DEVLOG 7.12 |
+| K3 | The app draws on the Intel UHD 630, not the GTX 1650; 4K workshop p95 33 ms (43 fps). **2026-11-26:** the GTX removes K1's hitches (above); workshop on both GPUs not yet measured | DEVLOG 6.0b, e2e output |
 | K4 | A flat box rebounds about half the expected height (rapier contact) | DEVLOG 4.4 follow-ups |
 | K5 | Landing on the 45° terrain fixture never completes (friction 0.4 is below tan 45°; not traced further) | DEVLOG 6.10 |
-| K6 | Sensors-off step timed at 31 µs instead of 12 µs in two of three runs | DEVLOG 7.12 |
+| K6 | Sensors-off step timed at 31 µs instead of 12 µs in two of three runs. **Measured 2026-11-26** on a recorded flight with ground contact (47,425 steps, idle PC): 25–34 µs per step in the engine and 38–41 µs over the pipe without sampling, 45 and 62–64 µs with sampling every 4th step; the slower-than-sensors-on case did not return. The pipe costs about 0.2–0.3 ms per request | DEVLOG 7.12 |
 | K7 | Return parameters are not in the tuning editor; GPS spec fields show on every peripheral | Phase 6 and 7 notes |
 | K8 | Never tried: a real PlayStation controller (yours), another PC, another GPU | – |
 

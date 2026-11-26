@@ -228,7 +228,8 @@ for (const scenario of cases) {
       stickTestInputs: { flipCount, flipSeed },
     }
     try {
-      const launched = await launchApp(userData)
+      // BLAZE_FLIGHT_PERF_GPU=high asks Chromium for the high-performance GPU (profiling only).
+      const launched = await launchApp(userData, {}, process.env.BLAZE_FLIGHT_PERF_GPU === 'high' ? ['--force_high_performance_gpu'] : [])
       const page = launched.page
       app = launched.app
       await page.bringToFront()

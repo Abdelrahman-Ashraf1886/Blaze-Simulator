@@ -8,6 +8,10 @@ const config = {
   included_categories: [
     'blink.user_timing', 'blink', 'devtools.timeline', 'v8', 'cc', 'viz', 'gpu',
     'toplevel', 'renderer.scheduler', 'sequence_manager', 'ipc', 'mojom', 'electron',
+    // BLAZE_FLIGHT_PERF_TRACE_GPU=1: what the GPU process does inside a command buffer flush.
+    ...(process.env.BLAZE_FLIGHT_PERF_TRACE_GPU === '1'
+      ? ['disabled-by-default-gpu.service', 'disabled-by-default-gpu.decoder', 'disabled-by-default-gpu.device', 'gpu.angle', 'gpu.capture', 'disabled-by-default-skia.gpu']
+      : []),
   ],
 }
 

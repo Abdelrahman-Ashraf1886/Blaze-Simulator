@@ -36,8 +36,8 @@ a fix that must change one (8.10) is listed, justified and approved on its own.
 |---|---|---|
 | K1 | Two to five hitches per 20 s of flight, up to 426 ms, cause not traced | DEVLOG 6.0b, 7.12 |
 | K2 | One ground run at 64.6 ms stick to draw (limit 67), not traced | DEVLOG 7.12 |
-| K3 | Settings → Graphics chooses the GPU preference at startup and reports the current WebGL renderer. On the i7-9750H laptop the Intel UHD 630 stalled WebGL for 55–832 ms in flight. The stalls did not occur on the GTX 1650 with the high-performance switch. The earlier 4K workshop p95 on Intel was 33 ms (43 fps). | User measurement, 2026-11-26; DEVLOG 6.0b, e2e output |
-| K4 | A flat box rebounds about half the expected height (rapier contact) | DEVLOG 4.4 follow-ups |
+| K3 | Settings → Graphics chooses the GPU preference at startup and reports the current WebGL renderer. On the i7-9750H laptop the Intel UHD 630 stalled WebGL for 55–832 ms in flight. The stalls did not occur on the GTX 1650 with the high-performance switch. The earlier 4K workshop p95 on Intel was 33 ms (43 fps). | Measured 2026-11-26; DEVLOG 6.0b, e2e output |
+| K4 | Rapier's single restitution sweep leaves flat multi-point impacts with a short rebound (65.7 mm vs 120 mm for the reference box) | [K4 investigation and upstream reproduction](../validation/k4-rebound.md) |
 | K5 | On the 45° terrain fixture the quad touches at 27.972 s, slides downhill in contact and loses contact near the grid edge at 32.593 s. Vertical speed exceeds the detector’s 0.135 m/s limit at every post-touchdown update, so it never confirms landing by 34 s. The terrain scenario warns when the slope at the flight start exceeds atan(friction) (45.0° vs 21.8° at 0.4). | [DEVLOG 6.10](../DEVLOG.md#catalogue-acceptance) · [Fixture](../../tests/unit/scenario-protocol.test.ts#L626-L670) |
 | K6 | Sensors-off step timed at 31 µs instead of 12 µs in two of three runs | DEVLOG 7.12 |
 | K7 | Return parameters are not in the tuning editor; GPS spec fields show on every peripheral | Phase 6 and 7 notes |

@@ -10,4 +10,4 @@ Each row gives one verdict for the specific behavior it covers.
 - **self-consistency only** checks local behavior, shared fixtures, same-engine expectations, regressions or round trips.
 - **not validated** means an acceptance check for the behavior was not found. A diagnostic can still provide evidence of a defect.
 
-The inventory records assertions found in test source and distinguishes tolerances from observed errors. Tests were not run for this documentation pass. Test 10 requires fresh execution evidence in the generated report. No comparison with a real flight was found. [phase-8-quality.md:60](../plans/phase-8-quality.md#L60) [phase-8-quality.md:106](../plans/phase-8-quality.md#L106)
+The inventory records assertions found in test source and distinguishes tolerances from observed errors. Repository links and quoted test names were checked against the source. Test execution was outside this inventory pass. Test 10 requires fresh execution evidence in the generated report. No comparison with a real flight was found. [phase-8-quality.md:60](../plans/phase-8-quality.md#L60) [phase-8-quality.md:106](../plans/phase-8-quality.md#L106)

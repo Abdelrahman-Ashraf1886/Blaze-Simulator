@@ -121,6 +121,11 @@ const mountPattern = text('mountPattern', 'Mounting pattern', 'As stated, e.g. "
 const cellsMin = int('cellsMin', 'Cells, minimum', 1, 24, 'Lithium cells in series (S)')
 const cellsMax = int('cellsMax', 'Cells, maximum', 1, 24, 'Lithium cells in series (S)')
 
+/** Role-based visibility for catalog fields. The schema also accepts stored inactive fields. */
+export function componentFieldApplies(category: ComponentCategory, role: string | undefined, key: string): boolean {
+  return category !== 'peripheral' || role === 'gps' || !GPS_SENSOR_FIELDS.some((field) => field.key === key)
+}
+
 /** In display order. The `unit` of a quantity is the one forms propose first. */
 export const COMPONENT_FIELDS: Record<ComponentCategory, readonly FieldDef[]> = {
   motor: [

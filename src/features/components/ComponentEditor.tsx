@@ -4,6 +4,7 @@ import {
   CATEGORY_LABELS,
   COMPONENT_CATEGORIES,
   COMPONENT_FIELDS,
+  componentFieldApplies,
   PORT_TYPES,
   type Component,
   type ComponentCategory,
@@ -17,6 +18,7 @@ import { cn } from '@/lib/utils'
 import { unitsOf, type Unit } from '@/domain/units'
 import { useComponents } from '@/stores/components'
 import { draftFrom, today, toInput, type ComponentDraft, type DraftSource, type FieldDraft } from './editor-model'
+import { formatValue } from './spec-format'
 
 const SOURCE_OPTIONS: { value: DraftSource; label: string }[] = [
   { value: 'none', label: 'Not specified' },
@@ -136,10 +138,13 @@ export function ComponentEditor({
 
           <fieldset className="min-w-0 border-t border-line">
             <legend className="sr-only">Specifications</legend>
-            {COMPONENT_FIELDS[draft.category].map((f) => (
-              <FieldRow key={`${draft.category}:${f.key}`} field={f} draft={draft.fields[f.key]!} set={(p) => setField(f.key, p)} />
-            ))}
+            {COMPONENT_FIELDS[draft.category]
+              .filter((field) => componentFieldApplies(draft.category, draft.fields.role?.value, field.key))
+              .map((f) => (
+                <FieldRow key={`${draft.category}:${f.key}`} field={f} draft={draft.fields[f.key]!} set={(p) => setField(f.key, p)} />
+              ))}
           </fieldset>
+          <InactiveSpecs category={draft.category} role={draft.fields.role?.value} specs={draft.storedSpecs} />
 
           {errors.length > 0 && (
             <ul role="alert" data-testid="editor-errors" className="space-y-0.5 text-[12.5px] text-fault">
@@ -161,6 +166,31 @@ export function ComponentEditor({
         </form>
       </DialogContent>
     </Dialog>
+  )
+}
+
+export function InactiveSpecs({ category, role, specs }: {
+  category: ComponentCategory
+  role: string | undefined
+  specs: Component['specs']
+}) {
+  const entries = COMPONENT_FIELDS[category].flatMap((field) => {
+    const spec = specs[field.key]
+    return spec && !componentFieldApplies(category, role, field.key) ? [{ field, spec }] : []
+  })
+  if (!entries.length) return null
+  return (
+    <aside className="mt-2 rounded-sm border border-line p-2 text-[12.5px] text-fg-muted">
+      <p>Fields that do not apply to this role</p>
+      <dl>
+        {entries.map(({ field, spec }) => (
+          <div key={field.key} className="flex justify-between gap-2">
+            <dt>{field.label}</dt>
+            <dd className="num">{formatValue(field, spec)}</dd>
+          </div>
+        ))}
+      </dl>
+    </aside>
   )
 }
 

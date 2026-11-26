@@ -65,6 +65,11 @@ test('saved project tuning drives a step test and shows metrics and exact signal
     await expect(roll).toBeEnabled()
     const gain = Number(await roll.inputValue()) / 2 // Derived user edit from the PX4 default shown in the tuning panel.
     await roll.fill(String(gain))
+    const returnAltitude = page.getByLabel('RTL_RETURN_ALT', { exact: true })
+    const returnDefault = Number(await returnAltitude.inputValue())
+    await expect(page.getByLabel('RTL_DESCEND_ALT', { exact: true })).toBeEnabled()
+    await expect(page.getByLabel('NAV_ACC_RAD', { exact: true })).toBeEnabled()
+    await returnAltitude.fill(String(returnDefault / 2))
     await expect(page.getByText('Unsaved gains. Step tests use the last saved gains.')).toBeVisible()
     await page.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(page.getByText('All changes saved')).toBeVisible()
@@ -87,6 +92,11 @@ test('saved project tuning drives a step test and shows metrics and exact signal
     await expect(signals.nth(1)).toBeVisible()
     const gains = page.locator('section', { has: page.getByRole('heading', { name: 'Gains used', exact: true }) })
     await expect(gains.locator('dt', { hasText: /^MC_ROLL_P$/ }).locator('xpath=following-sibling::dd')).toHaveText(String(gain))
+    await expect(gains.getByText('RTL_RETURN_ALT', { exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Reset RTL_RETURN_ALT', exact: true }).click()
+    await expect(returnAltitude).toHaveValue(String(returnDefault))
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(page.getByText('All changes saved')).toBeVisible()
     expect(errors).toEqual([])
   } finally {
     await app.close()

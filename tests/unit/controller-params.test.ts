@@ -14,7 +14,13 @@ import {
 } from '../../src/domain/controller-params'
 
 const ref = JSON.parse(readFileSync(join(__dirname, '../../database/reference/physics.v1.json'), 'utf8'))
-const px4Sets = ref.sets.filter((s: { id: string }) => /^px4/.test(s.id)) as { id: string; values: { key: string; value: number; unit?: string; min?: number; max?: number }[] }[]
+const sets = ref.sets as { id: string; values: {
+  key: string; value: number; unit?: string; min?: number; max?: number
+  reference: { url: string; locator: string; retrieved: string }
+}[] }[]
+const tuningSets = sets
+  .filter(({ id }) => /^px4/.test(id) || id === 'returnPx4')
+  .map((s) => ({ ...s, values: s.values.filter((v) => v.key !== 'RTL_HDG_MD') }))
 
 const errorsOf = (o: unknown): ParamError[] => {
   const r = validateOverrides(o)
@@ -22,16 +28,16 @@ const errorsOf = (o: unknown): ParamError[] => {
 }
 
 describe('the parameter table', () => {
-  it('has every px4* entry of the reference data, in order, with no duplicates', () => {
-    const keys = px4Sets.flatMap((s) => s.values.map((v) => v.key))
-    expect(keys).toHaveLength(82)
+  it('includes the editable controller and return parameters in reference order with no duplicates', () => {
+    const keys = tuningSets.flatMap((s) => s.values.map((v) => v.key))
+    expect(keys).toHaveLength(91)
     expect(new Set(keys).size).toBe(keys.length)
     expect(CONTROLLER_PARAMS.map((p) => p.name)).toEqual(keys)
   })
 
   it('copies each default, unit, range and citation from the reference entry', () => {
-    for (const s of px4Sets) {
-      for (const v of s.values as (typeof s.values[number] & { reference: { url: string; locator: string; retrieved: string } })[]) {
+    for (const s of tuningSets) {
+      for (const v of s.values) {
         const p = controllerParam(v.key)!
         expect(p, v.key).toBeDefined()
         expect(p.default, v.key).toBe(v.value)
@@ -48,12 +54,12 @@ describe('the parameter table', () => {
     const ids = CONTROLLER_PARAM_GROUPS.map((g) => g.id)
     const counts = Object.fromEntries(ids.map((id) => [id, CONTROLLER_PARAMS.filter((p) => p.group === id).length]))
     expect(CONTROLLER_PARAMS.every((p) => ids.includes(p.group))).toBe(true)
-    expect(counts).toEqual({ attitude: 7, rate: 21, vertical: 9, position: 36, allocation: 1, thrustModel: 1, hoverEstimator: 7 })
-    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(82)
+    expect(counts).toEqual({ attitude: 7, rate: 21, vertical: 9, position: 36, allocation: 1, thrustModel: 1, hoverEstimator: 7, return: 9 })
+    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(91)
   })
 
   it('marks integer parameters from the source definition', () => {
-    for (const n of ['MC_AIRMODE', 'MPC_POS_MODE', 'MPC_USE_HTE', 'MPC_ALT_MODE']) expect(controllerParam(n)!.integer, n).toBe(true)
+    for (const n of ['MC_AIRMODE', 'MPC_POS_MODE', 'MPC_USE_HTE', 'MPC_ALT_MODE', 'RTL_CONE_ANG']) expect(controllerParam(n)!.integer, n).toBe(true)
     for (const n of ['MC_ROLL_P', 'MPC_THR_HOVER', 'THR_MDL_FAC']) expect(controllerParam(n)!.integer, n).toBe(false)
   })
 
@@ -61,7 +67,7 @@ describe('the parameter table', () => {
     const entry = (key: string) => ({ key, value: 1, reference: { url: 'u', locator: 'l', retrieved: 'r' } })
     expect(() => controllerParams({ sets: [{ id: 'px4Allocation', values: [entry('A'), entry('A')] }] })).toThrow(/twice/)
     expect(() => controllerParams({ sets: [{ id: 'px4', values: [entry('NEW_PARAM')] }] })).toThrow(/no group/)
-    expect(() => controllerParams({ sets: [] })).toThrow(/no "px4" sets/)
+    expect(() => controllerParams({ sets: [] })).toThrow(/no controller or return sets/)
   })
 })
 

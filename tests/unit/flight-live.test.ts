@@ -32,6 +32,8 @@ import { RecordingStore } from '../../electron/main/telemetry/store'
 import { verifyRecording } from '../../electron/main/telemetry/verify'
 import { flightStartForView, flightStepForView } from '../../electron/ipc/handlers'
 import { unwrap } from '../../src/services/api'
+import { controllerParam } from '../../src/domain/controller-params'
+import { readOverrides } from '../../src/features/tuning/tuning-values'
 import type { ReadyItem } from '../../src/domain/propulsion'
 import type { SensorPayload } from '../../src/domain/sensors'
 import { telemetryChannels } from '../../src/domain/telemetry-channels'
@@ -555,13 +557,34 @@ describe('IPC validation', () => {
     expect(FlightSessionStartParamsSchema.safeParse(sent).success).toBe(true)
   })
 
-  it('forwards exact Return gains through Flight Start', async () => {
+  it('sends the saved Return altitude override to the flight engine and clears it on reset', async () => {
     const { engine } = fakeEngine()
-    const gains = { RTL_RETURN_ALT: 30, RTL_DESCEND_ALT: 10, NAV_ACC_RAD: 2, NAV_MC_ALT_RAD: 0.8, MIS_YAW_ERR: 12, MPC_XY_CRUISE: 5 }
-    const controller = { mode: 'position' }
-    const started = await flightStart(engine, { ...startInput(), controller, gains })
-    expect(started.ok).toBe(true)
-    expect(engine.startFlightSession).toHaveBeenCalledWith(expect.objectContaining({ controller, gains }))
+    const db = openDatabase(':memory:')
+    try {
+      const repos = createRepositories(db)
+      const { id } = repos.projects.create({ name: 'Return tuning', frameType: 'quad-x' })
+      const { name, max } = controllerParam('RTL_RETURN_ALT')!
+      const edited = readOverrides({ [name]: String(max) }, {})
+      expect(edited.validation.ok).toBe(true)
+      expect(edited.dirty).toBe(true)
+      repos.tuning.set(id, edited.overrides)
+
+      const tuned = flightStartWithTuning('position', repos.tuning.get(id))
+      expect((await flightStart(engine, { ...startInput(), ...tuned.session })).ok).toBe(true)
+      expect(engine.startFlightSession).toHaveBeenLastCalledWith(expect.objectContaining({
+        controller: { mode: 'position' },
+        gains: expect.objectContaining({ RTL_RETURN_ALT: max }),
+      }))
+
+      repos.tuning.set(id, readOverrides({}, repos.tuning.get(id)).overrides)
+      const reset = flightStartWithTuning('position', repos.tuning.get(id))
+      expect((await flightStart(engine, { ...startInput(), ...reset.session })).ok).toBe(true)
+      const sent = vi.mocked(engine.startFlightSession).mock.lastCall?.[0]
+      expect(sent?.gains).toBeDefined()
+      expect(sent?.gains).not.toHaveProperty('RTL_RETURN_ALT')
+    } finally {
+      db.close()
+    }
   })
 
   it.each([

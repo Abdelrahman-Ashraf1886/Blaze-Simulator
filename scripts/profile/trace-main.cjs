@@ -11,9 +11,12 @@ const config = {
   ],
 }
 
+exports.config = config
+
+// Electron 45's contentTracing writes a binary (protobuf) trace, so the Chromium trace is taken
+// through the DevTools protocol in JSON (flight-trace.ts); this probe only adds the main-process data.
 exports.start = async (contentTracing, resolution) => {
   const available = new Set(await contentTracing.getCategories())
-  await contentTracing.startRecording(config)
   const gc = []
   const collectGc = (entries) => {
     for (const { startTime, duration, detail } of entries) gc.push({ startTime, duration, detail })
@@ -51,16 +54,14 @@ exports.start = async (contentTracing, resolution) => {
     },
   }).enable()
 
-  return async (path) => {
+  return async () => {
     fs.disable()
     clearInterval(timer)
     histogram.disable()
     collectGc(observer.takeRecords())
     observer.disconnect()
-    const usage = await contentTracing.getTraceBufferUsage().catch(() => null)
-    await contentTracing.stopRecording(path)
     return {
-      pid: process.pid, config, usage,
+      pid: process.pid, config,
       categoriesKnownBeforeCapture: config.included_categories.filter((name) => available.has(name)),
       gc, writes, pendingWrites: [...pending.values()], loop, resolution,
       histogramNs: histogram.count ? {

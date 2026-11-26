@@ -3,10 +3,9 @@
  * its validation and the effective values.
  *
  * Nothing numeric is typed here. The names, defaults, units, documented ranges and
- * citations come from the sets `px4`, `px4Position`, `px4Allocation`, `px4ThrustModel`
- * and `px4HoverThrust` of `database/reference/physics.v1.json` (PX4-Autopilot v1.13.3),
- * read the way `isaConstants` reads its set. Only the grouping below is ours: it says
- * where the UI lists a parameter, not what the parameter is.
+ * citations come from the sets `px4`, `px4Position`, `px4Allocation`, `px4ThrustModel`,
+ * `px4HoverThrust` and `returnPx4` of `database/reference/physics.v1.json`
+ * (PX4-Autopilot v1.13.3), read the way `isaConstants` reads its set.
  *
  * Validation (plan decision D11):
  * - A parameter with a documented `@min` and/or `@max` is refused outside it.
@@ -51,6 +50,7 @@ export type ControllerParamGroup =
   | 'allocation'
   | 'thrustModel'
   | 'hoverEstimator'
+  | 'return'
 
 /** The groups in the order the UI lists them. */
 export const CONTROLLER_PARAM_GROUPS: readonly { id: ControllerParamGroup; label: string }[] = [
@@ -61,6 +61,7 @@ export const CONTROLLER_PARAM_GROUPS: readonly { id: ControllerParamGroup; label
   { id: 'allocation', label: 'Allocation' },
   { id: 'thrustModel', label: 'Thrust model' },
   { id: 'hoverEstimator', label: 'Hover estimator' },
+  { id: 'return', label: 'Return' },
 ]
 
 export interface ControllerParam {
@@ -127,21 +128,24 @@ function groupOf(setId: string, name: string): ControllerParamGroup {
   if (setId === 'px4Allocation') return 'allocation'
   if (setId === 'px4ThrustModel') return 'thrustModel'
   if (setId === 'px4HoverThrust') return 'hoverEstimator'
+  if (setId === 'returnPx4') return 'return'
   throw new Error(`The controller parameter ${name} (set ${setId}) has no group`)
 }
 
 /**
- * The parameter table from the cited reference file: every entry of the sets whose id
- * starts with `px4`, in file order. Throws on a duplicate name or an entry with no group,
+ * The parameter table from the cited controller and return sets, in file order.
+ * Throws on a duplicate name or an entry with no group,
  * so a new reference entry cannot be added without deciding where it is listed.
  */
 export function controllerParams(ref: RefFile): ControllerParam[] {
-  const sets = ref.sets.filter((s) => /^px4/.test(s.id))
-  if (sets.length === 0) throw new Error('The reference data has no "px4" sets')
+  const sets = ref.sets.filter((s) => /^px4/.test(s.id) || s.id === 'returnPx4')
+  if (sets.length === 0) throw new Error('The reference data has no controller or return sets')
   const seen = new Set<string>()
   const out: ControllerParam[] = []
   for (const set of sets) {
     for (const e of set.values) {
+      // engine-core/src/auto_modes.rs:125-130 fixes the heading mode.
+      if (set.id === 'returnPx4' && e.key === 'RTL_HDG_MD') continue
       if (seen.has(e.key)) throw new Error(`The reference data lists ${e.key} twice`)
       seen.add(e.key)
       out.push({

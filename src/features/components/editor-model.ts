@@ -6,6 +6,7 @@
  */
 import {
   COMPONENT_FIELDS,
+  componentFieldApplies,
   type Component,
   type ComponentCategory,
   type ComponentInput,
@@ -39,6 +40,7 @@ export interface ComponentDraft {
   manufacturer: string
   notes: string
   fields: Record<string, FieldDraft>
+  storedSpecs: Component['specs']
 }
 
 export const today = (d: Date = new Date()) =>
@@ -88,6 +90,7 @@ export function draftFrom(component: Component | null, category: ComponentCatego
     name: component?.name ?? '',
     manufacturer: component?.manufacturer ?? '',
     notes: component?.notes ?? '',
+    storedSpecs: component?.specs ?? {},
     fields: Object.fromEntries(COMPONENT_FIELDS[cat].map((f) => [f.key, fieldFrom(f, component?.specs[f.key])])),
   }
 }
@@ -113,6 +116,11 @@ export function toInput(draft: ComponentDraft): { ok: true; input: ComponentInpu
   if (!draft.name.trim()) errors.push('Name is required')
 
   for (const f of COMPONENT_FIELDS[draft.category]) {
+    if (!componentFieldApplies(draft.category, draft.fields.role?.value, f.key)) {
+      const stored = draft.storedSpecs[f.key]
+      if (stored) specs[f.key] = stored
+      continue
+    }
     const d = draft.fields[f.key]
     if (!d) continue
     const content = hasContent(d, f)

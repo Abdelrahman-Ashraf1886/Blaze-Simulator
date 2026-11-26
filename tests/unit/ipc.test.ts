@@ -92,6 +92,9 @@ describe('IPC handlers', () => {
       Channels.terrainImport,
       Channels.viewportSavePng,
       Channels.recordingPrintReportPdf,
+      // Wired in main with the preference file path and powerMonitor (electron/main/index.ts).
+      Channels.graphicsStatus,
+      Channels.graphicsCommand,
       Channels.componentsExportPack,
       Channels.recordingExportCsv,
       Channels.componentsImportPack,

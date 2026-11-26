@@ -34,13 +34,13 @@ a fix that must change one (8.10) is listed, justified and approved on its own.
 
 | # | Item | Where recorded |
 |---|---|---|
-| K1 | Two to five hitches per 20 s of flight, up to 426 ms, cause not traced | DEVLOG 6.0b, 7.12 |
-| K2 | One ground run at 64.6 ms stick to draw (limit 67), not traced | DEVLOG 7.12 |
-| K3 | The app draws on the Intel UHD 630, not the GTX 1650; 4K workshop p95 33 ms (43 fps) | DEVLOG 6.0b, e2e output |
-| K4 | A flat box rebounds about half the expected height (rapier contact) | DEVLOG 4.4 follow-ups |
-| K5 | Landing on the 45° terrain fixture never completes (friction 0.4 is below tan 45°; not traced further) | DEVLOG 6.10 |
-| K6 | Sensors-off step timed at 31 µs instead of 12 µs in two of three runs | DEVLOG 7.12 |
-| K7 | Return parameters are not in the tuning editor; GPS spec fields show on every peripheral | Phase 6 and 7 notes |
+| K1 | Two to five hitches per 20 s of flight, up to 426 ms. **Traced 2026-11-26:** each long hitch is one WebGL command-buffer flush taking 55–832 ms inside the GPU process on the Intel UHD 630, while page, engine and pipe wait. Detailed GPU trace categories show no work inside it, so the time is in the driver. On the GTX 1650 (forced high-performance GPU) the same flights had 0–1 frames over two periods, longest 29 and 40 ms, against 612 and 193 ms on the Intel (one run each, with tracing on) | DEVLOG 6.0b, 7.12; traces in the 8.3 tools |
+| K2 | One ground run at 64.6 ms stick to draw (limit 67). **Traced 2026-11-26:** not a hitch; four refresh periods end to end (read stick, step request, reply, draw, swap at the next refresh). The renderer frame work is 12–14 ms of it. 49–53 ms p95 on the GTX 1650. Shortening it needs D18(b) (step in flight while the frame draws) | DEVLOG 7.12 |
+| K3 | Settings → Graphics chooses the GPU preference at startup and reports the current WebGL renderer. On the i7-9750H laptop the Intel UHD 630 stalled WebGL for 55–832 ms in flight. The stalls did not occur on the GTX 1650 with the high-performance switch. The earlier 4K workshop p95 on Intel was 33 ms (43 fps). | Measured 2026-11-26; DEVLOG 6.0b, e2e output |
+| K4 | Rapier's single restitution sweep leaves flat multi-point impacts with a short rebound (65.7 mm vs 120 mm for the reference box) | [K4 investigation and upstream reproduction](../validation/k4-rebound.md) |
+| K5 | On the 45° terrain fixture the quad touches at 27.972 s, slides downhill in contact and loses contact near the grid edge at 32.593 s. Vertical speed exceeds the detector’s 0.135 m/s limit at every post-touchdown update, so it never confirms landing by 34 s. The terrain scenario warns when the slope at the flight start exceeds atan(friction) (45.0° vs 21.8° at 0.4). | [DEVLOG 6.10](../DEVLOG.md#catalogue-acceptance) · [Fixture](../../tests/unit/scenario-protocol.test.ts#L626-L670) |
+| K6 | Sensors-off step timed at 31 µs instead of 12 µs in two of three runs. **Measured 2026-11-26** on a recorded flight with ground contact (47,425 steps, idle PC): 25–34 µs per step in the engine and 38–41 µs over the pipe without sampling, 45 and 62–64 µs with sampling every 4th step; the slower-than-sensors-on case did not return. The pipe costs about 0.2–0.3 ms per request | DEVLOG 7.12 |
+| K7 | **Fixed 2026-11-26:** the tuning page edits the Return parameters (RTL_RETURN_ALT, RTL_DESCEND_ALT, NAV_ACC_RAD and the other supported ones, PX4 multicopter defaults); GPS fields show only on GPS peripherals, and values stored on others are kept and listed. Takeoff and landing parameters are still not editable (needs an engine change) | Phase 6 and 7 notes; tests in controller-params, flight-live, component-library |
 | K8 | Never tried: a real PlayStation controller (yours), another PC, another GPU | – |
 
 ## Decisions (yours)
@@ -55,7 +55,7 @@ a fix that must change one (8.10) is listed, justified and approved on its own.
 | D6 | Restore and move projects | (a) restore a copy from Settings; (b) (a) + export one project to a file and import it on another PC, with its models and terrain | **(b)**. Today a project cannot leave the PC. Recordings are exported only if ticked (15 MB per minute) |
 | D7 | Logs | (a) local log files, rotated, nothing ever sent; (b) (a) + a crash upload service | **(a)**. A "Save diagnostics" button makes a zip you can send yourself; it lists what is inside first and leaves out project data unless ticked |
 | D8 | Update checks | (a) none; the guide says how to upgrade; (b) the app checks for a new version; (c) automatic updates | **(a)**. The app makes no network request today, and unsigned automatic updates are unsafe |
-| D9 | Graphics card | (a) leave Windows to choose; (b) ask Electron for the high-performance GPU; (c) a setting with both, default as today | **(c)**, after measuring both (8.3). On a laptop (b) costs battery |
+| D9 | Graphics card | High performance, power saving, or system | **High performance by default**, chosen by the user on 2026-11-26. Changes apply on restart. Windows’ per-app setting may override the preference. |
 | D10 | Clean-PC and upgrade test | (a) Windows Sandbox on this PC; (b) a second PC of yours; (c) both | **(a)**, and (b) if you have one. Sandbox is a Windows 11 Pro feature that is off on this PC: turning it on needs your administrator approval and a restart |
 | D11 | Validation against a real flight | (a) analytical and published data only; (b) (a) + a log from your own drone, if you have one with the build in the catalogue | **(a)**, and (b) whenever you bring a log. The report says "not compared with a real flight" until then |
 | D12 | Checks on GitHub | (a) none, as today; (b) GitHub Actions on Windows for every push to `blaze-sim`: Rust, typecheck, lint, unit | **(a)** for now. (b) runs code on the repository owner's account and minutes; it needs their agreement. End-to-end and performance tests stay on this PC |
@@ -68,7 +68,7 @@ a fix that must change one (8.10) is listed, justified and approved on its own.
 
 | Milestone | Delivers | Files it may touch | After |
 |---|---|---|---|
-| 8.0 Licences and notices | A generated list of every shipped component (npm runtime and bundled, Rust crates, Electron and Chromium, fonts, SQLite) with its licence text; the PX4 notice, with the list of ported files; a check that fails when a shipped dependency has no known licence; shown under Help | `scripts/*`, `build/notices/*`, `electron-builder.yml`, About dialog | – |
+| 8.0 Licences and notices | A generated list of every shipped component (npm runtime and bundled, Rust crates, Electron and Chromium, fonts, SQLite) with its licence text; the PX4 notice, with the list of ported files; a check that fails when a shipped dependency has no known licence; shown under Help. **Complete:** shipped inventory and Help item, with strict verification using the upstream evidence retrieved 2026-11-26. | `scripts/*`, `build/notices/*`, `electron-builder.yml`, About dialog | – |
 | 8.1 Data safety | Copy before migration, `quick_check` at start, restore, project export and import (D5, D6); a fault at any step leaves the old data readable | `electron/main/db/*`, `electron/main/projects/*` (new), `electron/ipc/*` | D5, D6 |
 | 8.2 Logs and crashes | Rotating local log of main and engine, handlers for uncaught errors and a lost renderer, "Save diagnostics" (D7) | `electron/main/logging/*` (new), `electron/main/index.ts`, `electron/main/engine/supervisor.ts` | D7 |
 | 8.3 Profiling | Traces that name the cause of K1 and K2; startup, memory over an hour, workshop at 4K on both GPUs (K3), K6; fixes where the cause is ours; proposed limits (D15) | `scripts/profile/*` (new), `tests/e2e/flight-performance.spec.ts`, then what the traces name | – (measuring), D9, D15 (limits) |

@@ -167,3 +167,241 @@ fn resting_run_time_20_parts() {
     }
     println!("SPIN resting 20 parts 120000 steps: {:?}", t0.elapsed());
 }
+
+mod k4 {
+    use super::*;
+    use crate::sim::ALLOWED_LINEAR_ERROR_M;
+    use rapier3d_f64::prelude::*;
+
+    // Same dimensions, mass, release origin and friction as body, ground and drop above.
+    const HALF: Vector = Vector::new(0.05, 0.05, 0.02);
+    const MASS: f64 = 1.0;
+    const RELEASE_Z: f64 = 0.5;
+    const FRICTION: f64 = 0.5;
+
+    fn shape(points: usize) -> SharedShape {
+        let (x, y, z) = (HALF.x, HALF.y, HALF.z);
+        if points == 4 {
+            return SharedShape::cuboid(x, y, z);
+        }
+        let mut vertices = vec![Vector::new(x, y, z), Vector::new(-x, y, z),
+                                Vector::new(x, -y, z), Vector::new(-x, -y, z)];
+        // Center each support under the CoM. Hold the box mass properties fixed.
+        vertices.extend(match points {
+            1 => vec![Vector::new(0.0, 0.0, -z)],
+            2 => vec![Vector::new(-x, 0.0, -z), Vector::new(x, 0.0, -z)],
+            3 => vec![Vector::new(-x, -y / 2.0, -z), Vector::new(x, -y / 2.0, -z),
+                      Vector::new(0.0, y, -z)],
+            _ => unreachable!(),
+        });
+        SharedShape::convex_hull(&vertices).unwrap()
+    }
+
+    fn principal_inertia() -> Vector {
+        let density = MASS / (8.0 * HALF.x * HALF.y * HALF.z);
+        SharedShape::cuboid(HALF.x, HALF.y, HALF.z).mass_properties(density).principal_inertia()
+    }
+
+    fn world(points: usize, clearance: f64, e: f64, skin: f64, params: IntegrationParameters)
+        -> (PhysicsWorld, RigidBodyHandle)
+    {
+        let mut world = PhysicsWorld::new();
+        world.gravity = -Vector::Z * G;
+        world.integration_parameters = params;
+        let body = world.bodies.insert(RigidBodyBuilder::dynamic()
+            .translation(Vector::Z * (clearance + HALF.z)).can_sleep(false).build());
+        let part = ColliderBuilder::new(shape(points))
+            .mass_properties(MassProperties::new(Vector::ZERO, MASS, principal_inertia()))
+            .friction(0.0).build();
+        world.colliders.insert_with_parent(part, body, &mut world.bodies);
+        world.bodies[body].recompute_mass_properties_from_colliders(&world.colliders);
+        let ground = world.bodies.insert(RigidBodyBuilder::fixed().build());
+        world.colliders.insert_with_parent(
+            ColliderBuilder::new(SharedShape::halfspace(Vector::Z))
+                .friction(FRICTION).friction_combine_rule(CoefficientCombineRule::Max)
+                .restitution(e).restitution_combine_rule(CoefficientCombineRule::Max)
+                .contact_skin(skin).build(),
+            ground, &mut world.bodies,
+        );
+        (world, body)
+    }
+
+    struct Point {
+        torque: Vector,
+        dist: f64,
+        new: bool,
+        impulse: f64,
+        last_impulse: f64,
+    }
+
+    struct Impact {
+        step: usize,
+        z: f64,
+        incoming: Vector,
+        incoming_spin: Vector,
+        outgoing: Vector,
+        outgoing_spin: Vector,
+        points: Vec<Point>,
+    }
+
+    fn measure(points: usize, clearance: f64, e: f64, skin: f64, params: IntegrationParameters)
+        -> (Impact, f64)
+    {
+        let (mut world, body) = world(points, clearance, e, skin, params);
+        let mut impact = None;
+        let mut apex: f64 = 0.0;
+        let mut rising = false;
+        // Four free-fall times cover the descent and the first rise for this matrix.
+        let limit = (4.0 * (2.0 * clearance / G).sqrt() / params.dt).ceil() as usize;
+        for step in 1..=limit {
+            let incoming = world.bodies[body].linvel();
+            let incoming_spin = world.bodies[body].angvel();
+            world.step();
+            let outgoing = world.bodies[body].linvel();
+            let z = world.bodies[body].translation().z;
+            if impact.is_none() {
+                for pair in world.narrow_phase.contact_pairs() {
+                    for m in pair.solver_manifolds() {
+                        let dynamic_first = m.data.rigid_body1 == Some(body);
+                        let normal = if dynamic_first { -m.data.normal } else { m.data.normal };
+                        let contacts: Vec<_> = m.data.solver_contacts.iter().map(|c| {
+                            let id = c.contact_indices()[0];
+                            let data = &m.points[id as usize].data;
+                            let arm = if dynamic_first { data.solver_dp1 } else { data.solver_dp2 };
+                            Point { torque: arm.cross(normal), dist: c.dist, new: id != c.contact_id[0],
+                                    impulse: data.impulse, last_impulse: data.warmstart_impulse }
+                        }).collect();
+                        if contacts.iter().any(|p| p.impulse > 0.0) {
+                            assert_eq!(m.data.restitution, e);
+                            impact = Some(Impact { step, z, incoming, incoming_spin, outgoing,
+                                outgoing_spin: world.bodies[body].angvel(), points: contacts });
+                        }
+                    }
+                }
+            }
+            if impact.is_some() && outgoing.z > 0.0 {
+                rising = true;
+                apex = apex.max(z - HALF.z);
+            } else if rising {
+                apex = apex.max(z - HALF.z);
+                break;
+            }
+        }
+        (impact.expect("drop must transfer a normal impulse"), apex)
+    }
+
+    fn engine_parameters() -> IntegrationParameters {
+        let brick = body(CollisionShape::Box { half_extents: HALF.to_array() }, "k4");
+        let mut sim = Simulation::with_environment(&brick, SimConfig::default(), &ground(0.5),
+            [0.0, 0.0, RELEASE_Z]).unwrap();
+        sim.world_mut().integration_parameters
+    }
+
+    fn show(label: &str, n: usize, clearance: f64, e: f64, skin: f64, p: IntegrationParameters) {
+        let (hit, apex) = measure(n, clearance, e, skin, p);
+        assert_eq!(hit.points.len(), n, "{label}");
+        println!("K4 {label}: n={n} h={:.3} e={e:.1} step={} sep={:.3} vin={:.5} vout={:.5} spin={:.5} apex={:.3} mm ideal={:.3}",
+            clearance, hit.step, hit.points[0].dist * 1e3, hit.incoming.z, hit.outgoing.z,
+            hit.outgoing_spin.length(), apex * 1e3, e * e * clearance * 1e3);
+    }
+
+    #[test]
+    #[ignore]
+    fn spin_k4_matrix() {
+        let engine = engine_parameters();
+        let stock = IntegrationParameters::default();
+        let h = RELEASE_Z - HALF.z;
+        for clearance in [h / 4.0, h, h * 4.0] {
+            for e in [0.2, 0.5, 0.8] {
+                for n in 1..=4 {
+                    show("engine", n, clearance, e, 0.0, engine);
+                }
+            }
+        }
+        for (label, p) in [
+            ("stock", stock),
+            ("stock at 1ms", IntegrationParameters { dt: engine.dt, ..stock }),
+            ("stock slop", IntegrationParameters {
+                normalized_allowed_linear_error: stock.normalized_allowed_linear_error, ..engine
+            }),
+            ("stock recycling", IntegrationParameters { contact_recycling: stock.contact_recycling, ..engine }),
+            ("Coulomb", IntegrationParameters { friction_model: FrictionModel::Coulomb, ..engine }),
+        ] {
+            for n in [1, 4] {
+                show(label, n, h, 0.5, 0.0, p);
+            }
+        }
+        for n in [1, 4] {
+            show("low speed", n, ALLOWED_LINEAR_ERROR_M, 0.5, 0.0, engine);
+        }
+        // Use zero and the two solver slops as geometric probes, plus the stock prediction.
+        for prediction in [0.0, ALLOWED_LINEAR_ERROR_M, stock.normalized_allowed_linear_error,
+            stock.normalized_prediction_distance] {
+            let p = IntegrationParameters { normalized_prediction_distance: prediction, ..engine };
+            for skin in [0.0, ALLOWED_LINEAR_ERROR_M, stock.normalized_allowed_linear_error] {
+                show(&format!("prediction={prediction} skin={skin}"), 4, h, 0.5, skin, p);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn spin_k4_impulse_sweep() {
+        let h = RELEASE_Z - HALF.z;
+        let e = 0.5;
+        let p = engine_parameters();
+        let (bounce, apex) = measure(4, h, e, 0.0, p);
+        let (inelastic, _) = measure(4, h, 0.0, 0.0, p);
+        assert_eq!(bounce.step, inelastic.step);
+        assert_eq!(bounce.z, inelastic.z);
+        assert_eq!(bounce.incoming, inelastic.incoming);
+        assert_eq!(bounce.incoming_spin, inelastic.incoming_spin);
+
+        // Replay the one-body normal rows against the measured pre-restitution state.
+        let inertia = principal_inertia();
+        let mut v = inelastic.outgoing.z;
+        let mut w = inelastic.outgoing_spin;
+        let mut impulses: Vec<_> = inelastic.points.iter().map(|p| p.last_impulse).collect();
+        let mut deltas = Vec::new();
+        let mut residuals = Vec::new();
+        for (i, point) in inelastic.points.iter().enumerate() {
+            let torque = point.torque;
+            let seed = e * (inelastic.incoming.z + torque.dot(inelastic.incoming_spin));
+            let inverse_inertia_torque = torque / inertia;
+            let inverse_effective_mass = 1.0 / MASS + torque.dot(inverse_inertia_torque);
+            let residual = v + torque.dot(w) + seed;
+            let updated = if point.new && point.impulse > 0.0 && seed < 0.0 {
+                (impulses[i] - residual / inverse_effective_mass).max(0.0)
+            } else {
+                impulses[i]
+            };
+            let delta = updated - impulses[i];
+            impulses[i] = updated;
+            v += delta / MASS;
+            w += inverse_inertia_torque * delta;
+            deltas.push(delta);
+            residuals.push(residual);
+        }
+        let observed: Vec<_> = bounce.points.iter().zip(&inelastic.points)
+            .map(|(b, a)| b.impulse - a.impulse).collect();
+        let targets: Vec<_> = inelastic.points.iter()
+            .map(|point| -e * (inelastic.incoming.z + point.torque.dot(inelastic.incoming_spin)))
+            .collect();
+        let solved: Vec<_> = inelastic.points.iter().map(|point| v + point.torque.dot(w)).collect();
+
+        println!("K4 sweep: step={} z={:.9} vin={:.9} pre_vz={:.9} pre_spin={:?}",
+            bounce.step, bounce.z, bounce.incoming.z, inelastic.outgoing.z, inelastic.outgoing_spin);
+        println!("K4 sweep: torques={:?} pre_impulses={:?}",
+            inelastic.points.iter().map(|p| p.torque.to_array()).collect::<Vec<_>>(),
+            inelastic.points.iter().map(|p| p.impulse).collect::<Vec<_>>());
+        println!("K4 sweep: residuals={residuals:?} predicted_dJ={deltas:?} observed_dJ={observed:?}");
+        println!("K4 sweep: target={targets:?} final_point_speeds={solved:?}");
+        println!("K4 sweep: predicted_vz={v:.9} actual_vz={:.9} predicted_spin={w:?} actual_spin={:?} ballistic_apex={:.3} mm actual_apex={:.3} mm",
+            bounce.outgoing.z, bounce.outgoing_spin, (bounce.z - HALF.z + v * v / (2.0 * G)) * 1e3, apex * 1e3);
+        assert!((v - bounce.outgoing.z).abs() < 1e-9);
+        assert!((w - bounce.outgoing_spin).length() < 1e-9);
+        for (expected, actual) in deltas.iter().zip(observed) {
+            assert!((expected - actual).abs() < 1e-9);
+        }
+    }
+}

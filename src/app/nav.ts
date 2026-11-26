@@ -43,7 +43,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: '/input', label: 'Input devices', icon: Gamepad2, group: 'flight', phase: 6, ready: true },
   { path: '/telemetry', label: 'Telemetry', icon: Activity, group: 'flight', phase: 7, ready: true },
   { path: '/projects', label: 'Projects', icon: FolderKanban, group: 'workspace', phase: 1 },
-  { path: '/settings', label: 'Settings', icon: Settings, group: 'workspace', phase: 8 },
+  { path: '/settings', label: 'Settings', icon: Settings, group: 'workspace', phase: 8, ready: true },
 ]
 
 export const GROUP_LABELS: Partial<Record<NavGroup, string>> = {

@@ -122,3 +122,55 @@ export function terrainHeightAt(grid: TerrainGrid, xM: number, yM: number): numb
     ? (1 - v) * sw + u * ne + (v - u) * nw
     : (1 - u) * sw + (u - v) * se + v * ne
 }
+
+export interface TerrainFootprint {
+  readonly min: readonly [number, number]
+  readonly max: readonly [number, number]
+}
+
+/** Steepest face touching the footprint's XY bounds, clipped to the sample-centre extent. */
+export function terrainLandingSlope(
+  grid: Omit<TerrainGrid, 'heightsM'> & { readonly heightsM: ArrayLike<number> },
+  footprint: TerrainFootprint,
+  friction: number,
+): { slopeDeg: number; limitDeg: number; exceedsLimit: boolean } | undefined {
+  const { rows, columns, cellSizeM, cornerM, heightsM } = grid
+  const west = cornerM[0] + cellSizeM / 2
+  const south = cornerM[1] + cellSizeM / 2
+  const east = west + (columns - 1) * cellSizeM
+  const north = south + (rows - 1) * cellSizeM
+  if (footprint.max[0] < west || footprint.min[0] > east
+      || footprint.max[1] < south || footprint.min[1] > north) return undefined
+
+  const gridCoordinate = (value: number, first: number, last: number) =>
+    Math.max(0, Math.min(last, (value - first) / cellSizeM))
+  const minX = gridCoordinate(footprint.min[0], west, columns - 1)
+  const minY = gridCoordinate(footprint.min[1], south, rows - 1)
+  const maxX = gridCoordinate(footprint.max[0], west, columns - 1)
+  const maxY = gridCoordinate(footprint.max[1], south, rows - 1)
+
+  let grade = 0
+  // Include both adjacent faces if the footprint touches their shared sample line.
+  for (let y = Math.max(0, Math.ceil(minY) - 1); y <= Math.min(rows - 2, Math.floor(maxY)); y++) {
+    for (let x = Math.max(0, Math.ceil(minX) - 1); x <= Math.min(columns - 2, Math.floor(maxX)); x++) {
+      const northIndex = (rows - 2 - y) * columns + x
+      const southIndex = northIndex + columns
+      const [sw, se, nw, ne] = [
+        heightsM[southIndex]!, heightsM[southIndex + 1]!, heightsM[northIndex]!, heightsM[northIndex + 1]!,
+      ]
+      // Same SW–NE diagonal as terrainHeightAt. The clipped rectangle meets a face
+      // above the diagonal if min(u) <= max(v), and below if max(u) >= min(v).
+      if (Math.max(0, minX - x) <= Math.min(1, maxY - y)) {
+        grade = Math.max(grade, Math.hypot((ne - nw) / cellSizeM, (nw - sw) / cellSizeM))
+      }
+      if (Math.min(1, maxX - x) >= Math.max(0, minY - y)) {
+        grade = Math.max(grade, Math.hypot((se - sw) / cellSizeM, (ne - se) / cellSizeM))
+      }
+    }
+  }
+
+  const slope = Math.atan(grade)
+  const limit = Math.atan(friction)
+  // atan(?) is the Coulomb rest limit. Ignore roundoff at equality.
+  return { slopeDeg: slope * 180 / Math.PI, limitDeg: limit * 180 / Math.PI, exceedsLimit: slope - limit > Number.EPSILON }
+}

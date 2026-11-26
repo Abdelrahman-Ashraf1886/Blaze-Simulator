@@ -1,6 +1,6 @@
 import type { StepTestInput, StepTestOutput } from '../../../electron/ipc/contract'
 import { StepTestRunParamsSchema } from '../../../electron/main/engine/protocol'
-import type { TuningOverrides } from '../../domain/controller-params'
+import { controllerParam, type TuningOverrides } from '../../domain/controller-params'
 import { thrustFactor } from '../../domain/thrust-curve'
 import type { StepSample } from '../../domain/step-response'
 import type { FlightGate } from '../flight/readiness'
@@ -60,8 +60,10 @@ export function readStepTest(draft: StepTestDraft): { test: Test | null; errors:
 export function stepTestInput(gate: FlightGate, test: Test | null, saved: TuningOverrides | null): StepTestInput | null {
   if (!gate.ok || !test || saved === null) return null
   const { vehicle, propulsion, aero, airDensityKgM3, cutoff, sensors } = gate.input
+  // The Return gain parser is used by flight sessions (engine-host/src/flight_session.rs:288-294).
+  const gains = Object.fromEntries(Object.entries(saved).filter(([name]) => controllerParam(name)?.group !== 'return'))
   return { vehicle, propulsion, aero, test, config: {
-    airDensityKgM3, cutoff, gains: { ...saved, THR_MDL_FAC: thrustFactor(gate.thrustFit, saved) },
+    airDensityKgM3, cutoff, gains: { ...gains, THR_MDL_FAC: thrustFactor(gate.thrustFit, saved) },
     ...(sensors === undefined ? {} : { sensors }),
   } }
 }

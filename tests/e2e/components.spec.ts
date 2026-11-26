@@ -32,6 +32,35 @@ const answerOpen = (app: ElectronApplication, path: string) =>
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [p] })) as typeof dialog.showOpenDialog
   }, path)
 
+test('shows GPS fields for the GPS role and preserves them when a component changes role', async () => {
+  const { page } = await launch()
+  await page.getByTestId('nav-/components').click()
+  await page.getByTestId('new-component').click()
+  await page.getByTestId('component-editor').getByLabel('Category', { exact: true }).selectOption('peripheral')
+  await page.getByTestId('component-editor').getByLabel('Name', { exact: true }).fill('Test peripheral')
+  const role = page.locator('#spec-role')
+  const cep = field(page, 'gpsHorizontalCep')
+  await expect(cep).toHaveCount(0)
+  await role.selectOption('gps')
+  await page.getByLabel('Role source', { exact: true }).selectOption('user')
+  await expect(cep).toBeVisible()
+  // Test value from sensor-specs.test.ts (bench measurement fixture).
+  await page.locator('#spec-gpsHorizontalCep').fill('3')
+  await cep.getByLabel('GPS horizontal position CEP source', { exact: true }).selectOption('measured')
+  const editor = page.getByTestId('component-editor')
+  await editor.getByRole('button', { name: 'Add to library' }).click()
+  await detail(page).getByRole('button', { name: 'Edit' }).click()
+  await role.selectOption('telemetry-radio')
+  await expect(cep).toHaveCount(0)
+  await expect(editor.getByText('Fields that do not apply to this role')).toBeVisible()
+  await expect(editor.getByText('3 m', { exact: true })).toBeVisible()
+  await editor.getByRole('button', { name: 'Save changes' }).click()
+  await detail(page).getByRole('button', { name: 'Edit' }).click()
+  await expect(editor.getByText('3 m', { exact: true })).toBeVisible()
+  await role.selectOption('gps')
+  await expect(page.locator('#spec-gpsHorizontalCep')).toHaveValue('3')
+})
+
 test('create a cited component, edit, duplicate, export, delete, import it back identical; bad packs are refused', async () => {
   const first = await launch()
   const { app } = first

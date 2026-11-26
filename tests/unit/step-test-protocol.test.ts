@@ -13,6 +13,7 @@ import {
 import { runStepTest, stepTest } from '../../electron/main/engine/step-test'
 import { Channels, type DesktopApi } from '../../electron/ipc/contract'
 import type { FlightGate } from '../../src/features/flight/readiness'
+import { controllerParam } from '../../src/domain/controller-params'
 import { EMPTY_STEP_TEST, measuredSamples, readStepTest, STEP_CHOICES, stepTestInput } from '../../src/features/tuning/step-test-input'
 
 // The scenario protocol's quad and propulsion fixture (scenario-protocol.test.ts:20–37).
@@ -113,9 +114,10 @@ describe('step test form and request', () => {
     expect(readStepTest({ ...draft, decimationSteps: '1.5' }).errors.decimationSteps).toBeDefined()
   })
 
-  it('uses saved gains and the flight gate for the vehicle, air density and cut-off', () => {
+  it('uses the saved controller gains and omits flight-session-only Return gains', () => {
     const { test } = readStepTest(draft)
-    expect(stepTestInput(gate, test, params.config.gains!)).toEqual({
+    const saved = { ...params.config.gains, RTL_RETURN_ALT: controllerParam('RTL_RETURN_ALT')!.max! }
+    expect(stepTestInput(gate, test, saved)).toEqual({
       vehicle, propulsion, aero, test: params.test,
       config: { airDensityKgM3, cutoff: params.config.cutoff, gains: { THR_MDL_FAC: 0, ...params.config.gains } }, // no fit here, so PX4's default unless saved
     })

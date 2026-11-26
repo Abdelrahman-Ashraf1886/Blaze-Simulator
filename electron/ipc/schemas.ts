@@ -9,6 +9,7 @@ import {
   FRAME_PARAM_LIMITS,
   FRAME_PART_ID,
   FRAME_TYPES,
+  GPU_PREFERENCES,
   MAX_INTERFERENCE_TOLERANCE_M,
   MAX_MOTOR_TILT,
   MAX_OBSTACLES,
@@ -19,6 +20,13 @@ import {
   type RenameProjectInput,
   type SaveAssemblyInput,
 } from './contract'
+
+export const graphicsStatusSchema = z.undefined()
+export const gpuPreferenceSchema = z.strictObject({ preference: z.enum(GPU_PREFERENCES) })
+export const graphicsCommandSchema = z.discriminatedUnion('action', [
+  gpuPreferenceSchema.extend({ action: z.literal('set') }),
+  z.strictObject({ action: z.literal('restart') }),
+])
 
 const projectName = z
   .string()

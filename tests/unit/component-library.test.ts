@@ -6,7 +6,7 @@ import { openDatabase } from '../../electron/main/db/database'
 import { createRepositories } from '../../electron/main/db/repositories'
 import { draftFrom, parseNumber, toInput } from '../../src/features/components/editor-model'
 import { formatReference, formatValue, matches, provenanceSummary } from '../../src/features/components/spec-format'
-import { COMPONENT_FIELDS } from '../../electron/ipc/component-fields'
+import { COMPONENT_FIELDS, componentFieldApplies } from '../../electron/ipc/component-fields'
 
 const cited = { source: 'manufacturer' as const, reference: { url: 'https://www.example.com/ds.pdf', locator: 'p. 2', retrieved: '2026-11-21' } }
 const battery: ComponentInput = {
@@ -117,6 +117,29 @@ describe('component editor model', () => {
     const c = repos.components.create(battery)
     const r = toInput(draftFrom(c, 'motor'))
     expect(r).toEqual({ ok: true, input: battery })
+  })
+
+  it('shows GPS fields only for the GPS role and preserves stored values on another role', () => {
+    const gpsField = COMPONENT_FIELDS.peripheral.find(({ key }) => key === 'gpsPositionDelay')!
+    expect(componentFieldApplies('peripheral', 'gps', gpsField.key)).toBe(true)
+    expect(componentFieldApplies('peripheral', undefined, gpsField.key)).toBe(false)
+    expect(componentFieldApplies('peripheral', 'telemetry-radio', gpsField.key)).toBe(false)
+    expect(componentFieldApplies('peripheral', 'telemetry-radio', 'role')).toBe(true)
+
+    // Use the stored-value fixture from sensors.test.ts:51 (the component schema accepts it).
+    const delay = { value: 1001, unit: 'ms', source: 'measured', condition: 'Bench measurement' } as const
+    const existing = repos.components.create({
+      category: 'peripheral', name: 'Radio', manufacturer: null, notes: null,
+      specs: { role: { value: 'telemetry-radio', source: 'user' }, gpsPositionDelay: delay },
+    })
+    const draft = draftFrom(existing, 'peripheral')
+    draft.name = 'Updated radio'
+    draft.fields.gpsPositionDelay!.value = ''
+    const result = toInput(draft)
+    if (!result.ok) throw new Error(result.errors.join(', '))
+    const updated = repos.components.update(existing.id, existing.revision, result.input)
+    expect(updated.name).toBe(draft.name)
+    expect(repos.components.get(existing.id)?.specs).toEqual(existing.specs)
   })
 
   it('requires a source for every value, and numbers where numbers belong', () => {

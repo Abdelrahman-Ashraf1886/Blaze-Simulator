@@ -5,6 +5,7 @@ import {
   CATEGORY_LABELS,
   COMPONENT_CATEGORIES,
   COMPONENT_FIELDS,
+  componentFieldApplies,
   type Component,
   type ComponentCategory,
   isOverridable,
@@ -19,7 +20,7 @@ import { Dialog, DialogClose, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/field'
 import { cn, formatTimestamp } from '@/lib/utils'
 import { useComponents } from '@/stores/components'
-import { ComponentEditor } from './ComponentEditor'
+import { ComponentEditor, InactiveSpecs } from './ComponentEditor'
 import { UserValueEditor } from './UserValueEditor'
 import { SOURCE_LABELS, formatNumber, formatReference, formatValue, matches, provenanceSummary } from './spec-format'
 
@@ -274,6 +275,8 @@ function ComponentDetail({
   onExport: () => void
 }) {
   const builtIn = c.origin === 'built-in'
+  const role = typeof c.specs.role?.value === 'string' ? c.specs.role.value : undefined
+  const fields = COMPONENT_FIELDS[c.category].filter((field) => componentFieldApplies(c.category, role, field.key))
   const lockedNote = 'Built-in components are read-only. Duplicate it to make your own version.'
   return (
     <Section
@@ -304,7 +307,7 @@ function ComponentDetail({
       </dl>
       <h3 className="mt-4 pb-1 text-[12px] font-medium text-fg-subtle">Specifications</h3>
       <dl className="border-t border-line" data-testid="spec-list">
-        {COMPONENT_FIELDS[c.category].map((f) => (
+        {fields.map((f) => (
           <SpecRow
             key={f.key}
             field={f}
@@ -316,9 +319,10 @@ function ComponentDetail({
           />
         ))}
       </dl>
-      {highlight && builtIn && (
+      <InactiveSpecs category={c.category} role={role} specs={{ ...c.specs, ...c.fills }} />
+      {highlight && builtIn && fields.some((field) => field.key === highlight) && (
         <p className="mt-2 text-[12px] leading-relaxed text-fg-subtle" data-testid="highlight-note">
-          {isOverridable(COMPONENT_FIELDS[c.category].find((f) => f.key === highlight))
+          {isOverridable(fields.find((f) => f.key === highlight))
             ? 'Enter the value above: it fills this gap wherever the component is linked, in every project, and stays apart from the manufacturer data. For one part only, override it in the workshop inspector.'
             : `${lockedNote} Then enter the value in the copy and link the copy in the workshop.`}
         </p>

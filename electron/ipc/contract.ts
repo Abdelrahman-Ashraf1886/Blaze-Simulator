@@ -665,9 +665,24 @@ export type IpcResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: { code: IpcErrorCode; message: string; errors?: ParamError[] } }
 
+export const GPU_PREFERENCES = ['high-performance', 'power-saving', 'system'] as const
+export type GpuPreference = (typeof GPU_PREFERENCES)[number]
+
+export interface GraphicsStatus {
+  preference: GpuPreference
+  startupPreference: GpuPreference
+  onBattery: boolean
+}
+
+export type GraphicsCommand =
+  | { action: 'set'; preference: GpuPreference }
+  | { action: 'restart' }
+
 // ---- Channels ---------------------------------------------------------------
 
 export const Channels = {
+  graphicsStatus: 'graphics:status',
+  graphicsCommand: 'graphics:command',
   projectsList: 'projects:list',
   projectsCreate: 'projects:create',
   projectsRename: 'projects:rename',
@@ -748,6 +763,11 @@ interface RecordingApi {
 export type DesktopApiWithRecordings = DesktopApi & { runs: RunRecordingApi; recording: RecordingApi }
 
 export interface DesktopApi {
+  graphics: {
+    status(): Promise<IpcResult<GraphicsStatus>>
+    command(input: GraphicsCommand): Promise<IpcResult<null>>
+    onPowerChange(listener: (onBattery: boolean) => void): () => void
+  }
   projects: {
     list(): Promise<IpcResult<Project[]>>
     create(input: CreateProjectInput): Promise<IpcResult<Project>>

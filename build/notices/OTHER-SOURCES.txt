@@ -1,0 +1,78 @@
+=== Source references in Blaze UAV ===
+
+MIL-F-8785C (5 November 1980), Military Specification: Flying Qualities of Piloted Airplanes
+Public U.S. military specification. Source for the shear and discrete gust equations in
+simulation-engine/engine-core/src/wind.rs:1–8 and the low-altitude range in
+simulation-engine/engine-core/src/turbulence.rs:1–4. The reference table identifies the
+original document and locators at database/reference/physics.v1.json:1669–1670,1678–1693.
+https://everyspec.com/MIL-SPECS/MIL-SPECS-MIL-F/MIL-F-8785C_5295/
+
+The turbulence implementation derives filters from spectra and distinguishes the secondary
+MathWorks reference at turbulence.rs:1–5 and documentation/plans/phase-6-flight-environment.md:153–168.
+Ground-effect equations cite NACA, NASA and published research at
+simulation-engine/engine-core/src/ground_effect.rs:1–86.
+
+SplitMix64
+The constants and transition in simulation-engine/engine-core/src/turbulence.rs:54–70
+cite https://prng.di.unimi.it/splitmix64.c. The cited upstream file was unavailable in
+the local source materials used for this notice. Its licence header remains unverified.
+
+Chromium gamepad tables (BSD-style)
+src/features/input/playstation.ts:1,16–20 follows device/gamepad/gamepad_id_list.cc:153–158,
+gamepad_id_list.h:114–118, gamepad_standard_mappings_win.cc:50–70,80–101,548–557 and
+gamepad_standard_mappings.h:54–72,84–89,99–110. src/features/flight/device-buttons.ts:5 follows
+gamepad_standard_mappings.h:54–58,64,69–70. The captured source headers give these notices.
+Copyright 2018 The Chromium Authors (gamepad_id_list.cc and gamepad_id_list.h:1).
+Copyright 2012 The Chromium Authors (gamepad_standard_mappings_win.cc and gamepad_standard_mappings.h:1).
+The Chromium Project entry in LICENSES.chromium.html:94525–94554 contains its BSD terms.
+Source and binary redistribution require retaining the copyright, conditions and disclaimer.
+https://chromium.googlesource.com/chromium/src/+/main/device/gamepad/
+
+W3C Gamepad
+src/features/input/calibration.ts:17 uses the axis indices in the Standard Gamepad
+layout. The captured W3C document identifies its Software and Document Notice and License
+at w3c-gamepad.html:339–347. The application uses the interface's numeric assignments.
+https://w3c.github.io/gamepad/
+
+Parry and Rapier
+src/domain/terrain.ts:118–123 and simulation-engine/engine-core/src/environment.rs:274–278,
+556–558,587–590,687–690 cite Parry geometry or query behavior. Rapier and Parry declare
+Apache-2.0 in rapier3d-f64-0.36.1/Cargo.toml:42 and parry3d-f64-0.31.1/Cargo.toml:40.
+Apache-2.0 section 4 calls for a copy of the licence, notices on modified files, retention of
+applicable source notices and reproduction of applicable NOTICE attributions when supplied.
+The Parry archive separately attributes third-party code in src/utils/vec_map.rs:1–12
+and src/transformation/voxelization/voxel_set.rs:1–17 to the Rust Project Developers
+(MIT or Apache-2.0) and Khaled Mamou (BSD-3-Clause terms), respectively.
+
+React Reconciler (included within @react-three/fiber)
+node_modules/@react-three/fiber/dist/events-e51d7528.esm.js:1495–1502 identifies the
+inlined Reconciler code and its MIT terms. The same upstream copyright and MIT terms
+appear in React's entry above. Fiber's package.json:53 declares a range (^0.34.0) for
+its build dependency. The exact embedded Reconciler build version has not been verified.
+https://github.com/facebook/react/tree/main/packages/react-reconciler
+
+=== Copyleft terms in the Electron distribution's credits ===
+
+FFmpeg (ffmpeg.dll). The FFmpeg credits at LICENSES.chromium.html:26686–26702 describe
+LGPL-2.1-or-later and optional GPL-2.0-or-later build parts. LGPL 2.1 sections 4 and 6
+require corresponding library source or a qualifying offer, licence and use notices,
+and a way to run with a modified library. The combined-work terms must permit modification
+for the customer's own use and reverse engineering for debugging those modifications.
+The local DLL did not establish whether the optional GPL parts were enabled.
+
+The Mozilla Windows Cert code and Hunspell entries (LICENSES.chromium.html:55088–55095,
+33425–33433) carry MPL terms. MPL 2.0 sections 3.1–3.3 require making covered source and
+modifications available under MPL, informing recipients how to obtain it, and allow larger
+works under other terms. MPL 1.1 sections 3.2 and 3.6 require making covered modifications
+available in source form and giving executable recipients an applicable source notice.
+The credits cover multiple platforms and include optional or alternate terms. A credits
+entry alone does not establish that its code or a particular licence option is in the Windows build.
+The credits also include MPL terms for NSPR, the Mozilla Personal Security Manager,
+Eigen, and the Symphonia family (LICENSES.chromium.html:55960,54608,24864,87948–92161),
+as well as alternate terms for the ISimpleDOM COM interfaces (42369–42380).
+
+A GPL notice for DirectX Shader Compiler is scoped to autoconf/config.guess in the credits
+(LICENSES.chromium.html:23513–23517). JSZip has an MIT or GPL-3.0 choice in the credits
+(43701–43708). GPL executable-distribution terms require corresponding source and the
+applicable GPL terms when the GPL applies. The available evidence does not establish that
+the separately licensed build script or an optional GPL configuration ships in this release.

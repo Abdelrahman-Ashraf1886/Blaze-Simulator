@@ -13,6 +13,8 @@ asarUnpack:
 extraResources:
   - from: simulation-engine/target/release/drone-engine.exe
     to: engine/drone-engine.exe
+  - from: build/notices/THIRD-PARTY-NOTICES.txt
+    to: notices/THIRD-PARTY-NOTICES.txt
 win:
   icon: build/icon.png
   target:

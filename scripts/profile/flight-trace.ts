@@ -80,5 +80,6 @@ export async function saveFlightTrace<T extends { capture: TimingCapture | null;
       console.log(`FLIGHT-TRACE ${path}`)
     }
   }
-  return capture
+  // sample() returned or threw before this point.
+  return capture!
 }

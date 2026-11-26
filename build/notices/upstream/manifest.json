@@ -1,0 +1,70 @@
+[
+  {
+    "kind": "crate",
+    "package": "parry3d-f64",
+    "version": "0.31.1",
+    "url": "https://github.com/dimforge/parry/tree/v0.31.1",
+    "reference": "tag v0.31.1",
+    "retrieved": "2026-11-26",
+    "files": [
+      "parry-LICENSE"
+    ]
+  },
+  {
+    "kind": "crate",
+    "package": "profiling",
+    "version": "1.0.18",
+    "url": "https://github.com/aclysma/profiling",
+    "reference": "default branch",
+    "retrieved": "2026-11-26",
+    "files": [
+      "profiling-LICENSE-APACHE",
+      "profiling-LICENSE-MIT"
+    ]
+  },
+  {
+    "kind": "crate",
+    "package": "rapier3d-f64",
+    "version": "0.36.1",
+    "url": "https://github.com/dimforge/rapier/tree/v0.36.1",
+    "reference": "tag v0.36.1",
+    "retrieved": "2026-11-26",
+    "files": [
+      "rapier-LICENSE"
+    ]
+  },
+  {
+    "kind": "crate",
+    "package": "rstar",
+    "version": "0.13.1",
+    "url": "https://github.com/georust/rstar",
+    "reference": "default branch",
+    "retrieved": "2026-11-26",
+    "files": [
+      "rstar-LICENSE-APACHE",
+      "rstar-LICENSE-MIT"
+    ]
+  },
+  {
+    "kind": "npm",
+    "package": "@react-three/fiber",
+    "version": "9.8.2",
+    "url": "https://github.com/pmndrs/react-three-fiber",
+    "reference": "default branch",
+    "retrieved": "2026-11-26",
+    "files": [
+      "r3f-LICENSE"
+    ]
+  },
+  {
+    "kind": "npm",
+    "package": "react-remove-scroll-bar",
+    "version": "2.3.8",
+    "url": "https://github.com/theKashey/react-remove-scroll-bar",
+    "reference": "default branch",
+    "retrieved": "2026-11-26",
+    "files": [
+      "react-remove-scroll-bar-LICENSE"
+    ]
+  }
+]

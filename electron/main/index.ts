@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, p
 import { existsSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { thirdPartyNoticesPath } from './notices'
 import { ASSET_SCHEME, Channels, type AssetInfo, type GpuPreference, type IpcResult } from '../ipc/contract'
 import { createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
 import { createRecordingCsvExporter } from './telemetry/csv'
@@ -185,7 +186,23 @@ function buildMenu(): void {
           { role: 'togglefullscreen' },
         ],
       },
-      { label: 'Help', submenu: [{ label: 'About Blaze UAV', click: showAbout }] },
+      {
+        label: 'Help',
+        submenu: [
+          { label: 'About Blaze UAV', click: showAbout },
+          {
+            label: 'Third-party notices',
+            click: () => {
+              const file = thirdPartyNoticesPath(app.isPackaged, process.resourcesPath, app.getAppPath())
+              void shell.openPath(file).then((error) => {
+                if (error) dialog.showErrorBox('Could not open third-party notices', error)
+              }).catch((error: unknown) => {
+                dialog.showErrorBox('Could not open third-party notices', String(error))
+              })
+            },
+          },
+        ],
+      },
     ]),
   )
 }

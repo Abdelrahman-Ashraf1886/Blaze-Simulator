@@ -38,7 +38,7 @@ a fix that must change one (8.10) is listed, justified and approved on its own.
 | K2 | One ground run at 64.6 ms stick to draw (limit 67), not traced | DEVLOG 7.12 |
 | K3 | The app draws on the Intel UHD 630, not the GTX 1650; 4K workshop p95 33 ms (43 fps) | DEVLOG 6.0b, e2e output |
 | K4 | A flat box rebounds about half the expected height (rapier contact) | DEVLOG 4.4 follow-ups |
-| K5 | Landing on the 45° terrain fixture never completes (friction 0.4 is below tan 45°; not traced further) | DEVLOG 6.10 |
+| K5 | On the 45° terrain fixture the quad touches at 27.972 s, slides downhill in contact and loses contact near the grid edge at 32.593 s. Vertical speed exceeds the detector’s 0.135 m/s limit at every post-touchdown update, so it never confirms landing by 34 s. The terrain scenario warns when the slope at the flight start exceeds atan(friction) (45.0° vs 21.8° at 0.4). | [DEVLOG 6.10](../DEVLOG.md#catalogue-acceptance) · [Fixture](../../tests/unit/scenario-protocol.test.ts#L626-L670) |
 | K6 | Sensors-off step timed at 31 µs instead of 12 µs in two of three runs | DEVLOG 7.12 |
 | K7 | Return parameters are not in the tuning editor; GPS spec fields show on every peripheral | Phase 6 and 7 notes |
 | K8 | Never tried: a real PlayStation controller (yours), another PC, another GPU | – |

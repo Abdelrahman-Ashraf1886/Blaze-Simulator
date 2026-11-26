@@ -1,9 +1,49 @@
 import { describe, expect, it } from 'vitest'
-import { parseAsciiGrid, terrainHeightAt } from '../../src/domain/terrain'
+import { parseAsciiGrid, terrainHeightAt, terrainLandingSlope, type TerrainFootprint } from '../../src/domain/terrain'
 
 // All coordinates and expected heights use exact binary fractions. Tolerance: zero.
 const header = 'NCOLS 2\nNROWS 2\nXLLCORNER 10\nYLLCORNER 20\nCELLSIZE 2\nNODATA_VALUE -7'
 const data = '2 8\n0 4'
+
+describe('terrain landing slope', () => {
+  const footprint: TerrainFootprint = { min: [11.5, 21.5], max: [12.5, 22.5] }
+  const grid = { rows: 2, columns: 2, cornerM: [10, 20] as const, cellSizeM: 2 }
+
+  it.each([
+    [0, 0, false],
+    [30, 2 / Math.sqrt(3), true],
+    [45, 2, true],
+  ])('measures a %i° plane against both friction limits', (angle, rise, slidesAtPointFour) => {
+    const plane = { ...grid, heightsM: new Float64Array([0, rise, 0, rise]) }
+    const low = terrainLandingSlope(plane, footprint, 0.4)!
+    const high = terrainLandingSlope(plane, footprint, 1)!
+    expect(low.slopeDeg).toBeCloseTo(angle)
+    expect(low.limitDeg).toBeCloseTo(21.801409486)
+    expect(low.exceedsLimit).toBe(slidesAtPointFour)
+    expect(high.slopeDeg).toBeCloseTo(angle)
+    expect(high.limitDeg).toBe(45)
+    expect(high.exceedsLimit).toBe(false)
+  })
+
+  it('uses only triangles the footprint touches and includes the steeper face on a shared edge', () => {
+    // The northwest face is flat. On the southeast face z = u*2 - v*2 in cell coordinates.
+    const crease = { ...grid, heightsM: new Float64Array([0, 0, 0, 2]) }
+    const insideFlat = terrainLandingSlope(crease, { min: [11.25, 22.25], max: [11.75, 22.75] }, 1)
+    expect(insideFlat).toEqual({ slopeDeg: 0, limitDeg: 45, exceedsLimit: false })
+    const atCrease = terrainLandingSlope(crease, { min: [11.5, 22], max: [12, 22.5] }, 1)
+    expect(atCrease?.slopeDeg).toBeCloseTo(54.735610317)
+    expect(atCrease?.exceedsLimit).toBe(true)
+  })
+
+  it('clips the footprint to the sample centres and checks adjoining cells', () => {
+    const strip = { ...grid, columns: 3, heightsM: new Float64Array([0, 0, 2, 0, 0, 2]) }
+    expect(terrainLandingSlope(strip, { min: [10, 20], max: [10.5, 24] }, 0.4)).toBeUndefined()
+    expect(terrainLandingSlope(strip, { min: [10, 20], max: [11.5, 24] }, 0.4)?.slopeDeg).toBe(0)
+    expect(terrainLandingSlope(strip, { min: [12, 21], max: [14, 23] }, 0.4)?.slopeDeg).toBe(45)
+    expect(terrainLandingSlope(strip, { min: [15, 23], max: [16, 24] }, 0.4)?.slopeDeg).toBe(45)
+    expect(terrainLandingSlope(strip, { min: [15.5, 23], max: [16, 24] }, 0.4)).toBeUndefined()
+  })
+})
 
 describe('Esri ASCII terrain', () => {
   it('refuses a finite header whose cell bounds collapse at engine precision', () => {

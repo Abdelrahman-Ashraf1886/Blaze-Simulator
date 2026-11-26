@@ -19,7 +19,7 @@ import { useAssembly } from '../workshop/assembly-store'
 import { useAssets } from '../workshop/asset-store'
 import { useComponentIndex } from '../workshop/component-index'
 import { useWorkshopView } from '../workshop/view-store'
-import { airDensityFor, conditionsOf, enginePayload, flightGate, type FlightBlocker, type FlightConditions, type FlightGate, type FlightLink, type PayloadResult } from '../flight/readiness'
+import { airDensityFor, conditionsOf, enginePayload, flightGate, terrainLandingWarning, type FlightBlocker, type FlightConditions, type FlightGate, type FlightLink, type PayloadResult } from '../flight/readiness'
 import { SensorNotice } from '../flight/sensors/SensorSection'
 import { checkRows, fmt, modificationRows, summaryRows } from './report'
 import { BUILTINS, missingEntry, missingProjectInput, NO_ENTRIES, PROJECT_INPUTS, scenarioRunInput, type BuiltinInfo, type ScenarioEntries } from './scenarios'
@@ -106,6 +106,7 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
   const terrain = useTerrainGrid(terrainId)
   const payload = useMemo(() => enginePayload(doc, geo, components, assets, { terrain }), [doc, geo, components, assets, terrain])
   const gate = useMemo(() => flightGate(payload, conditions), [payload, conditions])
+  const landingWarning = useMemo(() => terrainLandingWarning(payload), [payload])
   const engineBlock = engineState === 'connected' ? null : 'The engine is not connected.'
   const [entries, setEntries] = useState<ScenarioEntries>(NO_ENTRIES)
   // A result belongs to the build and conditions it was flown with (`gate`): once they change, it is not shown.
@@ -184,6 +185,7 @@ function Scenarios({ project, doc }: { project: Project; doc: AssemblyDocument }
                 entries={entries}
                 onEntries={(patch) => setEntries((e) => ({ ...e, ...patch }))}
                 payload={payload}
+                landingWarning={info.projectInput === 'terrain' ? landingWarning : undefined}
                 run={runs[info.name]}
                 runnable={canRun(info)}
                 busy={busy}
@@ -263,11 +265,12 @@ const MASS_UNIT = 'g'
 const OFFSET_UNIT = 'mm'
 const show = (v: number | null, unit: 'g' | 'mm') => (v === null ? '' : String(Math.round(fromSI(v, unit) * 1e6) / 1e6))
 
-function ScenarioCard({ info, entries, onEntries, payload, run, runnable, busy, gateOk, projectId, onRun }: {
+export function ScenarioCard({ info, entries, onEntries, payload, landingWarning, run, runnable, busy, gateOk, projectId, onRun }: {
   info: BuiltinInfo
   entries: ScenarioEntries
   onEntries: (patch: Partial<ScenarioEntries>) => void
   payload: PayloadResult
+  landingWarning: string | undefined
   run: RunState | undefined
   runnable: boolean
   busy: boolean
@@ -328,6 +331,7 @@ function ScenarioCard({ info, entries, onEntries, payload, run, runnable, busy, 
           {projectInput.link.to === 'flight-field' ? 'Flight setup' : 'Workshop environment'} · {projectInput.label}
         </Link>
       )}
+      {landingWarning && <p role="status" className="mt-1 text-[12px] text-warn" data-testid="scenario-terrain-landing-warning">{landingWarning}</p>}
       {need && <p className="mt-1 text-[12px] text-warn" data-testid={`scenario-need-${info.name}`}>{need}</p>}
       {run?.status === 'error' && <p role="alert" className="mt-2 text-[12.5px] text-fault" data-testid={`scenario-error-${info.name}`}>The engine did not run this scenario: {run.message}</p>}
       {run?.status === 'done' && <>

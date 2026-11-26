@@ -7,6 +7,7 @@
  * Pure (no React, no IPC); the engine refuses an incomplete request too.
  */
 import type { AssemblyDocument, FlightConditionsDoc, FlightStartInput } from '../../../electron/ipc/contract'
+import { Quaternion, Vector3 } from 'three'
 import physics from '../../../database/reference/physics.v1.json'
 import { airDensity, isaConstants } from '../../domain/atmosphere'
 import { lowestPoint } from '../../domain/collisions'
@@ -15,6 +16,7 @@ import { vehicleDefinition, type VehicleDefinition } from '../../domain/mass'
 import { propulsionDefinition, type PropulsionDefinition, type ReadyLink } from '../../domain/propulsion'
 import type { FlightSessionStartParams } from '../../../electron/main/engine/protocol'
 import { fitBuildThrustCurve, type BuildThrustCurveFit } from '../../domain/thrust-curve'
+import { terrainLandingSlope } from '../../domain/terrain'
 import { simWind } from '../../domain/wind'
 import type { FrameGeometry } from '../../three/frame-geometry'
 import { bodyAreas } from '../workshop/aero-input'
@@ -181,6 +183,29 @@ export function enginePayload(
         : { startPositionM: [0, 0, -lowestPoint(vehicle.parts.map((p) => ({ shape: p.shape, ...p.pose })))] }),
     },
   }
+}
+
+/** The landing advisory uses the collision geometry at the planned start XY and level start heading. */
+export function terrainLandingWarning(result: PayloadResult): string | undefined {
+  if (!result.ok) return undefined
+  const { vehicle, environment: { terrain }, startPositionM: [x, y] } = result.payload
+  if (!terrain) return undefined
+  const down = new Vector3(0, 0, -1)
+  // Reuse the collision support calculation (collisions.ts:359–365) in each horizontal direction.
+  const extent = (dx: number, dy: number) => {
+    const rotation = new Quaternion().setFromUnitVectors(new Vector3(dx, dy, 0), down)
+    return -lowestPoint(vehicle.parts.map(({ shape, pose }) => ({
+      shape,
+      position: new Vector3(...pose.position).applyQuaternion(rotation).toArray(),
+      quaternion: rotation.clone().multiply(new Quaternion(...pose.quaternion)).toArray(),
+    })))
+  }
+  const slope = terrainLandingSlope(terrain, {
+    min: [x - extent(-1, 0), y - extent(0, -1)],
+    max: [x + extent(1, 0), y + extent(0, 1)],
+  }, terrain.friction)
+  if (!slope?.exceedsLimit) return undefined
+  return `The terrain at the flight start is up to ${slope.slopeDeg.toFixed(1)}°. With friction ${terrain.friction}, the limit for staying put is ${slope.limitDeg.toFixed(1)}°. The vehicle may slide when landing here.`
 }
 
 export type FlightGate = { ok: true; input: FlightStartInput & Pick<EnginePayload, 'environment' | 'sensors'>; thrustFit: BuildThrustCurveFit | null } | { ok: false; blockers: FlightBlocker[] }

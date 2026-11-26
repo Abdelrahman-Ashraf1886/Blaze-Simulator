@@ -40,7 +40,7 @@ import { createDeviceButtonEdges, runDeviceButton } from './device-buttons'
 import { FLIGHT_MODE_LABELS, flightStartWithTuning } from './flight-mode'
 import { FlightModeStatus } from './FlightModeStatus'
 import { assemblyThrust, collisionIndicator, instabilityIndicator, layoutIndicator, massIndicator } from './indicators'
-import { conditionsOf, EMPTY_CONDITIONS, enginePayload, flightGate, type FlightConditions } from './readiness'
+import { conditionsOf, EMPTY_CONDITIONS, enginePayload, flightGate, terrainLandingWarning, type FlightConditions } from './readiness'
 import { rateLoopLabel, sensorSources } from './sensors/settings'
 import { SensorNotice } from './sensors/SensorSection'
 import { mapPx4Sticks, mapSticks, STICK_KEYS, updateHeadingHold, type HeadingHold } from './sticks'
@@ -119,6 +119,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
   const terrainId = doc.environment?.terrain?.assetId
   const terrain = useTerrainGrid(terrainId)
   const payload = useMemo(() => enginePayload(doc, geo, components, assets, { terrain }), [doc, geo, components, assets, terrain])
+  const landingWarning = useMemo(() => terrainLandingWarning(payload), [payload])
   const gate = useMemo(() => flightGate(payload, conditions), [payload, conditions])
   const engineBlock = engineState === 'connected' ? null : 'The engine is not connected.'
   const idle = useMemo(() => {
@@ -509,6 +510,7 @@ function FlightRun({ project, doc, display, geo, mass, components }: {
         <aside aria-label="Physics debug panel" className="w-full shrink-0 overflow-y-auto border-t border-line bg-chrome px-4 py-3 @min-[1000px]:w-[400px] @min-[1000px]:border-l @min-[1000px]:border-t-0">
           {showLive && <div className="mb-5"><LiveGraphs source={liveTelemetry.source} needsNewFlight={running && !samplesEnabled} /></div>}
           <div className="mb-5">
+            {landingWarning && <p role="status" className="mb-2 text-[12px] text-warn" data-testid="flight-terrain-landing-warning">{landingWarning}</p>}
             <FlightSetup projectId={project.id} conditions={conditions} onChange={setConditions} blockers={blockers}
               environment={payload.ok ? payload.payload : undefined} terrainId={terrainId} engineBlock={engineBlock} locked={running}
               sensorSources={sources} sensorMountOf={(partId) =>

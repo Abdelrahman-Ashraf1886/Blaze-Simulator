@@ -7,6 +7,9 @@ import { createHash } from 'node:crypto'
 import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { MemoryRouter } from 'react-router'
 import { Quaternion, Vector3 } from 'three'
 import physics from '../../database/reference/physics.v1.json'
 import seed from '../../database/seed/components.v1.json'
@@ -39,9 +42,11 @@ import { noiseDensityToSampleSigma, resolveSensorSpecs } from '../../src/domain/
 import { buildSensorPayload, type SensorPayload } from '../../src/domain/sensors'
 import { toSI } from '../../src/domain/units'
 import { thrustFactor, thrustFactorReadout } from '../../src/domain/thrust-curve'
-import { enginePayload, flightGate } from '../../src/features/flight/readiness'
+import { enginePayload, flightGate, terrainLandingWarning } from '../../src/features/flight/readiness'
 import { px4GyroDefaults } from '../../src/features/flight/sensors/settings'
-import { BUILTINS, scenarioRequest, scenarioRunInput } from '../../src/features/scenarios/scenarios'
+// @ts-expect-error The Node tsconfig omits JSX. Vitest applies the Vite React transform.
+import { ScenarioCard } from '../../src/features/scenarios/ScenariosPage'
+import { BUILTINS, NO_ENTRIES, scenarioRequest, scenarioRunInput } from '../../src/features/scenarios/scenarios'
 import { measuredSamples, stepTestInput } from '../../src/features/tuning/step-test-input'
 import { addPart, updatePart, type AttachTarget } from '../../src/features/workshop/assembly-ops'
 import { effectiveShape } from '../../src/features/workshop/links'
@@ -186,6 +191,32 @@ const cylinder = {
 } satisfies ObstacleDoc
 
 describe('saved environment payloads', () => {
+  it('shows a non-blocking terrain landing warning only above the friction limit', () => {
+    const { doc, geo, components } = catalogueAssembly()
+    const info = BUILTINS.find(({ name }) => name === 'terrain')!
+    // Same 45° plane as the catalogue placement fixture.
+    const heightsM = new Float64Array([0, Math.SQRT2, -Math.SQRT2, 0])
+    for (const friction of [0.4, 1]) {
+      doc.environment = { ground: { friction: null, restitution: null }, terrain: { ...terrain, friction }, obstacles: [] }
+      const payload = enginePayload(doc, geo, components, {}, { terrain: { id: terrain.assetId, grid: { ...grid, heightsM } } })
+      const gate = flightGate(payload, conditions)
+      const runnable = scenarioRunInput(gate, info, NO_ENTRIES) !== null
+      expect(gate.ok).toBe(true)
+      expect(runnable).toBe(true)
+      const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ScenarioCard, {
+        info, entries: NO_ENTRIES, onEntries: vi.fn(), payload, landingWarning: terrainLandingWarning(payload),
+        run: undefined, runnable, busy: false, gateOk: gate.ok, projectId: terrain.assetId, onRun: vi.fn(),
+      })))
+      if (friction === 0.4) {
+        expect(html).toContain('scenario-terrain-landing-warning')
+        expect(html).toContain('45.0°. With friction 0.4, the limit for staying put is 21.8°.')
+      } else {
+        expect(html).not.toContain('scenario-terrain-landing-warning')
+      }
+      expect(html).not.toContain('disabled=""')
+    }
+  })
+
   it('preserves legacy flight and free-space built-in payloads', () => {
     const { doc, geo, components } = catalogueAssembly()
     const old = catalogueQuad()

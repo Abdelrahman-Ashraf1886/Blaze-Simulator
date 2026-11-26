@@ -10,6 +10,7 @@ import { STANDARD_AXES } from '../../src/features/input/calibration'
 import { buildQuad, commit, launchApp, openFlight, savePadCalibration, setPad } from './helpers'
 
 const mode = process.env.BLAZE_FLIGHT_PERF_MODE ?? 'full'
+const traceMode = process.env.BLAZE_FLIGHT_PERF_TRACE === '1'
 if (mode !== 'full' && mode !== 'record' && mode !== 'plain') {
   throw new Error(`Unknown BLAZE_FLIGHT_PERF_MODE ${JSON.stringify(mode)}. Expected full, record, or plain.`)
 }
@@ -221,7 +222,7 @@ for (const scenario of cases) {
     let app: ElectronApplication | undefined
     let status = 'invalid'
     let detail: string | undefined
-    const judged = mode === 'full' && scenario.judged
+    const judged = !traceMode && mode === 'full' && scenario.judged
     const report: Record<string, unknown> = {
       case: scenario.name, mode, judged, durationMs, cpu: cpus()[0]?.model,
       stickTestInputs: { flipCount, flipSeed },
@@ -299,7 +300,17 @@ for (const scenario of cases) {
       validateWindow(before)
       requireValid(before.displayHz === initial.displayHz && before.primaryId === initial.primaryId,
         'Primary display changed after the idle cadence check')
-      const { capture, flips, flipPhaseMs, startMs, endMs, active, capacity } = await sampleFlight(page, before.displayHz)
+      const sample = traceMode
+        ? await (await import('../../scripts/profile/flight-trace')).saveFlightTrace(
+          app, page, join(userData, 'chromium-trace.json'), test.info().outputPath('flight-trace.json'),
+          {
+            case: scenario.name, mode, powerSource: before.power, gpu: report.gpu,
+            display: await app.evaluate(({ screen }) => screen.getPrimaryDisplay()),
+          },
+          periodMs, () => sampleFlight(page, before.displayHz),
+        )
+        : await sampleFlight(page, before.displayHz)
+      const { capture, flips, flipPhaseMs, startMs, endMs, active, capacity } = sample
       const after = await windowState(app)
       report.after = after
       report.capacityPerStream = capacity

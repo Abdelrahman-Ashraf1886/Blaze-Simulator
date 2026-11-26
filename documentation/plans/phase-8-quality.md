@@ -36,7 +36,7 @@ a fix that must change one (8.10) is listed, justified and approved on its own.
 |---|---|---|
 | K1 | Two to five hitches per 20 s of flight, up to 426 ms, cause not traced | DEVLOG 6.0b, 7.12 |
 | K2 | One ground run at 64.6 ms stick to draw (limit 67), not traced | DEVLOG 7.12 |
-| K3 | The app draws on the Intel UHD 630, not the GTX 1650; 4K workshop p95 33 ms (43 fps) | DEVLOG 6.0b, e2e output |
+| K3 | Settings → Graphics chooses the GPU preference at startup and reports the current WebGL renderer. On the i7-9750H laptop the Intel UHD 630 stalled WebGL for 55–832 ms in flight. The stalls did not occur on the GTX 1650 with the high-performance switch. The earlier 4K workshop p95 on Intel was 33 ms (43 fps). | User measurement, 2026-11-26; DEVLOG 6.0b, e2e output |
 | K4 | A flat box rebounds about half the expected height (rapier contact) | DEVLOG 4.4 follow-ups |
 | K5 | Landing on the 45° terrain fixture never completes (friction 0.4 is below tan 45°; not traced further) | DEVLOG 6.10 |
 | K6 | Sensors-off step timed at 31 µs instead of 12 µs in two of three runs | DEVLOG 7.12 |
@@ -55,7 +55,7 @@ a fix that must change one (8.10) is listed, justified and approved on its own.
 | D6 | Restore and move projects | (a) restore a copy from Settings; (b) (a) + export one project to a file and import it on another PC, with its models and terrain | **(b)**. Today a project cannot leave the PC. Recordings are exported only if ticked (15 MB per minute) |
 | D7 | Logs | (a) local log files, rotated, nothing ever sent; (b) (a) + a crash upload service | **(a)**. A "Save diagnostics" button makes a zip you can send yourself; it lists what is inside first and leaves out project data unless ticked |
 | D8 | Update checks | (a) none; the guide says how to upgrade; (b) the app checks for a new version; (c) automatic updates | **(a)**. The app makes no network request today, and unsigned automatic updates are unsafe |
-| D9 | Graphics card | (a) leave Windows to choose; (b) ask Electron for the high-performance GPU; (c) a setting with both, default as today | **(c)**, after measuring both (8.3). On a laptop (b) costs battery |
+| D9 | Graphics card | High performance, power saving, or system | **High performance by default**, chosen by the user on 2026-11-26. Changes apply on restart. Windows’ per-app setting may override the preference. |
 | D10 | Clean-PC and upgrade test | (a) Windows Sandbox on this PC; (b) a second PC of yours; (c) both | **(a)**, and (b) if you have one. Sandbox is a Windows 11 Pro feature that is off on this PC: turning it on needs your administrator approval and a restart |
 | D11 | Validation against a real flight | (a) analytical and published data only; (b) (a) + a log from your own drone, if you have one with the build in the catalogue | **(a)**, and (b) whenever you bring a log. The report says "not compared with a real flight" until then |
 | D12 | Checks on GitHub | (a) none, as today; (b) GitHub Actions on Windows for every push to `blaze-sim`: Rust, typecheck, lint, unit | **(a)** for now. (b) runs code on the repository owner's account and minutes; it needs their agreement. End-to-end and performance tests stay on this PC |

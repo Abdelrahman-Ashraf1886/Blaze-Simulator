@@ -44,7 +44,7 @@ test.afterEach(async () => {
   rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
 })
 
-test('engine connects, projects persist across restarts, unbuilt sections are disabled', async () => {
+test('engine connects and projects persist across restarts', async () => {
   let { app, page } = await launch()
   let errors = trackErrors(page)
 
@@ -62,11 +62,6 @@ test('engine connects, projects persist across restarts, unbuilt sections are di
   await expect(page.getByTestId('recent-projects').getByTestId('project-row')).toHaveCount(1)
   await expect(page.getByTestId('recent-projects')).toContainText('Hex X')
 
-  // Disabled roadmap sections are not links and do not navigate.
-  const settings = page.getByTestId('nav-/settings')
-  await expect(settings).toHaveAttribute('aria-disabled', 'true')
-  await settings.click({ force: true }) // force: Playwright treats aria-disabled as not clickable
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible()
   expect(errors).toEqual([])
 
   await app.close()

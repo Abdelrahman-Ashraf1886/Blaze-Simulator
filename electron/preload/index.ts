@@ -4,6 +4,15 @@ import type { DesktopApiWithRecordings, EngineStatus, RecordingVerifyProgress } 
 // Channel names are duplicated as literals on purpose: importing the contract
 // module at runtime would bundle zod into the sandboxed preload.
 const api: DesktopApiWithRecordings = {
+  graphics: {
+    status: () => ipcRenderer.invoke('graphics:status'),
+    command: (input) => ipcRenderer.invoke('graphics:command', input),
+    onPowerChange: (listener) => {
+      const receive = (_event: unknown, onBattery: boolean) => listener(onBattery)
+      ipcRenderer.on('graphics:status', receive)
+      return () => ipcRenderer.removeListener('graphics:status', receive)
+    },
+  },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     create: (input) => ipcRenderer.invoke('projects:create', input),

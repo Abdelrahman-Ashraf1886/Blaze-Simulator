@@ -1,9 +1,11 @@
 import { z } from 'zod'
 import { CONTROLLER_PARAMS, effectiveParams } from '../../src/domain/controller-params'
 import type { WebContents } from 'electron'
-import { Channels, type FlightStartResult, type FlightStepResult, type IpcResult, type SystemStatus, type TerrainAssetInfo } from './contract'
+import { Channels, type FlightStartResult, type FlightStepResult, type GraphicsStatus, type GpuPreference, type IpcResult, type SystemStatus, type TerrainAssetInfo } from './contract'
 import {
   assetIdSchema,
+  graphicsCommandSchema,
+  graphicsStatusSchema,
   createProjectSchema,
   flightLiveViewSchema,
   listRunsSchema,
@@ -38,6 +40,21 @@ import type { RecordingStore } from '../main/telemetry/store'
 import { verifyRecording } from '../main/telemetry/verify'
 import { flightStart, flightStartSchema, flightStep, type EngineForFlight } from '../main/engine/flight-session'
 import { RECORD_EVERY_STEPS, type SessionRecorder } from '../main/telemetry/session-recorder'
+
+export function createGraphicsHandlers(options: {
+  status: () => GraphicsStatus
+  setPreference: (preference: GpuPreference) => void
+  restart: () => void
+}) {
+  return {
+    status: (payload: unknown) => validated(graphicsStatusSchema, payload, options.status),
+    command: (payload: unknown) => validated(graphicsCommandSchema, payload, (input) => {
+      if (input.action === 'set') options.setPreference(input.preference)
+      else options.restart()
+      return null
+    }),
+  }
+}
 
 export function createRecordingCsvHandler(exporter: Pick<ReturnType<typeof createRecordingCsvExporter>, 'export'>) {
   return (payload: unknown, pickPath: PickCsvPath) =>

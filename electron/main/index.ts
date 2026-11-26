@@ -1,9 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, screen, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, protocol, screen, session, shell } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { ASSET_SCHEME, Channels, type AssetInfo, type IpcResult } from '../ipc/contract'
-import { createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
+import { ASSET_SCHEME, Channels, type AssetInfo, type GpuPreference, type IpcResult } from '../ipc/contract'
+import { createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
 import { createRecordingCsvExporter } from './telemetry/csv'
 import { RecordingStore } from './telemetry/store'
 import { printCurrentReportPdf } from './telemetry/report-pdf'
@@ -21,6 +21,7 @@ import { flightEnd } from './engine/flight-session'
 import { scenarioRun } from './engine/scenario-run'
 import { stepTest } from './engine/step-test'
 import { EngineSupervisor } from './engine/supervisor'
+import { GPU_PREFERENCE_FILE, gpuSwitchFor, readGpuPreference, writeGpuPreference } from './gpu-preference'
 
 const APP_ID = 'com.blazeuav.app'
 /** Fits a 1366×768 laptop at 125 % scaling (1093×566 DIP work area). */
@@ -47,6 +48,7 @@ let engine: EngineSupervisor | null = null
 let recordingCsv: ReturnType<typeof createRecordingCsvExporter> | undefined
 let recorder: SessionRecorder | undefined
 let mainWindow: BrowserWindow | null = null
+let restartRequested = false
 
 if (!app.requestSingleInstanceLock()) {
   // Another instance owns this userData directory; it will focus its window.
@@ -57,7 +59,11 @@ if (!app.requestSingleInstanceLock()) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
   })
-  void app.whenReady().then(start)
+  const preferencePath = join(app.getPath('userData'), GPU_PREFERENCE_FILE)
+  const startupPreference = readGpuPreference(preferencePath)
+  const gpuSwitch = gpuSwitchFor(startupPreference)
+  if (gpuSwitch) app.commandLine.appendSwitch(gpuSwitch)
+  void app.whenReady().then(() => start(preferencePath, startupPreference))
 }
 
 function engineBinaryPath(): string {
@@ -184,11 +190,30 @@ function buildMenu(): void {
   )
 }
 
-async function start(): Promise<void> {
+async function start(preferencePath: string, startupPreference: GpuPreference): Promise<void> {
   app.setAppUserModelId(APP_ID)
   nativeTheme.themeSource = 'dark' // dark title bar, menus and native controls on Windows
   applyContentSecurityPolicy()
   buildMenu()
+
+  let preference = startupPreference
+  const graphics = createGraphicsHandlers({
+    status: () => ({ preference, startupPreference, onBattery: powerMonitor.isOnBatteryPower() }),
+    setPreference: (value) => {
+      writeGpuPreference(preferencePath, value)
+      preference = value
+    },
+    restart: () => {
+      if (restartRequested) return
+      restartRequested = true
+      app.quit()
+    },
+  })
+  ipcMain.handle(Channels.graphicsStatus, (_event, payload) => graphics.status(payload))
+  ipcMain.handle(Channels.graphicsCommand, (_event, payload) => graphics.command(payload))
+  const notifyPowerChange = () => mainWindow?.webContents.send(Channels.graphicsStatus, powerMonitor.isOnBatteryPower())
+  powerMonitor.on('on-ac', notifyPowerChange)
+  powerMonitor.on('on-battery', notifyPowerChange)
 
   dbPath = join(app.getPath('userData'), 'blaze-uav.db')
   try {
@@ -423,4 +448,8 @@ app.on('will-quit', () => {
   shutdownHullWorkers()
   db?.close()
   db = null
+  if (restartRequested) {
+    app.relaunch()
+    app.exit()
+  }
 })

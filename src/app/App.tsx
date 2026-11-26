@@ -4,6 +4,7 @@ import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { ComponentsPage } from '@/features/components/ComponentsPage'
 import { ProjectsPage } from '@/features/projects/ProjectsPage'
 import { InputPage } from '@/features/input/InputPage'
+import { SettingsPage } from '@/features/settings/SettingsPage'
 import { AppShell } from './AppShell'
 
 // The workshop pulls in three.js; load it only when the workshop is opened.
@@ -71,6 +72,7 @@ export function App() {
           <Route path="telemetry" element={<Suspense fallback={<p className="px-6 pt-5 text-fg-muted">Loading telemetry…</p>}><TelemetryPage /></Suspense>} />
           <Route path="telemetry/report/:id" element={<Suspense fallback={<p className="px-6 pt-5 text-fg-muted">Loading report…</p>}><ReportPage /></Suspense>} />
           <Route path="input" element={<InputPage />} />
+          <Route path="settings" element={<SettingsPage />} />
           <Route path="components" element={<ComponentsPage />} />
           <Route path="electrical" element={electrical} />
           <Route path="electrical/:projectId" element={electrical} />

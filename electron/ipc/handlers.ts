@@ -1,9 +1,12 @@
 import { z } from 'zod'
 import { CONTROLLER_PARAMS, effectiveParams } from '../../src/domain/controller-params'
 import type { WebContents } from 'electron'
-import { Channels, type DatabaseBackup, type Project, type ProjectExportInput, type FlightStartResult, type FlightStepResult, type GraphicsStatus, type GpuPreference, type IpcResult, type SystemStatus, type TerrainAssetInfo } from './contract'
+import { Channels, type DatabaseBackup, type DiagnosticsPreview, type FlightStartResult, type FlightStepResult, type GpuPreference, type GraphicsStatus, type IpcResult, type Project, type ProjectExportInput, type SystemStatus, type TerrainAssetInfo } from './contract'
 import {
   assetIdSchema,
+  diagnosticsOpenLogFolderSchema,
+  diagnosticsSaveSchema,
+  rendererErrorSchema,
   graphicsCommandSchema,
   graphicsStatusSchema,
   createProjectSchema,
@@ -42,6 +45,40 @@ import type { RecordingStore } from '../main/telemetry/store'
 import { verifyRecording } from '../main/telemetry/verify'
 import { flightStart, flightStartSchema, flightStep, type EngineForFlight } from '../main/engine/flight-session'
 import { RECORD_EVERY_STEPS, type SessionRecorder } from '../main/telemetry/session-recorder'
+
+export function createDiagnosticsHandlers(options: {
+  openLogFolder: () => Promise<void>
+  preview: (includeDatabase: boolean) => DiagnosticsPreview
+  save: (path: string, includeDatabase: boolean) => Promise<{ path: string }>
+  logRendererError: (message: string) => void
+  now?: () => number
+}) {
+  const now = options.now ?? (() => performance.now())
+  let lastRendererError = -Infinity
+  return {
+    openLogFolder: (payload: unknown) => validatedAsync(diagnosticsOpenLogFolderSchema, payload, async () => {
+      await options.openLogFolder()
+      return null
+    }),
+    save: (payload: unknown, pickPath: () => Promise<string | undefined>) =>
+      validatedAsync(diagnosticsSaveSchema, payload, async ({ action, includeDatabase }) => {
+        if (action === 'preview') return options.preview(includeDatabase)
+        const picked = await pickPath()
+        if (!picked) return null
+        const path = /\.zip$/i.test(picked) ? picked : `${picked}.zip`
+        return options.save(path, includeDatabase)
+      }),
+    rendererError: (payload: unknown) => {
+      const timestamp = now()
+      // One accepted error per second across renderer reloads.
+      if (timestamp - lastRendererError < 1000) return
+      const parsed = rendererErrorSchema.safeParse(payload)
+      if (!parsed.success) return
+      lastRendererError = timestamp
+      options.logRendererError(parsed.data)
+    },
+  }
+}
 
 export function createGraphicsHandlers(options: {
   status: () => GraphicsStatus

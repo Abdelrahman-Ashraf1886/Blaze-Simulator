@@ -690,9 +690,20 @@ export type GraphicsCommand =
   | { action: 'set'; preference: GpuPreference }
   | { action: 'restart' }
 
+export type DiagnosticsCommand =
+  | { action: 'preview'; includeDatabase: boolean }
+  | { action: 'save'; includeDatabase: boolean }
+
+export interface DiagnosticsPreview {
+  entries: { name: string; description: string }[]
+}
+
 // ---- Channels ---------------------------------------------------------------
 
 export const Channels = {
+  diagnosticsOpenLogFolder: 'diagnostics:openLogFolder',
+  diagnosticsSave: 'diagnostics:save',
+  rendererError: 'diagnostics:rendererError',
   graphicsStatus: 'graphics:status',
   graphicsCommand: 'graphics:command',
   projectsList: 'projects:list',
@@ -779,6 +790,13 @@ interface RecordingApi {
 export type DesktopApiWithRecordings = DesktopApi & { runs: RunRecordingApi; recording: RecordingApi }
 
 export interface DesktopApi {
+  diagnostics: {
+    openLogFolder(): Promise<IpcResult<null>>
+    save(input: Extract<DiagnosticsCommand, { action: 'preview' }>): Promise<IpcResult<DiagnosticsPreview>>
+    save(input: Extract<DiagnosticsCommand, { action: 'save' }>): Promise<IpcResult<{ path: string } | null>>
+    /** Used by the preload's page error listeners. */
+    reportRendererError(message: string): void
+  }
   graphics: {
     status(): Promise<IpcResult<GraphicsStatus>>
     command(input: GraphicsCommand): Promise<IpcResult<null>>

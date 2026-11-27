@@ -13,6 +13,7 @@ const project = (id: string, name: string): Project => ({
 
 function fakeApi(overrides: Partial<DesktopApi['projects']> = {}): DesktopApi {
   return {
+    diagnostics: { openLogFolder: vi.fn(), save: vi.fn(), reportRendererError: vi.fn() },
     graphics: { status: vi.fn(), command: vi.fn(), onPowerChange: vi.fn() },
     projects: {
       list: vi.fn(async () => ({ ok: true as const, data: [project('a', 'A')] })),

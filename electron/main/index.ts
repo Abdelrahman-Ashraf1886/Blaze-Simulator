@@ -1,10 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, protocol, screen, session, shell } from 'electron'
 import { existsSync, statSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { release } from 'node:os'
 import { join } from 'node:path'
 import { thirdPartyNoticesPath } from './notices'
 import { ASSET_SCHEME, Channels, type AssetInfo, type GpuPreference, type IpcResult } from '../ipc/contract'
-import { createDataSafetyHandlers, createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
+import { createDataSafetyHandlers, createDiagnosticsHandlers, createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
 import { createRecordingCsvExporter } from './telemetry/csv'
 import { RecordingStore } from './telemetry/store'
 import { printCurrentReportPdf } from './telemetry/report-pdf'
@@ -30,6 +31,9 @@ import { flightEnd } from './engine/flight-session'
 import { scenarioRun } from './engine/scenario-run'
 import { stepTest } from './engine/step-test'
 import { EngineSupervisor } from './engine/supervisor'
+import { createCrashHandlers } from './logging/crashes'
+import { createDiagnostics } from './logging/diagnostics'
+import { captureConsole, createLogger } from './logging/logger'
 import { GPU_PREFERENCE_FILE, gpuSwitchFor, readGpuPreference, writeGpuPreference } from './gpu-preference'
 
 const APP_ID = 'com.blazeuav.app'
@@ -42,6 +46,26 @@ const WINDOW_BACKGROUND = '#131518'
 // Test isolation: Playwright points this at a temp directory. Must run before the
 // single-instance lock, which is scoped to the userData directory.
 if (process.env.BLAZE_UAV_USER_DATA) app.setPath('userData', process.env.BLAZE_UAV_USER_DATA)
+
+const ownsUserData = app.requestSingleInstanceLock()
+const logger = createLogger(join(app.getPath('userData'), 'logs'))
+if (ownsUserData) {
+  captureConsole(logger)
+  const crashes = createCrashHandlers(logger, {
+    showError: (title, message) => dialog.showErrorBox(title, message),
+    offerReload: async (contents, options) => {
+      if (contents.isDestroyed()) return false
+      const win = BrowserWindow.fromWebContents(contents)
+      if (!win || win.isDestroyed()) return false
+      return (await dialog.showMessageBox(win, options)).response === 0
+    },
+  })
+  process.on('uncaughtException', crashes.uncaughtException)
+  process.on('unhandledRejection', crashes.unhandledRejection)
+  app.on('render-process-gone', (_event, contents, details) => void crashes.rendererGone(contents, details))
+  app.on('child-process-gone', (_event, details) => crashes.childGone(details))
+  logger.write('info', 'main', 'Application starting')
+}
 
 const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL
 
@@ -59,7 +83,7 @@ let recorder: SessionRecorder | undefined
 let mainWindow: BrowserWindow | null = null
 let restartRequested = false
 
-if (!app.requestSingleInstanceLock()) {
+if (!ownsUserData) {
   // Another instance owns this userData directory; it will focus its window.
   app.quit()
 } else {
@@ -425,9 +449,50 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
   })
 
   const binaryPath = engineBinaryPath()
-  engine = new EngineSupervisor({ binaryPath, log: (l) => console.log(l) })
+  engine = new EngineSupervisor({ binaryPath, log: (line, level) => logger.write(level ?? 'info', 'engine', line) })
+  const diagnostics = createDiagnostics({
+    logger,
+    databasePath: dbPath,
+    schemaVersion: () => schemaVersion(db!),
+    backupDatabase: (path) => db!.backup(path),
+    recordingsDirectory: recordingsDir,
+    versions: () => ({ app: app.getVersion(), engine: engine!.status.engineVersion, electron: process.versions.electron }),
+    os: () => ({ platform: process.platform, arch: process.arch, release: release() }),
+    graphicsPreference: () => preference,
+    gpuInfo: () => app.getGPUInfo('basic'),
+  })
+  const diagnosticsHandlers = createDiagnosticsHandlers({
+    ...diagnostics,
+    openLogFolder: async () => {
+      await mkdir(logger.directory, { recursive: true })
+      const error = await shell.openPath(logger.directory)
+      if (error) throw new Error(error)
+    },
+    logRendererError: (message) => logger.write('error', 'renderer', message),
+  })
+  function isMainFrame(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean {
+    return !!mainWindow && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame
+  }
+  const denied = { ok: false, error: { code: 'VALIDATION', message: 'Diagnostics are available from the main window.' } } as const
+  ipcMain.handle(Channels.diagnosticsOpenLogFolder, (event, payload: unknown) =>
+    isMainFrame(event) ? diagnosticsHandlers.openLogFolder(payload) : denied)
+  ipcMain.handle(Channels.diagnosticsSave, (event, payload: unknown) => {
+    const win = mainWindow
+    if (!win || !isMainFrame(event)) return denied
+    return diagnosticsHandlers.save(payload, async () => {
+      const picked = await dialog.showSaveDialog(win, {
+        title: 'Save diagnostics',
+        defaultPath: join(app.getPath('documents'), 'blaze-uav-diagnostics.zip'),
+        filters: [{ name: 'ZIP archive', extensions: ['zip'] }],
+      })
+      return picked.canceled ? undefined : picked.filePath
+    })
+  })
+  ipcMain.on(Channels.rendererError, (event, payload: unknown) => {
+    if (isMainFrame(event)) diagnosticsHandlers.rendererError(payload)
+  })
   if (!readOnly) recorder = new SessionRecorder(recordings, (id) => repos.projects.get(id).name, app.getVersion(), () => engine!.status)
-  if (!existsSync(binaryPath)) console.error(`[engine] binary not found at ${binaryPath}`)
+  if (!existsSync(binaryPath)) logger.write('error', 'engine', `[engine] binary not found at ${binaryPath}`)
 
   const projectTransfer = new ProjectTransfer(() => db!, repos, folders, () => {
     // engine-core/src/lib.rs:40 takes its version from the workspace Cargo manifest.
@@ -557,7 +622,8 @@ app.on('before-quit', (event) => {
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 3000))
   const closeRecordings = recorder?.shutdown('app quit')
   const closeCsvExports = recordingCsv?.shutdown()
-  void Promise.race([Promise.allSettled([closeRecordings, closeCsvExports, engine.stop()]), deadline]).finally(() => app.quit())
+  const shutdown = Promise.allSettled([closeRecordings, closeCsvExports, engine.stop()]).then(() => logger.flush())
+  void Promise.race([shutdown, deadline]).finally(() => app.quit())
 })
 
 // The database must outlive the windows: closing a window runs its unload handler,

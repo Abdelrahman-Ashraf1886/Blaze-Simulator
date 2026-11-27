@@ -48,7 +48,7 @@ export interface SupervisorOptions {
   backoffMs?: readonly number[]
   /** Consecutive failed starts before giving up (state `failed`). */
   maxRestarts?: number
-  log?: (line: string) => void
+  log?: (line: string, level?: 'error') => void
 }
 
 interface Pending {
@@ -78,7 +78,7 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
   private restartTimer: NodeJS.Timeout | null = null
   private consecutiveFailures = 0
   private stopping = false
-  private readonly opts: Required<Omit<SupervisorOptions, 'log'>> & { log: (l: string) => void }
+  private readonly opts: Required<SupervisorOptions>
 
   private _status: EngineStatus = {
     state: 'stopped',
@@ -215,7 +215,7 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
     // pipe. Unhandled, that would end the main process; the 'exit' handler below does the recovery.
     child.stdin.on('error', (e) => this.opts.log(`[engine] stdin: ${e.message}`))
     createInterface({ input: child.stdout }).on('line', (line) => this.onLine(line))
-    createInterface({ input: child.stderr }).on('line', (line) => this.opts.log(`[engine] ${line}`))
+    createInterface({ input: child.stderr }).on('line', (line) => this.opts.log(`[engine] ${line}`, 'error'))
     // Node may emit 'error' without 'exit' (e.g. ENOENT), so both paths funnel here once.
     const gone = (reason: string) => {
       if (this.child !== child) return
@@ -274,7 +274,7 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
   }
 
   private onFailure(reason: string): void {
-    this.opts.log(`[engine] ${reason}`)
+    this.opts.log(`[engine] ${reason}`, 'error')
     this.consecutiveFailures++
     if (this.consecutiveFailures > this.opts.maxRestarts) {
       this.update({ state: 'failed', lastError: reason, latencyMs: null })

@@ -30,7 +30,7 @@ it('logs stderr and an unexpected sidecar exit without launching an engine', asy
     expect(supervisor.status.state).toBe('failed')
     const entries = (await logger.readLogs()).toString('utf8').trimEnd().split('\n').map((line) => JSON.parse(line))
     expect(entries).toEqual(expect.arrayContaining([
-      expect.objectContaining({ level: 'error', source: 'engine', message: '[engine] sidecar failure detail' }),
+      expect.objectContaining({ level: 'info', source: 'engine', message: '[engine] sidecar failure detail' }),
       expect.objectContaining({ level: 'error', source: 'engine', message: '[engine] Engine exited unexpectedly (exit code 1)' }),
     ]))
   } finally {

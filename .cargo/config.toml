@@ -1,0 +1,6 @@
+# A clean Windows has no Visual C++ runtime (vcruntime140.dll). Link the C runtime
+# statically so drone-engine.exe starts without it (Phase 8, 8.8: the Sandbox clean-install
+# test failed with STATUS_DLL_NOT_FOUND, exit code 3221225781). At the repository root because
+# Cargo reads config from the working directory up, and the build runs from here.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

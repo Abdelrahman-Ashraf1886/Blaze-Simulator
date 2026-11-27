@@ -1,5 +1,18 @@
 # Development log
 
+## 2026-11-26 — Digital twin roadmap planned
+
+- Added [Phases 9–15](plans/digital-twin.md) and linked them from the
+  [roadmap](ROADMAP.md): aircraft identity, real-flight data, calibration and
+  independent validation, live synchronization, actual firmware integration,
+  lifecycle/health and physical acceptance.
+- Defined dependencies, milestones, likely implementation areas and acceptance
+  evidence. Initial scope is one aircraft with validated hover-power/endurance
+  predictions; hardware timing claims require conditional HITL evidence.
+- Recorded required aircraft/log access, measurement resources and open numerical
+  limits. This is documentation only; no digital twin feature is implemented and
+  Phase 8's existing decisions remain open.
+
 ## 2026-11-25 — Phase 7 telemetry, recordings and gyro feedback
 
 - **7.0–7.2.** Added sourced sensor specs and PX4 parameters. Unavailable inputs stay explicit in the sensor form. Added optional engine sampling for flights and scenarios. Stored runs in append-only, CRC-checked files with a SQLite metadata row. Startup recovers the intact prefix of an interrupted recording and closes its run row. [Catalogue](../database/seed/components.v1.json#L12-L44) · [Parameters](../database/reference/physics.v1.json#L1538) · [Sampler](../simulation-engine/engine-host/src/telemetry.rs#L63-L109) · [Recovery](../electron/main/telemetry/store.ts#L115-L144)

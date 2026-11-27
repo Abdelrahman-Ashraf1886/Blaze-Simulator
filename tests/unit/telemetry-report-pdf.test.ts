@@ -36,7 +36,7 @@ describe('printing the active report', () => {
       pageSize: 'A4', preferCSSPageSize: true, displayHeaderFooter: true,
       footerTemplate: expect.stringMatching(/Test: \.\.\/ hover.*pageNumber.*totalPages/),
     }))
-    expect(write).toHaveBeenCalledWith('chosen.pdf', bytes)
+    expect(write).toHaveBeenCalledWith(expect.stringMatching(/output\.pdf$/), bytes)
     expect(result).toEqual({ ok: false, error: { code: 'INTERNAL', message: 'Could not save the report PDF. Disk is full' } })
   })
 

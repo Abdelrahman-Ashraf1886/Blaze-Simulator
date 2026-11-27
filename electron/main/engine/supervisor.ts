@@ -1,7 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { performance } from 'node:perf_hooks'
-import { createInterface } from 'node:readline'
+import { getDefaultHighWaterMark, type Readable } from 'node:stream'
+import { z } from 'zod'
+import { MAX_ASSET_BYTES } from '../../ipc/contract'
 import type { EngineStatus } from '../../ipc/contract'
 import {
   PROTOCOL_VERSION,
@@ -23,10 +25,8 @@ import {
   PropulsionDefinitionSchema,
   VehicleDefinitionSchema,
   VehicleLoadResultSchema,
-  isEngineResponse,
   type EngineCommand,
   type BodyDrag,
-  type HelloResult,
   type PropulsionDefinition,
   type ScenarioRunParams,
   type StepTestRunParams,
@@ -37,6 +37,83 @@ import {
   type VehicleLoadResult,
 } from './protocol'
 import { runStepTest } from './step-test'
+
+export const MAX_ENGINE_REQUEST_BYTES = MAX_ASSET_BYTES
+// ARCHITECTURE.md:49 bounds 60,001 rows for six motors with gyro and sensors at
+// 300,545,031 bytes. The recorder uses every fourth step (session-recorder.ts:10).
+// Allow the 1 kHz reply plus one request-sized allowance for echoed data and metadata.
+export const MAX_ENGINE_REPLY_BYTES = Math.ceil((300_545_031 + MAX_ENGINE_REQUEST_BYTES) / MAX_ASSET_BYTES) * MAX_ASSET_BYTES
+
+const replyId = z.int().nonnegative()
+const engineReplySchema = z.discriminatedUnion('ok', [
+  z.strictObject({ id: replyId, ok: z.literal(true), result: z.unknown() }),
+  z.strictObject({
+    id: replyId.nullable(), ok: z.literal(false),
+    error: z.strictObject({ code: z.string().min(1), message: z.string() }),
+  }),
+])
+export const engineHelloSchema = z.strictObject({
+  engineVersion: z.string().min(1), protocolVersion: z.int().nonnegative(), threads: z.int().positive(),
+})
+
+export function parseEngineReply(line: string) {
+  return engineReplySchema.parse(JSON.parse(line))
+}
+
+/** Decode complete pipe records, checking byte length before retaining or decoding them. */
+export function watchEngineLines(input: Readable, limit: number, onLine: (line: string) => void, fail: (error: Error) => void) {
+  const pageSize = Math.min(getDefaultHighWaterMark(false), limit)
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+  let pages: Buffer[] = []
+  let fill = 0
+  let length = 0
+  let closed = false
+  const close = () => {
+    closed = true
+    pages = []
+    input.off('data', consume)
+    input.off('end', end)
+    input.off('error', broken)
+  }
+  const broken = (error: Error) => {
+    close()
+    fail(error)
+  }
+  const end = () => {
+    if (length) broken(new Error('Engine pipe ended with an incomplete line'))
+    else close()
+  }
+  const consume = (chunk: Buffer) => {
+    for (let offset = 0; offset < chunk.length && !closed;) {
+      const newline = chunk.indexOf(10, offset)
+      const stop = newline < 0 ? chunk.length : newline
+      length += stop - offset
+      if (length > limit) return broken(new Error(`Engine pipe line exceeds ${limit} bytes`))
+      while (offset < stop) {
+        if (fill === 0) pages.push(Buffer.allocUnsafe(pageSize))
+        const written = Math.min(stop - offset, pageSize - fill)
+        chunk.copy(pages[pages.length - 1]!, fill, offset, offset + written)
+        offset += written
+        fill = (fill + written) % pageSize
+      }
+      if (newline < 0) return
+      try {
+        const line = decoder.decode(pages.length === 1 ? pages[0]!.subarray(0, length) : Buffer.concat(pages, length))
+        pages = []
+        length = 0
+        fill = 0
+        onLine(line)
+      } catch (error) {
+        return broken(error instanceof Error ? error : new Error('Invalid engine pipe record'))
+      }
+      offset = stop + 1
+    }
+  }
+  input.on('data', consume)
+  input.on('end', end)
+  input.on('error', broken)
+  return close
+}
 
 export type CaptureRequestLine = (line: string) => void
 
@@ -136,7 +213,7 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
 
   async ping(): Promise<number> {
     const t0 = performance.now()
-    await this.request({ type: 'ping' })
+    z.strictObject({ engineUptimeUs: z.int().nonnegative() }).parse(await this.request({ type: 'ping' }))
     return performance.now() - t0
   }
 
@@ -214,8 +291,6 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
     // A write after the engine has gone fails its own request (the write callback) and also raises 'error' on the
     // pipe. Unhandled, that would end the main process; the 'exit' handler below does the recovery.
     child.stdin.on('error', (e) => this.opts.log(`[engine] stdin: ${e.message}`))
-    createInterface({ input: child.stdout }).on('line', (line) => this.onLine(line))
-    createInterface({ input: child.stderr }).on('line', (line) => this.opts.log(`[engine] ${line}`, 'error'))
     // Node may emit 'error' without 'exit' (e.g. ENOENT), so both paths funnel here once.
     const gone = (reason: string) => {
       if (this.child !== child) return
@@ -224,6 +299,21 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
       this.clearTimers()
       if (!this.stopping) this.onFailure(reason)
     }
+    const invalidPipe = (error: Error) => {
+      if (this.child !== child) return
+      // Reject the old process' requests before a replacement can accept work.
+      gone(error.message)
+      child.kill()
+    }
+    const closeStdout = watchEngineLines(child.stdout, MAX_ENGINE_REPLY_BYTES, (line) => {
+      if (this.child === child) this.onLine(line)
+    }, invalidPipe)
+    const closeStderr = watchEngineLines(child.stderr, getDefaultHighWaterMark(false),
+      (line) => this.opts.log(`[engine] ${line}`, 'error'), invalidPipe)
+    child.once('close', () => {
+      closeStdout()
+      closeStderr()
+    })
     child.on('error', (e) => {
       this.opts.log(`[engine] process error: ${e.message}`)
       if (child.pid === undefined) gone(describeStartError(e, this.opts.binaryPath))
@@ -237,7 +327,7 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
 
   private async handshake(child: ChildProcessWithoutNullStreams): Promise<void> {
     try {
-      const hello = (await this.request({ type: 'hello' })) as HelloResult
+      const hello = engineHelloSchema.parse(await this.request({ type: 'hello' }))
       if (hello.protocolVersion !== PROTOCOL_VERSION) {
         this.stopping = true // incompatible binary: restarting will not help
         child.kill()
@@ -298,6 +388,12 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
       }, timeoutMs)
       this.pending.set(id, { resolve, reject, timer })
       const line = `${JSON.stringify({ id, ...command })}\n`
+      if (Buffer.byteLength(line) > MAX_ENGINE_REQUEST_BYTES) {
+        clearTimeout(timer)
+        this.pending.delete(id)
+        reject(new Error('Engine request exceeds its byte limit'))
+        return
+      }
       child.stdin.write(line, (err) => {
         if (err) {
           clearTimeout(timer)
@@ -314,17 +410,13 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
   }
 
   private onLine(line: string): void {
-    let msg: unknown
+    let msg: ReturnType<typeof parseEngineReply>
     try {
-      msg = JSON.parse(line)
+      msg = parseEngineReply(line)
     } catch {
-      this.opts.log(`[engine] non-JSON stdout: ${line}`)
-      return
+      throw new Error('Malformed engine response')
     }
-    if (!isEngineResponse(msg) || msg.id === null) {
-      this.opts.log(`[engine] unexpected message: ${line}`)
-      return
-    }
+    if (msg.id === null) throw new Error('Engine response has no request ID')
     const p = this.pending.get(msg.id)
     if (!p) return
     this.pending.delete(msg.id)

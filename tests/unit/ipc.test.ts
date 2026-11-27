@@ -99,6 +99,9 @@ describe('IPC handlers', () => {
       // Wired in main with the preference file path and powerMonitor (electron/main/index.ts).
       Channels.graphicsStatus,
       Channels.graphicsCommand,
+      Channels.diagnosticsOpenLogFolder,
+      Channels.rendererError,
+      Channels.diagnosticsSave,
       Channels.componentsExportPack,
       Channels.recordingExportCsv,
       Channels.componentsImportPack,

@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RecordingEnd, RecordingHeader, RecordingPoint } from '../../electron/ipc/contract'
 import { minMaxBuckets } from '../../electron/main/telemetry/decimation'
-import { FLOAT_BYTES, FRAME_BYTES, MAGIC, PREAMBLE_BYTES, ROW_COUNT_BYTES, VERSION } from '../../electron/main/telemetry/format'
-import { RecordingReader } from '../../electron/main/telemetry/reader'
+import { FLOAT_BYTES, Frame, FRAME_BYTES, MAGIC, preamble, PREAMBLE_BYTES, ROW_COUNT_BYTES, textFrame, VERSION } from '../../electron/main/telemetry/format'
+import { MAX_RECORDING_FRAMES, RecordingReader } from '../../electron/main/telemetry/reader'
 import { RecordingWriter, type RecordingOutput } from '../../electron/main/telemetry/writer'
 
 const header: RecordingHeader = {
@@ -91,6 +91,16 @@ describe('recording file format', () => {
       })
     }
   })
+
+  it('bounds the index even when request frame payloads are tiny', async () => {
+    const metadata = JSON.stringify(header)
+    const first = textFrame(Frame.header, metadata, Buffer.byteLength(metadata))
+    const request = textFrame(Frame.request, '\n', 1)
+    const tail = Buffer.allocUnsafe(request.length * MAX_RECORDING_FRAMES)
+    for (let offset = 0; offset < tail.length; offset += request.length) request.copy(tail, offset)
+    await writeFile(path, Buffer.concat([preamble(), first, tail]))
+    await expect(new RecordingReader(path).summary()).rejects.toThrow(/frame count limit/)
+  }, 30_000)
 
   it('refuses bad magic, unknown versions and an invalid header', async () => {
     const file = await fixture()

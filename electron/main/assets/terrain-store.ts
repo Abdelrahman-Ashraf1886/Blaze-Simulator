@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import { parseAsciiGrid, type TerrainGrid, type TerrainParseResult } from '../../../src/domain/terrain'
+import { MAX_TERRAIN_BYTES, MAX_TERRAIN_CELLS, parseAsciiGrid, type TerrainGrid, type TerrainParseResult } from '../../../src/domain/terrain'
 import type { IpcResult, TerrainAssetInfo, TerrainImportInput } from '../../ipc/contract'
 import { NotFoundError, ValidationError, type Repositories } from '../db/repositories'
+import { readBoundedFileSync } from './bounded-file'
 import { writeAssetFile } from './store'
+
+let lastGrid: { id: string; noDataValue: number | undefined; grid: TerrainGrid } | undefined
 
 const parseMessages: Record<Extract<TerrainParseResult, { ok: false }>['reason'], string> = {
   'invalid-header': 'The Esri ASCII grid header is invalid.',
@@ -12,6 +15,7 @@ const parseMessages: Record<Extract<TerrainParseResult, { ok: false }>['reason']
   'nodata-cell': 'The grid contains a NODATA cell. Import a grid with every height specified.',
   'non-number': 'The grid header and heights must contain finite numbers.',
   'non-positive-cell-size': 'The grid cell size must be positive.',
+  'grid-too-large': `The grid exceeds ${MAX_TERRAIN_CELLS} terrain cells.`,
   'grid-too-small': 'The grid must have at least two rows and two columns.',
   'vertical-unit': 'Confirm the terrain elevations are in metres.',
   'missing-nodata-value': 'The header omits NODATA_VALUE. Enter the file’s NODATA sentinel and retry import.',
@@ -30,7 +34,7 @@ export function importTerrainFile(
   }
   let bytes: Buffer
   try {
-    bytes = readFileSync(path)
+    bytes = readBoundedFileSync(path, MAX_TERRAIN_BYTES)
   } catch {
     return { ok: false, error: { code: 'VALIDATION', message: `The file "${filename}" could not be read.` } }
   }
@@ -44,10 +48,11 @@ export function importTerrainFile(
     }
     const id = createHash('sha256').update(bytes).digest('hex')
     const target = join(dir, `${id}.asc`)
-    const stored = existsSync(target) ? readFileSync(target) : undefined
+    const stored = existsSync(target) ? readBoundedFileSync(target, MAX_TERRAIN_BYTES) : undefined
     if (!stored?.equals(bytes)) writeAssetFile(target, bytes)
     try {
       const data = repos.terrain.add({ id, filename: filename.slice(0, 255), bytes: bytes.byteLength }, input.noDataValue)
+      lastGrid = { id, noDataValue: input.noDataValue, grid: parsed.grid }
       return { ok: true, data }
     } catch (error) {
       if (!stored) rmSync(target, { force: true })
@@ -63,7 +68,7 @@ export function readTerrainFile(id: string, dir: string, repos: Repositories): T
   const { asset, noDataValue } = repos.terrain.get(id)
   let bytes: Buffer
   try {
-    bytes = readFileSync(join(dir, `${asset.id}.${asset.format}`))
+    bytes = readBoundedFileSync(join(dir, `${asset.id}.${asset.format}`), MAX_TERRAIN_BYTES)
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new NotFoundError('The stored terrain file is missing.')
     throw e
@@ -71,8 +76,14 @@ export function readTerrainFile(id: string, dir: string, repos: Repositories): T
   if (createHash('sha256').update(bytes).digest('hex') !== asset.id) {
     throw new ValidationError('The stored terrain file has changed. Import the grid again.')
   }
+  if (lastGrid?.id === id && lastGrid.noDataValue === noDataValue) return copyGrid(lastGrid.grid)
   // Import requires confirmed metres. Keep the user’s sentinel across restarts.
   const parsed = parseAsciiGrid(bytes.toString('utf8'), 'm', noDataValue)
   if (!parsed.ok) throw new ValidationError(parseMessages[parsed.reason])
-  return parsed.grid
+  lastGrid = { id, noDataValue, grid: parsed.grid }
+  return copyGrid(parsed.grid)
+}
+
+function copyGrid(grid: TerrainGrid): TerrainGrid {
+  return { ...grid, cornerM: [...grid.cornerM], heightsM: grid.heightsM.slice() }
 }

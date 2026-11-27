@@ -1,6 +1,8 @@
+import { readBoundedFileSync } from './assets/bounded-file'
+import { jsonDepthWithin } from './assets/json-depth'
 import { randomUUID } from 'node:crypto'
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import type { GpuPreference } from '../ipc/contract'
+import { renameSync, rmSync, writeFileSync } from 'node:fs'
+import { GPU_PREFERENCES, type GpuPreference } from '../ipc/contract'
 import { gpuPreferenceSchema } from '../ipc/schemas'
 
 export const GPU_PREFERENCE_FILE = 'gpu-preference.json'
@@ -21,7 +23,11 @@ export function gpuSwitchFor(preference: GpuPreference): string | undefined {
 
 export function readGpuPreference(path: string): GpuPreference {
   try {
-    return gpuPreferenceSchema.parse(JSON.parse(readFileSync(path, 'utf8'))).preference
+    // The writer uses compact JSON. Allow the longest value in the same enum.
+    const limit = Math.max(...GPU_PREFERENCES.map((preference) => Buffer.byteLength(JSON.stringify({ preference }))))
+    const text = readBoundedFileSync(path, limit).toString('utf8')
+    if (!jsonDepthWithin(text, 1)) throw new Error('Invalid graphics preference depth.')
+    return gpuPreferenceSchema.parse(JSON.parse(text)).preference
   } catch (error) {
     console.warn(`[graphics] Could not read ${path}. Using ${DEFAULT_GPU_PREFERENCE}.`, error)
     return DEFAULT_GPU_PREFERENCE

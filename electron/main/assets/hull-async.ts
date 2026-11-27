@@ -9,25 +9,28 @@
  * rejects the jobs it held and is replaced on the next call.
  */
 import type { Worker } from 'node:worker_threads'
-import type { Bounds3, ModelHull } from '../../ipc/contract'
+import { getDefaultHighWaterMark } from 'node:stream'
+import { MAX_ASSET_BYTES, type Bounds3, type ModelHull } from '../../ipc/contract'
 
 export const MAX_WORKERS = 2
 export const IDLE_MS = 30_000
 
+import { AssetError, type GltfFacts } from './gltf'
+
 type Format = 'glb' | 'gltf'
 type WireError = { name: string; message: string; stack?: string }
 
-export interface HullRequest {
-  id: number
-  bytes: Uint8Array
-  format: Format
-  bounds: Bounds3
-}
-export type HullResponse = { id: number; hull: ModelHull } | { id: number; error: WireError }
+type HullWork =
+  | { kind: 'hull'; format: Format; bounds: Bounds3 }
+  | { kind: 'model'; filename: string }
+
+export type HullRequest = HullWork & { id: number; bytes: Uint8Array }
+type ModelInspection = { facts: GltfFacts; hull: ModelHull }
+type WorkResult = { hull: ModelHull } | { model: ModelInspection; bytes: Uint8Array }
+export type HullResponse = { id: number } & (WorkResult | { error: WireError })
 
 interface Job {
-  resolve: (h: ModelHull) => void
-  reject: (e: Error) => void
+  finish: (error?: Error, result?: WorkResult) => void
 }
 interface Slot {
   worker: Worker | null
@@ -37,7 +40,7 @@ interface Slot {
   dead: boolean
 }
 
-const ERRORS: Record<string, ErrorConstructor> = { Error, TypeError, RangeError, SyntaxError, ReferenceError, EvalError, URIError }
+const ERRORS: Record<string, new (message: string) => Error> = { AssetError, Error, TypeError, RangeError, SyntaxError, ReferenceError, EvalError, URIError }
 
 /** An error as the worker threw it: same class (when built in), name, message and stack. */
 function rebuild(e: WireError): Error {
@@ -65,14 +68,19 @@ function transferable(bytes: Uint8Array): { payload: Uint8Array; transfer: Array
 
 export interface HullPool {
   /** Same result (and same thrown error) as `modelHull`. `bytes` is detached when it is the sole view of its ArrayBuffer. */
-  run(bytes: Uint8Array, format: Format, bounds: Bounds3): Promise<ModelHull>
+  run(bytes: Uint8Array, format: Format, bounds: Bounds3, signal?: AbortSignal): Promise<ModelHull>
+  inspect(bytes: Uint8Array, filename: string, signal?: AbortSignal): Promise<{ model: ModelInspection; bytes: Uint8Array }>
   /** Ends the workers, rejecting jobs still running; a later `run` starts new ones. */
   close(): void
 }
 
-export function createHullPool(spawn: () => Worker | Promise<Worker>, opts: { maxWorkers?: number; idleMs?: number } = {}): HullPool {
+export function createHullPool(spawn: () => Worker | Promise<Worker>, opts: { maxWorkers?: number; idleMs?: number; jobMs?: number } = {}): HullPool {
   const max = opts.maxWorkers ?? MAX_WORKERS
   const idleMs = opts.idleMs ?? IDLE_MS
+  const jobMs = opts.jobMs ?? IDLE_MS
+  // Each worker can hold one full-size model's worth of work, including its queue.
+  const maxQueuedBytes = max * MAX_ASSET_BYTES
+  let queuedBytes = 0
   const slots: Slot[] = []
   let nextId = 1
 
@@ -84,7 +92,7 @@ export function createHullPool(spawn: () => Worker | Promise<Worker>, opts: { ma
     slot.idle = null
     const jobs = [...slot.jobs.values()]
     slot.jobs.clear()
-    for (const j of jobs) j.reject(reason)
+    for (const j of jobs) j.finish(reason)
     void slot.worker?.terminate()
   }
 
@@ -108,8 +116,8 @@ export function createHullPool(spawn: () => Worker | Promise<Worker>, opts: { ma
           const job = slot.jobs.get(m.id)
           if (!job) return
           slot.jobs.delete(m.id)
-          if ('error' in m) job.reject(rebuild(m.error))
-          else job.resolve(m.hull)
+          if ('error' in m) job.finish(rebuild(m.error))
+          else job.finish(undefined, m)
           arm(slot)
         })
         w.on('error', (e) => drop(slot, asError(e, 'The hull worker failed.')))
@@ -128,24 +136,47 @@ export function createHullPool(spawn: () => Worker | Promise<Worker>, opts: { ma
     return slots.reduce((a, b) => (b.jobs.size < a.jobs.size ? b : a))
   }
 
-  return {
-    run(bytes, format, bounds) {
-      return new Promise<ModelHull>((resolve, reject) => {
-        const slot = pick()
-        const id = nextId++
-        slot.jobs.set(id, { resolve, reject })
-        if (slot.idle) clearTimeout(slot.idle)
-        slot.idle = null
-        const { payload, transfer } = transferable(bytes)
-        const req: HullRequest = { id, bytes: payload, format, bounds }
-        slot.ready.then(
-          (w) => {
-            // The slot may have died while its worker started; its jobs were rejected then.
-            if (slot.jobs.has(id)) w.postMessage(req, transfer)
-          },
-          (e: unknown) => drop(slot, asError(e, 'The hull worker could not be started.')),
-        )
+  function submit(bytes: Uint8Array, work: HullWork, signal?: AbortSignal): Promise<WorkResult> {
+    return new Promise((resolve, reject) => {
+      signal?.throwIfAborted()
+      // Charge tiny jobs for queue bookkeeping as well as their source bytes.
+      const cost = Math.max(bytes.byteLength, getDefaultHighWaterMark(false))
+      if (cost > MAX_ASSET_BYTES || queuedBytes + cost > maxQueuedBytes) throw new Error('The asset worker queue is full.')
+      const { payload, transfer } = transferable(bytes)
+      const slot = pick()
+      const id = nextId++
+      const abort = () => drop(slot, asError(signal?.reason, 'The asset worker job was cancelled.'))
+      const timer = setTimeout(() => drop(slot, new Error('The asset worker timed out.')), jobMs)
+      timer.unref()
+      queuedBytes += cost
+      signal?.addEventListener('abort', abort, { once: true })
+      slot.jobs.set(id, {
+        finish(error, result) {
+          queuedBytes -= cost
+          clearTimeout(timer)
+          signal?.removeEventListener('abort', abort)
+          if (error) reject(error)
+          else resolve(result!)
+        },
       })
+      if (slot.idle) clearTimeout(slot.idle)
+      slot.idle = null
+      void slot.ready.then((worker) => {
+        if (slot.jobs.has(id)) worker.postMessage({ id, bytes: payload, ...work } satisfies HullRequest, transfer)
+      }).catch((error: unknown) => drop(slot, asError(error, 'The hull worker could not be started.')))
+    })
+  }
+
+  return {
+    async run(bytes, format, bounds, signal) {
+      const result = await submit(bytes, { kind: 'hull', format, bounds }, signal)
+      if (!('hull' in result)) throw new Error('Unexpected hull worker result.')
+      return result.hull
+    },
+    async inspect(bytes, filename, signal) {
+      const result = await submit(bytes, { kind: 'model', filename }, signal)
+      if (!('model' in result)) throw new Error('Unexpected model inspection result.')
+      return result
     },
     close() {
       for (const s of [...slots]) drop(s, new Error('The hull worker was stopped.'))
@@ -171,8 +202,12 @@ function appPool(): HullPool {
  * the sole view of its ArrayBuffer it is detached here, so read what you need first
  * (`byteLength`) or pass a copy.
  */
-export function modelHullAsync(bytes: Uint8Array, format: Format, bounds: Bounds3): Promise<ModelHull> {
-  return appPool().run(bytes, format, bounds)
+export function modelHullAsync(bytes: Uint8Array, format: Format, bounds: Bounds3, signal?: AbortSignal): Promise<ModelHull> {
+  return appPool().run(bytes, format, bounds, signal)
+}
+
+export function inspectModelAsync(bytes: Uint8Array, filename: string) {
+  return appPool().inspect(bytes, filename)
 }
 
 /** Ends the app's hull workers (call on quit). They are unref'd and idle out anyway. */

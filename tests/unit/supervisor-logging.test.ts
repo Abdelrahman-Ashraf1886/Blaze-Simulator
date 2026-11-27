@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -37,4 +37,19 @@ it('logs stderr and an unexpected sidecar exit without launching an engine', asy
     await supervisor.stop()
     await rm(directory, { force: true, recursive: true })
   }
+})
+
+it('rejects an invalid matching reply and fails the sidecar in a controlled way', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(),
+  })
+  vi.mocked(spawn).mockReturnValue(child as unknown as ChildProcessWithoutNullStreams)
+  const supervisor = new EngineSupervisor({ binaryPath: 'fake-engine', maxRestarts: 0 })
+  const line = await readFile(join(import.meta.dirname, '../fixtures/hostile/malformed-reply.ndjson'))
+  supervisor.start()
+  expect(() => child.stdout.write(line)).not.toThrow()
+  expect(supervisor.status).toMatchObject({ state: 'failed', lastError: 'Malformed engine response' })
+  expect(child.kill).toHaveBeenCalledOnce()
+  child.emit('close')
+  await supervisor.stop()
 })

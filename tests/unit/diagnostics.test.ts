@@ -76,7 +76,10 @@ it.each([false, true])('zips only the previewed entries with includeDatabase=%s'
 
 it('validates diagnostics requests and opens a save dialog only for a save request', async () => {
   const preview = vi.fn(() => ({ entries: [] }))
-  const save = vi.fn(async (path: string) => ({ path }))
+  const save = vi.fn(async (path: string) => {
+    await writeFile(path, 'diagnostics fixture')
+    return { path }
+  })
   const openLogFolder = vi.fn(async () => {})
   const handlers = createDiagnosticsHandlers({ preview, save, openLogFolder, logRendererError: vi.fn() })
   const pick = vi.fn(async (): Promise<string | undefined> => undefined)
@@ -92,7 +95,7 @@ it('validates diagnostics requests and opens a save dialog only for a save reque
   expect(await handlers.save({ action: 'save', includeDatabase: true }, pick)).toEqual({
     ok: true, data: { path: join(root, 'archive.zip') },
   })
-  expect(save).toHaveBeenCalledExactlyOnceWith(join(root, 'archive.zip'), true)
+  expect(save).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/output\.zip$/), true)
 })
 
 it('rate limits valid renderer messages without letting invalid messages consume the allowance', () => {

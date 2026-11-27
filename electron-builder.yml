@@ -1,20 +1,38 @@
 appId: com.blazeuav.app
 productName: Blaze UAV
-copyright: Copyright © 2026
+copyright: Copyright © 2026 Blaze UAV contributors. All rights reserved.
 directories:
   output: release/${version}
   buildResources: build
+electronDist: node_modules/electron/dist
+# Use the installed Node-API prebuild selected by better-sqlite3/lib/binding.js.
+npmRebuild: false
+extraMetadata:
+  license: UNLICENSED
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
 files:
   - out/**
   - package.json
   - '!**/*.map'
+  - '!**/{test,tests,__tests__,scripts,docs,documentation,src}/**'
+  - '!**/*.{test,spec}.{js,cjs,mjs,ts,cts,mts}'
+  - '!node_modules/better-sqlite3/{deps,build}/**'
+  - '!node_modules/better-sqlite3/binding.gyp'
+  - '!node_modules/better-sqlite3/prebuilds/!(win32-x64.node)'
 asarUnpack:
-  - node_modules/better-sqlite3/**
+  - node_modules/better-sqlite3/prebuilds/win32-x64.node
 extraResources:
   - from: simulation-engine/target/release/drone-engine.exe
     to: engine/drone-engine.exe
   - from: build/notices/THIRD-PARTY-NOTICES.txt
     to: notices/THIRD-PARTY-NOTICES.txt
+  - from: scripts/release/fixtures/self-check.json
+    to: build/self-check/self-check.json
 win:
   icon: build/icon.png
   target:
@@ -22,8 +40,9 @@ win:
       arch: [x64]
     - target: portable
       arch: [x64]
-  # Code signing: set CSC_LINK / CSC_KEY_PASSWORD (or win.azureSignOptions) in the
-  # environment to sign. Unsigned builds work but trigger SmartScreen.
+  # D2: signing can be enabled later with CSC_LINK / CSC_KEY_PASSWORD or
+  # win.azureSignOptions. Keep the icon and version metadata on unsigned builds.
+  signExecutable: false
   signAndEditExecutable: true
 nsis:
   oneClick: false

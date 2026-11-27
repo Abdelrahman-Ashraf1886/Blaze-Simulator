@@ -1,9 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, protocol, screen, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, protocol, screen, session, shell, type MessageBoxOptions } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import { thirdPartyNoticesPath } from './notices'
+import { checkComputer, formatComputerCheck, releaseLaunchOptions, selfCheckPath } from './self-check'
 import { ASSET_SCHEME, Channels, type AssetInfo, type GpuPreference, type IpcResult } from '../ipc/contract'
 import { createDataOverviewHandler, createDataSafetyHandlers, createDiagnosticsHandlers, createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
 import { createRecordingCsvExporter } from './telemetry/csv'
@@ -45,7 +46,8 @@ const WINDOW_BACKGROUND = '#131518'
 
 // Test isolation: Playwright points this at a temp directory. Must run before the
 // single-instance lock, which is scoped to the userData directory.
-if (process.env.BLAZE_UAV_USER_DATA) app.setPath('userData', process.env.BLAZE_UAV_USER_DATA)
+const launchOptions = releaseLaunchOptions(app.isPackaged, process.env)
+if (launchOptions.userData) app.setPath('userData', launchOptions.userData)
 
 const ownsUserData = app.requestSingleInstanceLock()
 const logger = createLogger(join(app.getPath('userData'), 'logs'))
@@ -101,7 +103,7 @@ if (!ownsUserData) {
 
 function engineBinaryPath(): string {
   // Development/test override, e.g. to exercise the "engine missing" path.
-  if (!app.isPackaged && process.env.BLAZE_UAV_ENGINE) return process.env.BLAZE_UAV_ENGINE
+  if (launchOptions.engine) return launchOptions.engine
   const exe = process.platform === 'win32' ? 'drone-engine.exe' : 'drone-engine'
   if (app.isPackaged) return join(process.resourcesPath, 'engine', exe)
   return join(app.getAppPath(), 'simulation-engine', 'target', 'release', exe)
@@ -160,8 +162,9 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      devTools: launchOptions.devTools,
       // Test hooks (window.__blazeTest) for end-to-end tests only; never set in normal use.
-      ...(process.env.BLAZE_UAV_TEST_HOOKS === '1' ? { additionalArguments: ['--blaze-test-hooks'] } : {}),
+      ...(launchOptions.testHooks ? { additionalArguments: ['--blaze-test-hooks'] } : {}),
     },
   })
   win.once('ready-to-show', () => win.show())
@@ -201,6 +204,28 @@ function showAbout(): void {
   void (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options))
 }
 
+let checkingComputer = false
+async function showComputerCheck(): Promise<void> {
+  if (checkingComputer) return
+  checkingComputer = true
+  try {
+    const path = selfCheckPath(app.isPackaged, process.resourcesPath, app.getAppPath())
+    const report = await checkComputer(engineBinaryPath(), path, app.getVersion())
+    const options: MessageBoxOptions = {
+      type: report.runs.every(({ status }) => status === 'same') ? 'info' : 'warning',
+      title: 'Check this computer',
+      message: 'Engine replay check',
+      detail: formatComputerCheck(report),
+      buttons: ['OK'],
+    }
+    await (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options))
+  } catch (error) {
+    dialog.showErrorBox('Could not check this computer', String(error))
+  } finally {
+    checkingComputer = false
+  }
+}
+
 function buildMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -209,7 +234,7 @@ function buildMenu(): void {
         label: 'View',
         submenu: [
           { role: 'reload' },
-          ...(app.isPackaged ? [] : [{ role: 'toggleDevTools' as const }]),
+          ...(launchOptions.devTools ? [{ role: 'toggleDevTools' as const }] : []),
           { type: 'separator' },
           { role: 'resetZoom' },
           { role: 'zoomIn' },
@@ -222,6 +247,7 @@ function buildMenu(): void {
         label: 'Help',
         submenu: [
           { label: 'About Blaze UAV', click: showAbout },
+          { label: 'Check this computer', click: () => void showComputerCheck() },
           {
             label: 'Third-party notices',
             click: () => {

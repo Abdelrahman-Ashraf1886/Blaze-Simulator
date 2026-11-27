@@ -1,3 +1,5 @@
 # Licence texts are kept byte for byte as published, and the generated notices must not
 # change with the checkout line-ending setting.
 build/notices/** -text
+# Hostile test inputs must reach the tests byte for byte.
+tests/fixtures/hostile/** -text

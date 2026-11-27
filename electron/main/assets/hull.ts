@@ -19,8 +19,8 @@
  */
 import { Vector3 } from 'three'
 import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js'
-import type { Bounds3, ModelHull } from '../../ipc/contract'
-import { IDENTITY, multiply, nodeMatrix, parseJson, readGlb, rootNodes, transform, type Gltf, type Mat4 } from './gltf'
+import { MAX_ASSET_BYTES, type Bounds3, type ModelHull } from '../../ipc/contract'
+import { AssetError, IDENTITY, inspectGltfDocument, MAX_NODE_DEPTH, MAX_SCENE_WORK, multiply, nodeMatrix, parseJson, readGlb, rootNodes, transform, validateHierarchy, type Gltf, type Mat4 } from './gltf'
 
 /** More vertices than this: the bounding box is used instead (the GJK support loop is linear in them). */
 export const MAX_HULL_VERTICES = 4096
@@ -28,6 +28,9 @@ export const MAX_HULL_VERTICES = 4096
 export const CONTAINMENT_TOLERANCE = 1e-9
 /** Above this many vertex × face checks the hull is not verified and so not used. */
 export const MAX_CONTAINMENT_CHECKS = 4e8
+// A closed triangular hull with V vertices has 2V - 4 faces. Budget positions
+// against the existing containment work cap at the largest supported hull.
+export const MAX_INPUT_VERTICES = Math.floor(MAX_CONTAINMENT_CHECKS / (2 * MAX_HULL_VERTICES - 4))
 
 type V3 = [number, number, number]
 
@@ -55,78 +58,176 @@ function buffersOf(json: Gltf, bytes: Uint8Array, format: 'glb' | 'gltf'): Uint8
     if (next + 8 <= bytes.byteLength) bin = bytes.subarray(next + 8, next + 8 + view.getUint32(next, true))
   }
   return (json.buffers ?? []).map((b, i) => {
+    if (!natural(b.byteLength)) throw new HullError(`buffer ${i} has invalid length`)
     if (b.uri === undefined) {
-      if (i === 0 && bin) return bin
+      if (i === 0 && bin && bin.length >= b.byteLength) return bin.subarray(0, b.byteLength)
       throw new HullError(`buffer ${i} has no data`)
     }
     const m = /^data:[^,]*?(;base64)?,(.*)$/is.exec(b.uri)
     if (!m) throw new HullError(`buffer ${i} is not embedded`)
-    return m[1] ? new Uint8Array(Buffer.from(m[2]!, 'base64')) : new TextEncoder().encode(decodeURIComponent(m[2]!))
+    const data = m[1] ? Buffer.from(m[2]!, 'base64') : new TextEncoder().encode(decodeURIComponent(m[2]!))
+    if (data.length < b.byteLength) throw new HullError(`buffer ${i} is truncated`)
+    return data.subarray(0, b.byteLength)
   })
 }
 
+function natural(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
 function viewOf(json: Gltf, buffers: Uint8Array[], index: number) {
-  const bv = json.bufferViews?.[index]
+  const bv = natural(index) ? json.bufferViews?.[index] : undefined
   if (!bv) throw new HullError(`buffer view ${index} does not exist`)
-  const buf = buffers[bv.buffer]
+  const buf = natural(bv.buffer) ? buffers[bv.buffer] : undefined
   if (!buf) throw new HullError(`buffer ${bv.buffer} does not exist`)
   const start = bv.byteOffset ?? 0
-  if (start + bv.byteLength > buf.byteLength) throw new HullError(`buffer view ${index} runs past its buffer`)
+  if (!natural(start) || !natural(bv.byteLength) || start + bv.byteLength > buf.byteLength) {
+    throw new HullError(`buffer view ${index} runs past its buffer`)
+  }
   return { data: new DataView(buf.buffer, buf.byteOffset + start, bv.byteLength), stride: bv.byteStride }
 }
 
-/** The VEC3 values of an accessor, as numbers (glTF 2.0 §3.6.2 and §3.7). */
-export function readVec3(json: Gltf, buffers: Uint8Array[], accessor: number): V3[] {
-  const acc = json.accessors?.[accessor]
+function span(data: DataView, offset: number, count: number, stride: number, size: number, alignment: number, label: string) {
+  if (!natural(offset) || offset % alignment !== 0 || !natural(stride) || stride < size
+      || stride % alignment !== 0) {
+    throw new HullError(`${label} has an invalid offset or stride`)
+  }
+  if (offset + stride * (count - 1) + size > data.byteLength) throw new HullError(`${label} runs past its buffer view`)
+}
+
+const COMPONENT_BYTES: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }
+const ACCESSOR_SHAPES: Record<string, [number, number]> = {
+  SCALAR: [1, 1], VEC2: [1, 2], VEC3: [1, 3], VEC4: [1, 4], MAT2: [2, 2], MAT3: [3, 3], MAT4: [4, 4],
+}
+
+/** Check storage, including sparse replacement indices, before any vertex array is allocated. */
+function accessorData(json: Gltf, buffers: Uint8Array[], accessor: number) {
+  const acc = natural(accessor) ? json.accessors?.[accessor] : undefined
   if (!acc) throw new HullError(`accessor ${accessor} does not exist`)
-  if (acc.type !== 'VEC3') throw new HullError(`POSITION accessor ${accessor} is not VEC3`)
+  const component = COMPONENT_BYTES[acc.componentType ?? -1]
+  const shape = ACCESSOR_SHAPES[acc.type ?? '']
+  const count = acc.count
+  if (!component || !Array.isArray(shape) || !natural(count) || count === 0) throw new HullError('invalid accessor layout')
+  const [columns, rows] = shape
+  const packedColumn = rows * component
+  const stride = columns > 1 ? Math.ceil(packedColumn / 4) * 4 * columns : packedColumn
+  const size = stride - (stride / columns - packedColumn)
+  const bytes = count * stride
+  if (bytes > MAX_ASSET_BYTES) throw new HullError('accessor exceeds the decoded byte budget')
+
+  const dense = acc.bufferView === undefined ? undefined : viewOf(json, buffers, acc.bufferView)
+  const base = acc.byteOffset ?? 0
+  const step = dense?.stride ?? stride
+  if (dense) {
+    if (dense.stride !== undefined && (step % 4 !== 0 || step > 252)) throw new HullError('invalid vertex byte stride')
+    span(dense.data, base, count, step, size, component, `accessor ${accessor}`)
+  } else if (base !== 0) {
+    throw new HullError('an accessor offset requires a buffer view')
+  }
+  if (!acc.sparse) return { acc, count, bytes, dense, base, step }
+
+  const s = acc.sparse
+  if (!natural(s.count) || s.count === 0 || s.count > count) throw new HullError('invalid sparse accessor count')
+  const ix = INDEX[s.indices.componentType]
+  if (!ix) throw new HullError(`sparse index type ${s.indices.componentType} is not valid`)
+  const iv = viewOf(json, buffers, s.indices.bufferView)
+  const vv = viewOf(json, buffers, s.values.bufferView)
+  if (iv.stride !== undefined || vv.stride !== undefined) throw new HullError('sparse data cannot have a byte stride')
+  const io = s.indices.byteOffset ?? 0
+  const vo = s.values.byteOffset ?? 0
+  span(iv.data, io, s.count, ix.size, ix.size, ix.size, `sparse indices of accessor ${accessor}`)
+  span(vv.data, vo, s.count, stride, size, component, `sparse values of accessor ${accessor}`)
+  let previous = -1
+  for (let j = 0; j < s.count; j++) {
+    const index = ix.read(iv.data, io + j * ix.size)
+    if (index <= previous || index >= count) throw new HullError('sparse indices are repeated, unordered or outside the accessor')
+    previous = index
+  }
+  return { acc, count, bytes, dense, base, step, sparse: { iv: iv.data, vv: vv.data, ix, io, vo, count: s.count } }
+}
+
+/** The VEC3 values of an accessor, as numbers (glTF 2.0 ?3.6.2 and ?3.7). */
+export function readVec3(json: Gltf, buffers: Uint8Array[], accessor: number, remaining = MAX_INPUT_VERTICES): V3[] {
+  const { acc, count, dense, base, step, sparse } = accessorData(json, buffers, accessor)
+  if (count > remaining) throw new HullError('the scene exceeds the input vertex budget')
   const c = COMPONENT[acc.componentType ?? -1]
-  if (!c) throw new HullError(`POSITION component type ${acc.componentType} is not supported`)
-  const count = acc.count ?? 0
+  if (acc.type !== 'VEC3' || !c) throw new HullError('invalid POSITION accessor layout')
   const value = (v: number) => (acc.normalized ? c.norm(v) : v)
   const out: V3[] = Array.from({ length: count }, () => [0, 0, 0] as V3)
-  if (acc.bufferView !== undefined) {
-    const { data, stride } = viewOf(json, buffers, acc.bufferView)
-    const step = stride ?? c.size * 3
-    const base = acc.byteOffset ?? 0
-    if (count > 0 && base + step * (count - 1) + c.size * 3 > data.byteLength) throw new HullError(`accessor ${accessor} runs past its buffer view`)
-    for (let i = 0; i < count; i++) for (let k = 0; k < 3; k++) out[i]![k] = value(c.read(data, base + i * step + k * c.size))
+  if (dense) {
+    for (let i = 0; i < count; i++) for (let k = 0; k < 3; k++) out[i]![k] = value(c.read(dense.data, base + i * step + k * c.size))
   }
-  if (acc.sparse) {
-    const s = acc.sparse
-    const ix = INDEX[s.indices.componentType]
-    if (!ix) throw new HullError(`sparse index type ${s.indices.componentType} is not valid`)
-    const iv = viewOf(json, buffers, s.indices.bufferView)
-    const vv = viewOf(json, buffers, s.values.bufferView)
-    const io = s.indices.byteOffset ?? 0
-    const vo = s.values.byteOffset ?? 0
-    if (io + ix.size * s.count > iv.data.byteLength || vo + c.size * 3 * s.count > vv.data.byteLength) throw new HullError(`sparse data of accessor ${accessor} runs past its buffer view`)
-    for (let j = 0; j < s.count; j++) {
-      const target = ix.read(iv.data, io + j * ix.size)
-      if (target >= count) throw new HullError(`sparse index ${target} is outside accessor ${accessor}`)
-      for (let k = 0; k < 3; k++) out[target]![k] = value(c.read(vv.data, vo + (j * 3 + k) * c.size))
+  if (sparse) {
+    const { iv, vv, ix, io, vo, count } = sparse
+    for (let j = 0; j < count; j++) {
+      const target = ix.read(iv, io + j * ix.size)
+      for (let k = 0; k < 3; k++) out[target]![k] = value(c.read(vv, vo + (j * 3 + k) * c.size))
     }
   }
   return out
 }
 
+/** Preflight the accessors the renderer can load, then compute the default scene's hull. */
+export function inspectModel(bytes: Uint8Array, filename: string) {
+  try {
+    const { facts, json } = inspectGltfDocument(bytes, filename)
+    const buffers = buffersOf(json, bytes, facts.format)
+    let viewBytes = 0
+    for (let i = 0; i < (json.bufferViews?.length ?? 0); i++) {
+      viewBytes += viewOf(json, buffers, i).data.byteLength
+      // Three's loader copies each buffer view (GLTFLoader.js:3168?3175).
+      if (viewBytes > MAX_ASSET_BYTES) throw new HullError('the model exceeds the buffer view byte budget')
+    }
+    let decodedBytes = 0
+    for (let i = 0; i < (json.accessors?.length ?? 0); i++) {
+      decodedBytes += accessorData(json, buffers, i).bytes
+      if (decodedBytes > MAX_ASSET_BYTES) throw new HullError('the model exceeds the decoded accessor byte budget')
+    }
+    let vertices = 0
+    for (const node of json.nodes ?? []) {
+      for (const primitive of json.meshes?.[node.mesh ?? -1]?.primitives ?? []) {
+        const position = primitive.attributes?.POSITION
+        if (position === undefined) continue
+        const acc = json.accessors?.[position]
+        if (acc?.type !== 'VEC3' || !natural(acc.count) || !COMPONENT[acc.componentType ?? -1]) throw new HullError('invalid POSITION accessor layout')
+        vertices += acc.count
+        if (vertices > MAX_INPUT_VERTICES) throw new HullError('the model exceeds the input vertex budget')
+      }
+    }
+    return { facts, hull: hullOf(() => positionsOf(json, buffers), facts.bounds) }
+  } catch (error) {
+    throw new AssetError(error instanceof Error ? error.message : 'The model geometry is invalid.')
+  }
+}
+
 /** Every vertex of every mesh primitive in the default scene, with node transforms applied. */
 export function scenePositions(bytes: Uint8Array, format: 'glb' | 'gltf'): V3[] {
+  if (bytes.byteLength > MAX_ASSET_BYTES) throw new HullError('the model exceeds the byte budget')
   const json = format === 'glb' ? readGlb(bytes, new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)).json : parseJson(new TextDecoder().decode(bytes))
-  const buffers = buffersOf(json, bytes, format)
+  validateHierarchy(json)
+  return positionsOf(json, buffersOf(json, bytes, format))
+}
+
+function positionsOf(json: Gltf, buffers: Uint8Array[]): V3[] {
   const nodes = json.nodes ?? []
   const scene = json.scenes?.[json.scene ?? 0]
   const roots = scene?.nodes ?? (json.scenes?.length ? [] : rootNodes(json))
   const out: V3[] = []
   let depth = 0
+  let work = 0
+  const charge = () => {
+    if (++work > MAX_SCENE_WORK) throw new HullError('the scene exceeds the traversal budget')
+  }
   const visit = (index: number, parent: Mat4) => {
+    charge()
     const node = nodes[index]
-    if (!node || ++depth > 1000) throw new HullError('the node hierarchy is invalid')
+    if (!node || ++depth > MAX_NODE_DEPTH) throw new HullError('the node hierarchy is invalid')
     const m = multiply(parent, nodeMatrix(node))
     for (const p of node.mesh !== undefined ? (json.meshes?.[node.mesh]?.primitives ?? []) : []) {
+      charge()
       const pos = p.attributes?.POSITION
       if (pos === undefined) continue
-      for (const v of readVec3(json, buffers, pos)) out.push(transform(m, v))
+      for (const v of readVec3(json, buffers, pos, MAX_INPUT_VERTICES - out.length)) out.push(transform(m, v))
     }
     for (const c of node.children ?? []) visit(c, m)
     depth--
@@ -137,10 +238,14 @@ export function scenePositions(bytes: Uint8Array, format: 'glb' | 'gltf'): V3[] 
 
 /** The model's hull, or why there is none (the box is used then). */
 export function modelHull(bytes: Uint8Array, format: 'glb' | 'gltf', bounds: Bounds3): ModelHull {
+  return hullOf(() => scenePositions(bytes, format), bounds)
+}
+
+function hullOf(readPositions: () => V3[], bounds: Bounds3): ModelHull {
   const none = (reason: string): ModelHull => ({ points: null, reason })
   let source: V3[]
   try {
-    source = scenePositions(bytes, format)
+    source = readPositions()
   } catch (e) {
     return none(e instanceof HullError ? `The vertices could not be read: ${e.message}.` : 'The vertices could not be read.')
   }

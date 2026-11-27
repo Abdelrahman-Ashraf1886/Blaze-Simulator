@@ -4,32 +4,24 @@
  * No Electron imports; main wires the dialog and the `blaze-asset://` protocol.
  */
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { ASSET_SCHEME, MAX_ASSET_BYTES, type AssetInfo, type IpcResult } from '../../ipc/contract'
 import type { Repositories } from '../db/repositories'
-import { AssetError, inspectGltf, tooLarge } from './gltf'
-import { modelHull } from './hull'
-import { modelHullAsync } from './hull-async'
+import { BoundedFileError, readBoundedFile, readBoundedFileSync } from './bounded-file'
+import { AssetError } from './gltf'
+import { inspectModel, modelHull } from './hull'
+import { inspectModelAsync, modelHullAsync } from './hull-async'
 
-/** Reads, validates and stores the file; everything but the hull. Throws AssetError for a bad file. */
-function stageAsset(path: string, dir: string) {
-  const filename = basename(path)
-  let size: number
-  try {
-    size = statSync(path).size
-  } catch {
-    throw new AssetError(`The file "${filename}" could not be read.`)
-  }
-  // Checked before reading, so an oversized file is never loaded into memory.
-  if (size > MAX_ASSET_BYTES) throw new AssetError(tooLarge(size))
-  const bytes = readFileSync(path)
-  const facts = inspectGltf(bytes, filename)
+function modelReadError(error: unknown, filename: string): AssetError {
+  return new AssetError(error instanceof BoundedFileError ? `${error.message} The limit is ${MAX_ASSET_BYTES / 1024 / 1024} MB.` : `The file "${filename}" could not be read.`)
+}
+
+function storeModel(bytes: Buffer, filename: string, dir: string, repos: Repositories, { facts, hull }: ReturnType<typeof inspectModel>): AssetInfo {
   const id = createHash('sha256').update(bytes).digest('hex')
-
   const target = join(dir, `${id}.${facts.format}`)
   if (!existsSync(target)) writeAssetFile(target, bytes)
-  return { id, filename, bytes, facts }
+  return repos.assets.add({ id, filename: filename.slice(0, 255), bytes: bytes.byteLength, ...facts, hull })
 }
 
 export function writeAssetFile(target: string, bytes: Buffer): void {
@@ -53,9 +45,14 @@ function failure(e: unknown): IpcResult<never> {
 /** Imports a model, computing its hull on the calling thread (blocks it; see `importAssetFileAsync`). */
 export function importAssetFile(path: string, dir: string, repos: Repositories): IpcResult<AssetInfo> {
   try {
-    const { id, filename, bytes, facts } = stageAsset(path, dir)
-    const hull = modelHull(bytes, facts.format, facts.bounds)
-    return { ok: true, data: repos.assets.add({ id, filename: filename.slice(0, 255), bytes: bytes.byteLength, ...facts, hull }) }
+    const filename = basename(path)
+    let bytes: Buffer
+    try {
+      bytes = readBoundedFileSync(path, MAX_ASSET_BYTES)
+    } catch (error) {
+      throw modelReadError(error, filename)
+    }
+    return { ok: true, data: storeModel(bytes, filename, dir, repos, inspectModel(bytes, filename)) }
   } catch (e) {
     return failure(e)
   }
@@ -64,10 +61,11 @@ export function importAssetFile(path: string, dir: string, repos: Repositories):
 /** As `importAssetFile`, with the hull computed on a worker thread so main's event loop stays free. */
 export async function importAssetFileAsync(path: string, dir: string, repos: Repositories): Promise<IpcResult<AssetInfo>> {
   try {
-    const { id, filename, bytes, facts } = stageAsset(path, dir)
-    const size = bytes.byteLength // the worker takes the bytes
-    const hull = await modelHullAsync(bytes, facts.format, facts.bounds)
-    return { ok: true, data: repos.assets.add({ id, filename: filename.slice(0, 255), bytes: size, ...facts, hull }) }
+    const filename = basename(path)
+    const bytes = await readBoundedFile(path, MAX_ASSET_BYTES).catch((error: unknown) => { throw modelReadError(error, filename) })
+    const inspected = await inspectModelAsync(bytes, filename)
+    const data = inspected.bytes
+    return { ok: true, data: storeModel(Buffer.from(data.buffer, data.byteOffset, data.byteLength), filename, dir, repos, inspected.model) }
   } catch (e) {
     return failure(e)
   }
@@ -89,7 +87,8 @@ export function resolveAssetUrl(url: string, dir: string): string | null {
   if (!id) return null
   for (const ext of ['glb', 'gltf']) {
     const file = join(dir, `${id}.${ext}`)
-    if (existsSync(file)) return file
+    const stat = lstatSync(file, { throwIfNoEntry: false })
+    if (stat?.isFile() && stat.nlink === 1 && stat.size <= MAX_ASSET_BYTES) return file
   }
   return null
 }
@@ -105,7 +104,7 @@ export function backfillHulls(dir: string, repos: Repositories): string[] {
     if (a.hull) continue
     const file = join(dir, `${a.id}.${a.format}`)
     if (!existsSync(file)) continue
-    repos.assets.setHull(a.id, modelHull(readFileSync(file), a.format, a.bounds))
+    repos.assets.setHull(a.id, modelHull(readBoundedFileSync(file, MAX_ASSET_BYTES), a.format, a.bounds))
     done.push(a.id)
   }
   return done
@@ -122,7 +121,7 @@ export async function backfillHullsAsync(dir: string, repos: Repositories): Prom
     if (a.hull) continue
     const file = join(dir, `${a.id}.${a.format}`)
     if (!existsSync(file)) continue
-    repos.assets.setHull(a.id, await modelHullAsync(readFileSync(file), a.format, a.bounds))
+    repos.assets.setHull(a.id, await modelHullAsync(await readBoundedFile(file, MAX_ASSET_BYTES), a.format, a.bounds))
     done.push(a.id)
   }
   return done

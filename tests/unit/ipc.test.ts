@@ -2,10 +2,12 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Channels, type IpcResult, type Project } from '../../electron/ipc/contract'
-import { createHandlers, createRecordingHandlers, createTerrainHandlers } from '../../electron/ipc/handlers'
+import { createDataSafetyHandlers, createHandlers, createRecordingHandlers, createTerrainHandlers } from '../../electron/ipc/handlers'
 import { RecordingStore } from '../../electron/main/telemetry/store'
 import { openDatabase } from '../../electron/main/db/database'
 import { createRepositories } from '../../electron/main/db/repositories'
+import { PROTOCOL_VERSION } from '../../electron/main/engine/protocol'
+import { version } from '../../package.json'
 
 let handlers: Record<string, (payload: unknown) => IpcResult<unknown> | Promise<IpcResult<unknown>>>
 
@@ -14,8 +16,8 @@ beforeEach(() => {
   handlers = { ...createHandlers(repos, () => ({
     engine: {
       state: 'connected',
-      engineVersion: '0.1.0',
-      protocolVersion: 1,
+      engineVersion: version, // D4 releases the app and engine together.
+      protocolVersion: PROTOCOL_VERSION,
       threads: 4,
       latencyMs: 0.2,
       lastError: null,
@@ -23,8 +25,12 @@ beforeEach(() => {
       revision: 7,
     },
     database: { path: ':memory:', schemaVersion: 1 },
-    app: { version: '0.1.0', electron: 'x', chrome: 'x', node: 'x', platform: 'test' },
-  })), ...createTerrainHandlers(repos, __dirname), ...createRecordingHandlers(new RecordingStore(__dirname, repos.runs)) }
+    app: { version, electron: 'x', chrome: 'x', node: 'x', platform: 'test' },
+  })), ...createTerrainHandlers(repos, __dirname), ...createRecordingHandlers(new RecordingStore(__dirname, repos.runs)),
+    ...createDataSafetyHandlers({
+      listBackups: () => [], restore: async () => null, exportProject: async () => null, importProject: async () => null,
+    }),
+  }
 })
 
 const call = <T>(channel: string, payload?: unknown) => handlers[channel]!(payload) as IpcResult<T>
@@ -93,8 +99,13 @@ describe('IPC handlers', () => {
       Channels.viewportSavePng,
       Channels.recordingPrintReportPdf,
       // Wired in main with the preference file path and powerMonitor (electron/main/index.ts).
+      Channels.dataOverview,
       Channels.graphicsStatus,
       Channels.graphicsCommand,
+      // Diagnostics are bound in main with Electron dialogs, shell, or event context.
+      Channels.diagnosticsOpenLogFolder,
+      Channels.diagnosticsSave,
+      Channels.rendererError,
       Channels.componentsExportPack,
       Channels.recordingExportCsv,
       Channels.componentsImportPack,

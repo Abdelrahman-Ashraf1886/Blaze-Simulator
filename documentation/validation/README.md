@@ -1,13 +1,20 @@
-# Validation
+# Validation report
 
-[Open the inventory](inventory.md#validation-inventory) for model equations and source locators, test evidence, measured errors, ranges, limitations and follow-up checks. This is the inventory half of milestone 8.7. The generated report and in-app page belong to the later report work. [phase-8-quality.md:78](../plans/phase-8-quality.md#L78) [phase-8-quality.md:85](../plans/phase-8-quality.md#L85)
+[Open the generated report](report.md) for the results from the recorded build. The summary counts each model once. Area headings flag self-consistency and unvalidated models before the individual entries. [Phase 8, D11(a) and test 10](../plans/phase-8-quality.md#L62)
 
-Each row gives one verdict for the specific behavior it covers.
+- **Analytical** compares against equations or hand calculations. **Published data** compares against a cited table or test vector and may include an in-sample fit. **Independent reference** compares against a separate implementation within the stated fixture.
+- **Self-consistency only** covers behavior such as model-to-model agreement, deterministic replay, and simulator-defined acceptance. **Not validated** identifies a gap in the evidence. The flat-box rebound diagnostic records the K4 shortfall without an independent acceptance criterion. [K4 investigation](k4-rebound.md)
+- **Result this run** gives numeric observations when a check emits them. A passing assertion with no emitted residual establishes the cited bound or exact predicate. Range and limits describe the scope of the comparison. See the [inventory](inventory.md) for open gaps and the basis for the verdicts.
+- **Not compared with a real flight.** [Phase 8, D11(a)](../plans/phase-8-quality.md#L62)
 
-- **analytical** uses a closed-form result, hand calculation or derived statistical expectation.
-- **published data** compares against a published value or table. The row says whether it was used to fit the model and whether the source data were computed or measured.
-- **independent reference** checks against a separate implementation of the same calculation.
-- **self-consistency only** checks local behavior, shared fixtures, same-engine expectations, regressions or round trips.
-- **not validated** means an acceptance check for the behavior was not found. A diagnostic can still provide evidence of a defect.
+## Regenerate
 
-The inventory records assertions found in test source and distinguishes tolerances from observed errors. Repository links and quoted test names were checked against the source. Test execution was outside this inventory pass. Test 10 requires fresh execution evidence in the generated report. No comparison with a real flight was found. [phase-8-quality.md:60](../plans/phase-8-quality.md#L60) [phase-8-quality.md:106](../plans/phase-8-quality.md#L106)
+From the repository root, run with installed Node dependencies and a populated local Cargo cache.
+
+```sh
+npm run validation-report
+```
+
+The generator builds the release engine offline with one Cargo build job, reads the engine version from its hello response, runs the engine-core unit checks and the K4 diagnostic, then runs the inventory’s Vitest checks and the observation tests. The replay end-to-end link is a source citation. The report is written after the referenced tests and observation adapters pass. The command prints the elapsed time. [Generator](../../scripts/validation-report.mjs) · [Observation tests](../../tests/validation/observations.test.ts)
+
+Compare repeated reports after excluding the build commit, engine version, machine and generation timestamp. Test durations and transient performance logs are excluded. To update coverage, edit the [inventory](inventory.md) and the matching [equations](equations.tsv), then regenerate. If an observation’s source log changes, update its adapter alongside the evidence it reads.

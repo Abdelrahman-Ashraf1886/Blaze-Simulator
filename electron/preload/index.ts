@@ -3,7 +3,20 @@ import type { DesktopApiWithRecordings, EngineStatus, RecordingVerifyProgress } 
 
 // Channel names are duplicated as literals on purpose: importing the contract
 // module at runtime would bundle zod into the sandboxed preload.
+let lastRendererError = -Infinity
 const api: DesktopApiWithRecordings = {
+  dataOverview: (action) => ipcRenderer.invoke('settings:dataOverview', action),
+  diagnostics: {
+    openLogFolder: () => ipcRenderer.invoke('diagnostics:openLogFolder'),
+    save: (input) => ipcRenderer.invoke('diagnostics:save', input),
+    reportRendererError: (message) => {
+      const now = performance.now()
+      // Match the main process limit to avoid sending an IPC for every repeated error.
+      if (now - lastRendererError < 1000 || typeof message !== 'string' || !message) return
+      lastRendererError = now
+      ipcRenderer.send('diagnostics:rendererError', message)
+    },
+  },
   graphics: {
     status: () => ipcRenderer.invoke('graphics:status'),
     command: (input) => ipcRenderer.invoke('graphics:command', input),
@@ -18,6 +31,12 @@ const api: DesktopApiWithRecordings = {
     create: (input) => ipcRenderer.invoke('projects:create', input),
     rename: (input) => ipcRenderer.invoke('projects:rename', input),
     delete: (id) => ipcRenderer.invoke('projects:delete', { id }),
+    export: (input) => ipcRenderer.invoke('projects:export', input),
+    import: () => ipcRenderer.invoke('projects:import'),
+  },
+  database: {
+    listBackups: () => ipcRenderer.invoke('database:list-backups'),
+    restore: (id) => ipcRenderer.invoke('database:restore', { id }),
   },
   runs: {
     listRecent: (limit) => ipcRenderer.invoke('runs:listRecent', { limit }),
@@ -92,3 +111,31 @@ const api: DesktopApiWithRecordings = {
 }
 
 contextBridge.exposeInMainWorld('api', api)
+
+if (process.isMainFrame) {
+  // Rejection events are dispatched in the world where the rejected promise lives.
+  contextBridge.executeInMainWorld({
+    func: () => {
+      const page = globalThis as unknown as {
+        api: DesktopApiWithRecordings
+        addEventListener(type: 'error', listener: (event: {
+          error: unknown; message: string; filename: string; lineno: number; colno: number
+        }) => void): void
+        addEventListener(type: 'unhandledrejection', listener: (event: { reason: unknown }) => void): void
+      }
+      const report = page.api.diagnostics.reportRendererError
+      page.addEventListener('error', ({ error, message, filename, lineno, colno }) => {
+        report(error instanceof Error ? error.stack ?? error.message : `${message} (${filename}:${lineno}:${colno})`)
+      })
+      page.addEventListener('unhandledrejection', ({ reason }) => {
+        let message: string
+        try {
+          message = reason instanceof Error ? reason.stack ?? reason.message : String(reason)
+        } catch {
+          message = '[Could not format rejection reason]'
+        }
+        report(`unhandledrejection: ${message}`)
+      })
+    },
+  })
+}

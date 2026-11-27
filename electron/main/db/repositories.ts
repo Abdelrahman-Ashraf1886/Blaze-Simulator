@@ -244,7 +244,14 @@ function toRun(row: RunRow): StoredRun {
   }
 }
 
-export function createRepositories(db: Db, now: () => Date = () => new Date(), recordingsDir?: string) {
+export function createRepositories(source: Db | (() => Db), now: () => Date = () => new Date(), recordingsDir?: string) {
+  // A failed live restore may reopen the original connection while these repositories are in use.
+  const connection = typeof source === 'function' ? source : () => source
+  const db = {
+    prepare: (sql: string) => connection().prepare(sql),
+    transaction: <Args extends unknown[], Result>(fn: (...args: Args) => Result) =>
+      (...args: Args) => connection().transaction(fn)(...args),
+  }
   const getProject = (id: string): Project => {
     const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined
     if (!row) throw new NotFoundError(`Project ${id} not found`)
@@ -262,6 +269,7 @@ export function createRepositories(db: Db, now: () => Date = () => new Date(), r
     return (db.prepare(`${selectRuns} WHERE r.project_id = ? ORDER BY r.started_at DESC, r.id`).all(id) as RunRow[]).map(toRun)
   }
   const removeRunFiles = (runs: StoredRun[]): void => {
+    if (connection().readonly) throw new ValidationError('Data recovery mode is read-only.')
     const paths = runs.flatMap((run) => {
       if (run.open) throw new ConflictError(`Run ${run.id} is still recording`)
       if (run.fileName === null) return []
@@ -509,12 +517,14 @@ export function createRepositories(db: Db, now: () => Date = () => new Date(), r
             environment_json: null,
             updated_at: now().toISOString(),
           }
-          db.prepare('INSERT INTO assemblies (project_id, revision, frame_json, updated_at) VALUES (?, ?, ?, ?)').run(
-            projectId,
-            row.revision,
-            row.frame_json,
-            row.updated_at,
-          )
+          if (!connection().readonly) {
+            db.prepare('INSERT INTO assemblies (project_id, revision, frame_json, updated_at) VALUES (?, ?, ?, ?)').run(
+              projectId,
+              row.revision,
+              row.frame_json,
+              row.updated_at,
+            )
+          }
         }
         const parts = db
           .prepare('SELECT * FROM assembly_parts WHERE project_id = ? ORDER BY sort_index')

@@ -1,6 +1,6 @@
 import { _electron, test, type ElectronApplication, type Page } from '@playwright/test'
 import { copyFile, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
-import { cpus, hostname, platform, release, tmpdir, totalmem } from 'node:os'
+import { cpus, platform, release, tmpdir, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -307,7 +307,7 @@ test('collect desktop measurements', async () => {
   }
   const metadata = {
     buildCommit, runCount: count,
-    machine: { host: hostname(), cpu: cpus()[0]?.model, logicalCpus: cpus().length, platform: platform(), release: release(), ramBytes: totalmem() },
+    machine: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, platform: platform(), release: release(), ramBytes: totalmem() },
   }
   await writeFile(out, JSON.stringify({ metadata, job, runs }, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' })
   console.log(`Wrote ${count} ${job} runs to ${out}`)

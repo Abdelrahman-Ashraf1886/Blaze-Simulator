@@ -1,3 +1,6 @@
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { createInterface } from 'node:readline'
 /**
  * 4.9 part B: running the scenarios from the app. The protocol schemas check what is sent and what the engine
  * answers; the IPC handler validates everything before the engine and passes its refusals through; and a real
@@ -35,7 +38,7 @@ import { dropTest, type EngineForDropTest } from '../../electron/main/engine/dro
 import { flightStart, flightStartSchema, flightStep } from '../../electron/main/engine/flight-session'
 import { scenarioRun, scenarioRunSchema, type EngineForScenario } from '../../electron/main/engine/scenario-run'
 import { stepTest } from '../../electron/main/engine/step-test'
-import { EngineSupervisor } from '../../electron/main/engine/supervisor'
+import { EngineSupervisor, MAX_ENGINE_REPLY_BYTES } from '../../electron/main/engine/supervisor'
 import { lowestPoint } from '../../src/domain/collisions'
 import { RECOMMENDED_STEP_METRICS_OPTIONS, stepMetrics } from '../../src/domain/step-response'
 import { noiseDensityToSampleSigma, resolveSensorSpecs } from '../../src/domain/sensor-specs'
@@ -646,6 +649,32 @@ describe('a real engine', () => {
       const started = performance.now()
       const result = await scenarioRun(sup, input)
       if (!result.ok) throw new Error(`${info.name}: ${result.error.message}`)
+      if (info.name === 'gust') {
+        // DEVLOG.md:66?73 uses this 60 s run. Measure the raw compact reply at
+        // the protocol's largest sample schedule (ARCHITECTURE.md:49).
+        const child = spawn(binaryPath, [], { windowsHide: true })
+        const closed = once(child, 'close')
+        const stdout = createInterface({ input: child.stdout })
+        try {
+          const replies = stdout[Symbol.asyncIterator]()
+          const { vehicle, propulsion, aero, scenario, config } = input
+          child.stdin.write(JSON.stringify({ id: 1, type: 'vehicle.load', vehicle, propulsion, aero }) + '\n')
+          expect(JSON.parse((await replies.next()).value as string)).toMatchObject({ ok: true, result: { valid: true } })
+          child.stdin.write(JSON.stringify({ id: 2, type: 'scenario.run', scenario, config: { ...config, sampleEverySteps: 1 } }) + '\n')
+          const line = (await replies.next()).value as string
+          const bytes = Buffer.byteLength(line)
+          recordAcceptance(`60 s scenario NDJSON reply: ${bytes} bytes`)
+          expect(bytes).toBeLessThan(MAX_ENGINE_REPLY_BYTES)
+          const reply = JSON.parse(line) as { ok: boolean; result: ScenarioRunResult }
+          expect(reply.ok).toBe(true)
+          expect(reply.result.report.elapsedS).toBeCloseTo(60)
+          expect(reply.result.report.endReason).toBe('duration')
+        } finally {
+          stdout.close()
+          child.stdin.end()
+          await closed
+        }
+      }
       recordAcceptance(`TIME ${info.name} ${Math.round(performance.now() - started)} ms`)
       const { report, scenario } = result.data
       expect(report.name).toBe(info.name)

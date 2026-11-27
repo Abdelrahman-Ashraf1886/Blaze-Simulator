@@ -1,0 +1,1108 @@
+{
+  "reason": "initial 0.8.0 baseline",
+  "engineVersion": "0.8.0",
+  "cases": {
+    "scenario/balanced_hover": {
+      "name": "balanced_hover",
+      "passed": true,
+      "checks": [
+        {
+          "check": {
+            "type": "altitude",
+            "afterS": 19,
+            "toleranceM": 0.02
+          },
+          "measured": 0.000126326003860257,
+          "limits": [
+            0,
+            0.02
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "attitude",
+            "afterS": 19,
+            "maxDeg": 0.5729577951308232
+          },
+          "measured": 0,
+          "limits": [
+            0,
+            0.5729577951308232
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "noSustainedSaturation",
+            "afterS": 19,
+            "maxDurationS": 0.01
+          },
+          "measured": 0,
+          "limits": [
+            0,
+            0.01
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "hoverThrottle",
+            "afterS": 19,
+            "min": 0.36331351183077576,
+            "max": 0.37331351183077577
+          },
+          "measured": 0.368313943837885,
+          "limits": [
+            0.36331351183077576,
+            0.37331351183077577
+          ],
+          "passed": true,
+          "samples": 1001
+        }
+      ],
+      "elapsedS": 20,
+      "maxAttitudeErrorDeg": 0,
+      "finalAltitudeErrorM": 0.00007861320458463934,
+      "meanThrottle": [
+        0.3685847689000582,
+        0.3685847689000582,
+        0.3685847689000582,
+        0.3685847689000582
+      ],
+      "maxThrottle": [
+        0.531069892472866,
+        0.531069892472866,
+        0.531069892472866,
+        0.531069892472866
+      ],
+      "firstThrottle": [
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      "saturatedFraction": 0,
+      "chargeUsedMah": 14.5727246433523,
+      "endReason": "duration",
+      "stateHash": "a9e5e5fc53fd27b9"
+    },
+    "scenario/payload": {
+      "name": "payload",
+      "passed": true,
+      "checks": [
+        {
+          "check": {
+            "type": "altitude",
+            "afterS": 19,
+            "toleranceM": 0.02
+          },
+          "measured": 0.00004655910201270381,
+          "limits": [
+            0,
+            0.02
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "attitude",
+            "afterS": 19,
+            "maxDeg": 0.5729577951308232
+          },
+          "measured": 0,
+          "limits": [
+            0,
+            0.5729577951308232
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "noSustainedSaturation",
+            "afterS": 19,
+            "maxDurationS": 0.01
+          },
+          "measured": 0,
+          "limits": [
+            0,
+            0.01
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "hoverThrottle",
+            "afterS": 19,
+            "min": 0.4491228437461814,
+            "max": 0.4591228437461814
+          },
+          "measured": 0.4541230426506683,
+          "limits": [
+            0.4491228437461814,
+            0.4591228437461814
+          ],
+          "passed": true,
+          "samples": 1001
+        }
+      ],
+      "elapsedS": 20,
+      "maxAttitudeErrorDeg": 0,
+      "finalAltitudeErrorM": 0.000028982544022471062,
+      "meanThrottle": [
+        0.45449619022931154,
+        0.45449619022931154,
+        0.45449619022931154,
+        0.45449619022931154
+      ],
+      "maxThrottle": [
+        0.5436072634131938,
+        0.5436072634131938,
+        0.5436072634131938,
+        0.5436072634131938
+      ],
+      "firstThrottle": [
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      "saturatedFraction": 0,
+      "chargeUsedMah": 24.128970655069622,
+      "endReason": "duration",
+      "stateHash": "f75e6e5a2f9be0bf"
+    },
+    "scenario/overweight_payload": {
+      "name": "overweight_payload",
+      "passed": true,
+      "checks": [
+        {
+          "check": {
+            "type": "cannotClimb",
+            "afterS": 1,
+            "minThrottle": 1
+          },
+          "measured": -5.788281586007723,
+          "limits": [
+            -1.7976931348623157e+308,
+            0
+          ],
+          "passed": true,
+          "samples": 19001
+        }
+      ],
+      "elapsedS": 20,
+      "maxAttitudeErrorDeg": 0,
+      "finalAltitudeErrorM": -918.3998019530945,
+      "meanThrottle": [
+        0.9966435820686412,
+        0.9966435820686412,
+        0.9966435820686412,
+        0.9966435820686412
+      ],
+      "maxThrottle": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "firstThrottle": [
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      "saturatedFraction": 0,
+      "chargeUsedMah": 184.54263473493083,
+      "endReason": "duration",
+      "stateHash": "4e193a090a25a3b1"
+    },
+    "scenario/com_offset": {
+      "name": "com_offset",
+      "passed": true,
+      "checks": [
+        {
+          "check": {
+            "type": "altitude",
+            "afterS": 19,
+            "toleranceM": 0.02
+          },
+          "measured": 0.00012707847691719517,
+          "limits": [
+            0,
+            0.02
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "attitude",
+            "afterS": 19,
+            "maxDeg": 0.5729577951308232
+          },
+          "measured": 0.0000017075472925031877,
+          "limits": [
+            0,
+            0.5729577951308232
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "noSustainedSaturation",
+            "afterS": 19,
+            "maxDurationS": 0.01
+          },
+          "measured": 0,
+          "limits": [
+            0,
+            0.01
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "rateTrim",
+            "afterS": 19,
+            "axis": 0,
+            "expected": 0,
+            "tolerance": 0.001
+          },
+          "measured": -1.3150968673641487e-18,
+          "limits": [
+            -0.001,
+            0.001
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "rateTrim",
+            "afterS": 19,
+            "axis": 1,
+            "expected": -0.035485507025166396,
+            "tolerance": 0.001
+          },
+          "measured": -0.03548557494280497,
+          "limits": [
+            -0.0364855070251664,
+            -0.034485507025166395
+          ],
+          "passed": true,
+          "samples": 1001
+        },
+        {
+          "check": {
+            "type": "thrustBalance",
+            "afterS": 19,
+            "weights": [
+              1,
+              -1,
+              1,
+              -1
+            ],
+            "expectedN": 1.3075533333333333,
+            "toleranceN": 0.02
+          },
+          "measured": 1.30755636872124,
+          "limits": [
+            1.2875533333333333,
+            1.3275533333333334
+          ],
+          "passed": true,
+          "samples": 1001
+        }
+      ],
+      "elapsedS": 20,
+      "maxAttitudeErrorDeg": 1.6665156862255235,
+      "finalAltitudeErrorM": 0.00007908159454849896,
+      "meanThrottle": [
+        0.39290857417116454,
+        0.34270194113299146,
+        0.3929085741711646,
+        0.34270194113299146
+      ],
+      "maxThrottle": [
+        0.5669796905742986,
+        0.5082142001779976,
+        0.5669796905742986,
+        0.5082142001779976
+      ],
+      "firstThrottle": [
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      "saturatedFraction": 0,
+      "chargeUsedMah": 14.635392848303947,
+      "endReason": "duration",
+      "stateHash": "4d36f1cb030a4414"
+    },
+    "scenario/com_offset_beyond_authority": {
+      "name": "com_offset_beyond_authority",
+      "passed": true,
+      "checks": [
+        {
+          "check": {
+            "type": "saturationObserved",
+            "afterS": 0
+          },
+          "measured": 1,
+          "limits": [
+            1,
+            1
+          ],
+          "passed": true,
+          "samples": 5000
+        },
+        {
+          "check": {
+            "type": "attitudeLost",
+            "afterS": 0,
+            "aboveDeg": 30
+          },
+          "measured": 179.9980321314664,
+          "limits": [
+            30,
+            180
+          ],
+          "passed": true,
+          "samples": 5000
+        }
+      ],
+      "elapsedS": 5,
+      "maxAttitudeErrorDeg": 179.9980321314664,
+      "finalAltitudeErrorM": -99.63080817375771,
+      "meanThrottle": [
+        0.9279416150927587,
+        0.06913948271742053,
+        0.9281101717083772,
+        0.06918307332917548
+      ],
+      "maxThrottle": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "firstThrottle": [
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      "saturatedFraction": 0.9962,
+      "chargeUsedMah": 29.512854578127158,
+      "endReason": "duration",
+      "stateHash": "953d2542adf2ee75"
+    },
+    "scenario/wind_hold": {
+      "name": "wind_hold",
+      "passed": true,
+      "checks": [],
+      "elapsedS": 20,
+      "maxAttitudeErrorDeg": 0.6282784884639878,
+      "finalAltitudeErrorM": 0.00007910280607113614,
+      "meanThrottle": [
+        0.36844891405500246,
+        0.36844783146627025,
+        0.36844891405500246,
+        0.3684478314662702
+      ],
+      "maxThrottle": [
+        0.5295340396443962,
+        0.5326552750828273,
+        0.5295340396443962,
+        0.5326552750828273
+      ],
+      "firstThrottle": [
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      "saturatedFraction": 0,
+      "chargeUsedMah": 14.56019773494426,
+      "endReason": "duration",
+      "flight": {
+        "type": "windHold",
+        "horizontalErrorM": 0.004344711588814182,
+        "verticalErrorM": 0.00007910280607113614,
+        "positionLimitM": 0.01,
+        "tiltDeg": 2.286545330118686,
+        "expectedTiltDeg": 2.2872366928531136,
+        "tiltToleranceDeg": 0.1
+      },
+      "stateHash": "bf77b1bd90bf5526"
+    },
+    "scenario/gust": {
+      "name": "gust",
+      "passed": true,
+      "checks": [],
+      "elapsedS": 60,
+      "maxAttitudeErrorDeg": 1.5602770949264138,
+      "finalAltitudeErrorM": -5.9544077796709994e-8,
+      "meanThrottle": [
+        0.36707974581905223,
+        0.36707936196281254,
+        0.36707974581905223,
+        0.3670793619628125
+      ],
+      "maxThrottle": [
+        0.5295340396443962,
+        0.5326552750828273,
+        0.5295340396443962,
+        0.5326552750828273
+      ],
+      "firstThrottle": [
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      "saturatedFraction": 0,
+      "chargeUsedMah": 42.46055548178126,
+      "endReason": "duration",
+      "flight": {
+        "type": "gust",
+        "peakDisplacementM": 0.5804508344243322,
+        "recoveryS": 22.445999999999998,
+        "positionLimitM": 0.01
+      },
+      "stateHash": "b17e55959a71778f"
+    },
+    "scenario/takeoff_hold_land": {
+      "name": "takeoff_hold_land",
+      "passed": true,
+      "checks": [],
+      "elapsedS": 34,
+      "maxAttitudeErrorDeg": 2.2259833574995245,
+      "finalAltitudeErrorM": null,
+      "meanThrottle": [
+        0.29089076735483405,
+        0.29052783598529336,
+        0.29089076735483416,
+        0.29052783598529336
+      ],
+      "maxThrottle": [
+        0.5102878254004346,
+        0.4012892482804248,
+        0.5102878254004344,
+        0.4012892482804248
+      ],
+      "firstThrottle": [
+        0.001,
+        0.001,
+        0.001,
+        0.001
+      ],
+      "saturatedFraction": 0.14685294117647057,
+      "chargeUsedMah": 18.692872348451086,
+      "endReason": "duration",
+      "flight": {
+        "type": "takeoffLand",
+        "states": {
+          "spoolUpS": 0.001,
+          "rampUpS": 1.0010000000000001,
+          "flightS": 4.001,
+          "holdS": 5.611,
+          "landS": 24.001,
+          "groundContactS": 28.32,
+          "maybeLandedS": 28.67,
+          "landedS": 29.01,
+          "readyS": 29.011
+        },
+        "holdHorizontalErrorM": 0.00385817849011476,
+        "holdVerticalErrorM": 0.00003383310911342363,
+        "positionLimitM": 0.01,
+        "touchdownSpeedMps": 0,
+        "speedLimitMps": 0.7,
+        "holdHeightFromStartM": 2.5000338331091134,
+        "endedLanded": true
+      },
+      "stateHash": "778355fc570aa1b0"
+    },
+    "scenario/terrain": {
+      "name": "terrain",
+      "passed": true,
+      "checks": [],
+      "elapsedS": 34,
+      "maxAttitudeErrorDeg": 2.0093621096429604,
+      "finalAltitudeErrorM": null,
+      "meanThrottle": [
+        0.29088215387113253,
+        0.2905366669629912,
+        0.2908821521077839,
+        0.2905366688343497
+      ],
+      "maxThrottle": [
+        0.5111475337066111,
+        0.40128924826112344,
+        0.5111475337066111,
+        0.4012892482600648
+      ],
+      "firstThrottle": [
+        0.001,
+        0.001,
+        0.001,
+        0.001
+      ],
+      "saturatedFraction": 0.14685294117647057,
+      "chargeUsedMah": 18.689909976068286,
+      "endReason": "duration",
+      "flight": {
+        "type": "takeoffLand",
+        "states": {
+          "spoolUpS": 0.001,
+          "rampUpS": 1.0010000000000001,
+          "flightS": 4.001,
+          "holdS": 5.611,
+          "landS": 24.001,
+          "groundContactS": 28.32,
+          "maybeLandedS": 28.67,
+          "landedS": 29.01,
+          "readyS": 29.011
+        },
+        "holdHorizontalErrorM": 0.0038587920512718997,
+        "holdVerticalErrorM": 0.000033833125162807676,
+        "positionLimitM": 0.01,
+        "touchdownSpeedMps": 0,
+        "speedLimitMps": 0.7,
+        "holdHeightFromStartM": 2.500033833125163,
+        "endedLanded": true
+      },
+      "stateHash": "83ec0c00430a7364"
+    },
+    "step/rate": {
+      "metrics": {
+        "status": "ok",
+        "riseTime": {
+          "status": "reached",
+          "time": 0.049604045725577584,
+          "lowerTime": 0.008129343742502099,
+          "upperTime": 0.05773338946807968
+        },
+        "peakTime": 0.16999999999999993,
+        "overshoot": {
+          "status": "overshoot",
+          "percent": 3.7049961596197
+        },
+        "settlingTime": {
+          "status": "settled",
+          "time": 0.6352794828108957
+        },
+        "steadyStateError": -5.9275815982038675e-8
+      },
+      "elapsedS": 10,
+      "hoverCollective01": 0.36831351183077576,
+      "startImbalanceNm": [
+        0,
+        0,
+        0
+      ],
+      "stateHash": "9e78049009de727a"
+    },
+    "step/attitude": {
+      "metrics": {
+        "status": "ok",
+        "riseTime": {
+          "status": "reached",
+          "time": 0.7047427229598773,
+          "lowerTime": 0.08901621760518351,
+          "upperTime": 0.7937589405650608
+        },
+        "peakTime": 1.472,
+        "overshoot": {
+          "status": "overshoot",
+          "percent": 10.958106896049479
+        },
+        "settlingTime": {
+          "status": "settled",
+          "time": 3.5853176610323856
+        },
+        "steadyStateError": 0.00013160468639423058
+      },
+      "elapsedS": 10,
+      "hoverCollective01": 0.36831351183077576,
+      "startImbalanceNm": [
+        0,
+        0,
+        0
+      ],
+      "stateHash": "dc36235e44a3c237"
+    },
+    "step/altitude": {
+      "metrics": {
+        "status": "ok",
+        "riseTime": {
+          "status": "reached",
+          "time": 1.877125705706161,
+          "lowerTime": 0.20146197129683327,
+          "upperTime": 2.0785876770029943
+        },
+        "peakTime": 9.99,
+        "overshoot": {
+          "status": "no-overshoot"
+        },
+        "settlingTime": {
+          "status": "settled",
+          "time": 3.8735864654574366
+        },
+        "steadyStateError": 0.001005909095734087
+      },
+      "elapsedS": 15,
+      "hoverCollective01": 0.36831351183077576,
+      "startImbalanceNm": [
+        0,
+        0,
+        0
+      ],
+      "stateHash": "63e40127c1b99ecc"
+    },
+    "step/position": {
+      "metrics": {
+        "status": "ok",
+        "riseTime": {
+          "status": "reached",
+          "time": 1.2924414099056591,
+          "lowerTime": 0.4930171298910763,
+          "upperTime": 1.7854585397967355
+        },
+        "peakTime": 2.88,
+        "overshoot": {
+          "status": "overshoot",
+          "percent": 13.144716905591292
+        },
+        "settlingTime": {
+          "status": "settled",
+          "time": 6.741654316508404
+        },
+        "steadyStateError": 0.004179916486845
+      },
+      "elapsedS": 15,
+      "hoverCollective01": 0.36831351183077576,
+      "startImbalanceNm": [
+        0,
+        0,
+        0
+      ],
+      "stateHash": "ce3b8422c3d2bba5"
+    },
+    "flight/sensors": {
+      "diagnostic": {
+        "state": {
+          "steps": 12,
+          "timeS": 0.012,
+          "positionM": [
+            0,
+            0,
+            0.019324623116793248
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "comM": [
+            0,
+            0,
+            0.019324623116793248
+          ],
+          "linearVelocityMps": [
+            0,
+            0,
+            -0.10366101557201289
+          ],
+          "angularVelocityRadps": [
+            0,
+            0,
+            0
+          ],
+          "angularVelocityBodyRadps": [
+            0,
+            0,
+            0
+          ]
+        },
+        "motors": [
+          {
+            "partId": "m1",
+            "throttle": 0.5,
+            "rpm": 1977.1531591106598,
+            "thrustN": 0.8573691599227105,
+            "dragTorqueNm": 0.004286845799613552
+          },
+          {
+            "partId": "m2",
+            "throttle": 0.5,
+            "rpm": 1977.1531591106598,
+            "thrustN": 0.8573691599227105,
+            "dragTorqueNm": 0.004286845799613552
+          },
+          {
+            "partId": "m3",
+            "throttle": 0.5,
+            "rpm": 1977.1531591106598,
+            "thrustN": 0.8573691599227105,
+            "dragTorqueNm": 0.004286845799613552
+          },
+          {
+            "partId": "m4",
+            "throttle": 0.5,
+            "rpm": 1977.1531591106598,
+            "thrustN": 0.8573691599227105,
+            "dragTorqueNm": 0.004286845799613552
+          }
+        ],
+        "battery": {
+          "voltageV": 9.467358172102061,
+          "currentA": 53.26418278979462,
+          "chargeUsedC": 0.8441124331963419,
+          "stateOfCharge": 0.9999549085238677
+        },
+        "loads": {
+          "thrustBodyN": [
+            0,
+            0,
+            3.00732064025631
+          ],
+          "dragBodyN": [
+            0,
+            0,
+            0.00005746595900386901
+          ],
+          "armTorqueNm": [
+            0,
+            0,
+            0
+          ],
+          "dragReactionTorqueNm": [
+            0,
+            0,
+            0
+          ],
+          "spinUpReactionTorqueNm": [
+            0,
+            0,
+            0
+          ],
+          "rotorGyroTorqueNm": [
+            0,
+            0,
+            0
+          ],
+          "totalTorqueNm": [
+            0,
+            0,
+            0
+          ],
+          "windComWorldMps": [
+            0,
+            0,
+            0
+          ],
+          "groundEffectAddedThrustN": 0,
+          "groundEffectStatus": [],
+          "windAboveRange": false,
+          "windInvalid": false
+        },
+        "airDensityKgM3": 1.225,
+        "control": null,
+        "flightLoop": {
+          "mode": "rates",
+          "autoMode": null,
+          "takeoffState": "flight",
+          "landState": {
+            "freefall": false,
+            "groundContact": false,
+            "maybeLanded": false,
+            "landed": false
+          },
+          "commandFinished": false,
+          "positionSetpointM": [
+            null,
+            null,
+            null
+          ],
+          "velocitySetpointMps": [
+            null,
+            null,
+            null
+          ],
+          "accelerationSetpointMps2": [
+            null,
+            null,
+            null
+          ],
+          "saturation": {
+            "positive": [
+              false,
+              false,
+              false,
+              false
+            ],
+            "negative": [
+              false,
+              false,
+              false,
+              false
+            ]
+          },
+          "hoverThrust": {
+            "estimate": 0.5,
+            "variance": 0.010000001296000002,
+            "valid": false
+          },
+          "velocityIntegral": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "sampleCount": 13,
+      "gyroRows": 0,
+      "finalSensors": {
+        "sensor.gyro.x": -0.02447943616505406,
+        "sensor.gyro.y": -0.028851983581437035,
+        "sensor.gyro.z": 0.04160394479020965,
+        "sensor.gyroClipped.x": 0,
+        "sensor.gyroClipped.y": 0,
+        "sensor.gyroClipped.z": 0,
+        "sensor.accelerometer.x": -0.05205372448898374,
+        "sensor.accelerometer.y": 0.019159804397754127,
+        "sensor.accelerometer.z": 2.987654429159116,
+        "sensor.accelerometerClipped.x": 0,
+        "sensor.accelerometerClipped.y": 0,
+        "sensor.accelerometerClipped.z": 0,
+        "sensor.barometer.pressure": 89874.35770666436,
+        "sensor.barometer.altitude": 1000.0195198915925,
+        "sensor.gps.position.x": 0,
+        "sensor.gps.position.y": 0,
+        "sensor.gps.position.z": 0.01951989159002901,
+        "sensor.gps.velocity.x": 0,
+        "sensor.gps.velocity.y": 0,
+        "sensor.gps.velocity.z": -0.08964958620005208
+      },
+      "stateHash": "77549dedba77397c"
+    },
+    "flight/gyro-feedback": {
+      "diagnostic": {
+        "state": {
+          "steps": 12,
+          "timeS": 0.012,
+          "positionM": [
+            1.8055176526142143e-11,
+            -2.4412224514769172e-11,
+            0.019324625413855993
+          ],
+          "quaternion": [
+            0.0000016894120915949132,
+            0.000001371424854236142,
+            0.000021090732111254297,
+            0.9999999997752231
+          ],
+          "comM": [
+            1.8055176526142143e-11,
+            -2.4412224514769172e-11,
+            0.019324625413855993
+          ],
+          "linearVelocityMps": [
+            1.204707612105394e-8,
+            -1.586544097265261e-8,
+            -0.10366015174839732
+          ],
+          "angularVelocityRadps": [
+            0.0009046366940218297,
+            0.000825266055063503,
+            0.007608578090133763
+          ],
+          "angularVelocityBodyRadps": [
+            0.0009046506355040296,
+            0.0008252536039162528,
+            0.0076085777830275075
+          ]
+        },
+        "motors": [
+          {
+            "partId": "m1",
+            "throttle": 0.5048907290785676,
+            "rpm": 1959.5511807083246,
+            "thrustN": 0.8421713322984129,
+            "dragTorqueNm": 0.004210856661492064
+          },
+          {
+            "partId": "m2",
+            "throttle": 0.4876628425705908,
+            "rpm": 1958.6565556687206,
+            "thrustN": 0.8414025281132527,
+            "dragTorqueNm": 0.004207012640566263
+          },
+          {
+            "partId": "m3",
+            "throttle": 0.5012025143038229,
+            "rpm": 1993.2779876864538,
+            "thrustN": 0.8714108701691845,
+            "dragTorqueNm": 0.004357054350845923
+          },
+          {
+            "partId": "m4",
+            "throttle": 0.5062439140470189,
+            "rpm": 1997.0302498847827,
+            "thrustN": 0.8746947469616172,
+            "dragTorqueNm": 0.004373473734808085
+          }
+        ],
+        "battery": {
+          "voltageV": 9.467194380186791,
+          "currentA": 53.28056198132093,
+          "chargeUsedC": 0.8442390839854101,
+          "stateOfCharge": 0.9999549017583341
+        },
+        "loads": {
+          "thrustBodyN": [
+            0,
+            0,
+            3.007518946962266
+          ],
+          "dragBodyN": [
+            -2.345902018875754e-16,
+            3.8394903201730393e-16,
+            0.0000574651693316872
+          ],
+          "armTorqueNm": [
+            0.0006509952268403812,
+            0.0010484905865307675,
+            0
+          ],
+          "dragReactionTorqueNm": [
+            0,
+            0,
+            0.00028035554219001807
+          ],
+          "spinUpReactionTorqueNm": [
+            0,
+            0,
+            0.0063933391927276095
+          ],
+          "rotorGyroTorqueNm": [
+            1.0418110626543298e-7,
+            -1.2140982263343198e-7,
+            0
+          ],
+          "totalTorqueNm": [
+            0.0006510994079466467,
+            0.0010483691767081342,
+            0.00667369473491769
+          ],
+          "windComWorldMps": [
+            0,
+            0,
+            0
+          ],
+          "groundEffectAddedThrustN": 0,
+          "groundEffectStatus": [],
+          "windAboveRange": false,
+          "windInvalid": false
+        },
+        "airDensityKgM3": 1.225,
+        "control": null,
+        "flightLoop": {
+          "mode": "rates",
+          "autoMode": null,
+          "takeoffState": "flight",
+          "landState": {
+            "freefall": false,
+            "groundContact": false,
+            "maybeLanded": false,
+            "landed": false
+          },
+          "commandFinished": false,
+          "positionSetpointM": [
+            null,
+            null,
+            null
+          ],
+          "velocitySetpointMps": [
+            null,
+            null,
+            null
+          ],
+          "accelerationSetpointMps2": [
+            null,
+            null,
+            null
+          ],
+          "saturation": {
+            "positive": [
+              false,
+              false,
+              false,
+              false
+            ],
+            "negative": [
+              false,
+              false,
+              false,
+              false
+            ]
+          },
+          "hoverThrust": {
+            "estimate": 0.5,
+            "variance": 0.010000001296000002,
+            "valid": false
+          },
+          "velocityIntegral": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "sampleCount": 13,
+      "gyroRows": 9,
+      "finalSensors": {
+        "sensor.gyro.x": -0.023773936302127457,
+        "sensor.gyro.y": -0.028277940195560496,
+        "sensor.gyro.z": 0.048403998323317286,
+        "sensor.gyroClipped.x": 0,
+        "sensor.gyroClipped.y": 0,
+        "sensor.gyroClipped.z": 0,
+        "sensor.accelerometer.x": -0.052056673960513056,
+        "sensor.accelerometer.y": 0.022499306207223114,
+        "sensor.accelerometer.z": 2.986804370773542,
+        "sensor.accelerometerClipped.x": 0,
+        "sensor.accelerometerClipped.y": 0,
+        "sensor.accelerometerClipped.z": 0,
+        "sensor.barometer.pressure": 89874.35770665453,
+        "sensor.barometer.altitude": 1000.019519892502,
+        "sensor.gps.position.x": 3.31037000520789e-12,
+        "sensor.gps.position.y": -4.677090312553129e-12,
+        "sensor.gps.position.z": 0.019519892502189377,
+        "sensor.gps.velocity.x": 2.8106240777699913e-9,
+        "sensor.gps.velocity.y": -3.915740680941657e-9,
+        "sensor.gps.velocity.z": -0.08964910754699018,
+        "sensor.gyroFiltered.x": -0.00667095510289073,
+        "sensor.gyroFiltered.y": -0.0069734444841742516,
+        "sensor.gyroFiltered.z": -0.018496058881282806,
+        "sensor.angularAccelerationFiltered.x": 2.9716224670410156,
+        "sensor.angularAccelerationFiltered.y": 1.7947535514831543,
+        "sensor.angularAccelerationFiltered.z": 1.79799485206604,
+        "controller.rateSource": 1
+      },
+      "stateHash": "50e0e4b44eda9793"
+    }
+  }
+}

@@ -1,27 +1,41 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, protocol, screen, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, protocol, screen, session, shell, type MessageBoxOptions } from 'electron'
 import { existsSync, statSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { release } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { thirdPartyNoticesPath } from './notices'
+import { checkComputer, formatComputerCheck, releaseLaunchOptions, selfCheckPath } from './self-check'
 import { ASSET_SCHEME, Channels, type AssetInfo, type GpuPreference, type IpcResult } from '../ipc/contract'
-import { createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
+import { createDataOverviewHandler, createDataSafetyHandlers, createDiagnosticsHandlers, createGraphicsHandlers, createHandlers, createIpcGuard, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
 import { createRecordingCsvExporter } from './telemetry/csv'
 import { RecordingStore } from './telemetry/store'
 import { printCurrentReportPdf } from './telemetry/report-pdf'
 import { SessionRecorder } from './telemetry/session-recorder'
 import { backfillHullsAsync, importAssetFileAsync, removeAssetFiles, resolveAssetUrl } from './assets/store'
 import { shutdownHullWorkers } from './assets/hull-async'
-import { safeFileName, savePngSchema } from './screenshot'
+import { safeFileName, savePngSchema, writeConfirmedFile } from './screenshot'
 import { MAX_PACK_BYTES, PackError, buildPack, importPack } from './components/pack'
 import { loadBuiltIns } from './components/seed'
 import { z } from 'zod'
-import { openDatabase, schemaVersion, type Db } from './db/database'
-import { createRepositories } from './db/repositories'
+import { schemaVersion, type Db } from './db/database'
+import {
+  backupDirectory, DatabaseCheckError, hasPreservedDatabase, listDatabaseBackups, newestGoodBackup,
+  openCheckedDatabase, openDatabaseForRecovery, recoverInterruptedRestore, restoreDatabase,
+} from './db/safety'
+import { PROJECT_EXTENSION } from './projects/container'
+import { recoverInterruptedImports } from './projects/publish'
+import { ProjectTransfer } from './projects/transfer'
+import engineManifest from '../../simulation-engine/Cargo.toml?raw'
+import { ConflictError, createRepositories } from './db/repositories'
 import { dropTest } from './engine/drop-test'
 import { flightEnd } from './engine/flight-session'
 import { scenarioRun } from './engine/scenario-run'
 import { stepTest } from './engine/step-test'
 import { EngineSupervisor } from './engine/supervisor'
+import { createCrashHandlers } from './logging/crashes'
+import { createDiagnostics } from './logging/diagnostics'
+import { captureConsole, createLogger } from './logging/logger'
 import { GPU_PREFERENCE_FILE, gpuSwitchFor, readGpuPreference, writeGpuPreference } from './gpu-preference'
 
 const APP_ID = 'com.blazeuav.app'
@@ -33,7 +47,28 @@ const WINDOW_BACKGROUND = '#131518'
 
 // Test isolation: Playwright points this at a temp directory. Must run before the
 // single-instance lock, which is scoped to the userData directory.
-if (process.env.BLAZE_UAV_USER_DATA) app.setPath('userData', process.env.BLAZE_UAV_USER_DATA)
+const launchOptions = releaseLaunchOptions(app.isPackaged, process.env)
+if (launchOptions.userData) app.setPath('userData', launchOptions.userData)
+
+const ownsUserData = app.requestSingleInstanceLock()
+const logger = createLogger(join(app.getPath('userData'), 'logs'))
+if (ownsUserData) {
+  captureConsole(logger)
+  const crashes = createCrashHandlers(logger, {
+    showError: (title, message) => dialog.showErrorBox(title, message),
+    offerReload: async (contents, options) => {
+      if (contents.isDestroyed()) return false
+      const win = BrowserWindow.fromWebContents(contents)
+      if (!win || win.isDestroyed()) return false
+      return (await dialog.showMessageBox(win, options)).response === 0
+    },
+  })
+  process.on('uncaughtException', crashes.uncaughtException)
+  process.on('unhandledRejection', crashes.unhandledRejection)
+  app.on('render-process-gone', (_event, contents, details) => void crashes.rendererGone(contents, details))
+  app.on('child-process-gone', (_event, details) => crashes.childGone(details))
+  logger.write('info', 'main', 'Application starting')
+}
 
 const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL
 
@@ -51,7 +86,7 @@ let recorder: SessionRecorder | undefined
 let mainWindow: BrowserWindow | null = null
 let restartRequested = false
 
-if (!app.requestSingleInstanceLock()) {
+if (!ownsUserData) {
   // Another instance owns this userData directory; it will focus its window.
   app.quit()
 } else {
@@ -69,7 +104,7 @@ if (!app.requestSingleInstanceLock()) {
 
 function engineBinaryPath(): string {
   // Development/test override, e.g. to exercise the "engine missing" path.
-  if (!app.isPackaged && process.env.BLAZE_UAV_ENGINE) return process.env.BLAZE_UAV_ENGINE
+  if (launchOptions.engine) return launchOptions.engine
   const exe = process.platform === 'win32' ? 'drone-engine.exe' : 'drone-engine'
   if (app.isPackaged) return join(process.resourcesPath, 'engine', exe)
   return join(app.getAppPath(), 'simulation-engine', 'target', 'release', exe)
@@ -128,8 +163,9 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      devTools: launchOptions.devTools,
       // Test hooks (window.__blazeTest) for end-to-end tests only; never set in normal use.
-      ...(process.env.BLAZE_UAV_TEST_HOOKS === '1' ? { additionalArguments: ['--blaze-test-hooks'] } : {}),
+      ...(launchOptions.testHooks ? { additionalArguments: ['--blaze-test-hooks'] } : {}),
     },
   })
   win.once('ready-to-show', () => win.show())
@@ -169,6 +205,28 @@ function showAbout(): void {
   void (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options))
 }
 
+let checkingComputer = false
+async function showComputerCheck(): Promise<void> {
+  if (checkingComputer) return
+  checkingComputer = true
+  try {
+    const path = selfCheckPath(app.isPackaged, process.resourcesPath, app.getAppPath())
+    const report = await checkComputer(engineBinaryPath(), path, app.getVersion())
+    const options: MessageBoxOptions = {
+      type: report.runs.every(({ status }) => status === 'same') ? 'info' : 'warning',
+      title: 'Check this computer',
+      message: 'Engine replay check',
+      detail: formatComputerCheck(report),
+      buttons: ['OK'],
+    }
+    await (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options))
+  } catch (error) {
+    dialog.showErrorBox('Could not check this computer', String(error))
+  } finally {
+    checkingComputer = false
+  }
+}
+
 function buildMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -177,7 +235,7 @@ function buildMenu(): void {
         label: 'View',
         submenu: [
           { role: 'reload' },
-          ...(app.isPackaged ? [] : [{ role: 'toggleDevTools' as const }]),
+          ...(launchOptions.devTools ? [{ role: 'toggleDevTools' as const }] : []),
           { type: 'separator' },
           { role: 'resetZoom' },
           { role: 'zoomIn' },
@@ -190,6 +248,7 @@ function buildMenu(): void {
         label: 'Help',
         submenu: [
           { label: 'About Blaze UAV', click: showAbout },
+          { label: 'Check this computer', click: () => void showComputerCheck() },
           {
             label: 'Third-party notices',
             click: () => {
@@ -226,52 +285,100 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       app.quit()
     },
   })
-  ipcMain.handle(Channels.graphicsStatus, (_event, payload) => graphics.status(payload))
-  ipcMain.handle(Channels.graphicsCommand, (_event, payload) => graphics.command(payload))
+  const guard = createIpcGuard(() => mainWindow?.webContents,
+    isDev ? new URL(process.env.ELECTRON_RENDERER_URL!) : pathToFileURL(join(__dirname, '../renderer/index.html')))
+  const handle = (channel: string, handler: Parameters<typeof guard.handle>[1]) =>
+    ipcMain.handle(channel, guard.handle(channel, handler))
+  const on = (channel: string, listener: Parameters<typeof guard.on>[1]) =>
+    ipcMain.on(channel, guard.on(channel, listener))
+
+  handle(Channels.graphicsStatus, (_event, payload) => graphics.status(payload))
+  handle(Channels.graphicsCommand, (_event, payload) => graphics.command(payload))
   const notifyPowerChange = () => mainWindow?.webContents.send(Channels.graphicsStatus, powerMonitor.isOnBatteryPower())
   powerMonitor.on('on-ac', notifyPowerChange)
   powerMonitor.on('on-battery', notifyPowerChange)
 
-  dbPath = join(app.getPath('userData'), 'blaze-uav.db')
+  const root = app.getPath('userData')
+  dbPath = join(root, 'blaze-uav.db')
+  const copies = backupDirectory(dbPath)
   try {
-    db = openDatabase(dbPath)
-  } catch (e) {
-    dialog.showErrorBox(
-      'Blaze UAV cannot open its database',
-      `${dbPath}\n\n${(e as Error).message}\n\nThe file was not modified.`,
-    )
+    recoverInterruptedRestore(dbPath)
+    try {
+      db = await openCheckedDatabase(dbPath)
+    } catch (error) {
+      if (!(error instanceof DatabaseCheckError)) throw error
+      let newest
+      try {
+        newest = newestGoodBackup(copies)
+      } catch (copyError) {
+        console.error('[database] could not inspect recovery copies', copyError)
+      }
+      const restore = newest ? ['Restore newest good copy'] : []
+      const { response } = await dialog.showMessageBox({
+        type: 'error',
+        title: 'Database integrity check failed',
+        message: 'Blaze UAV found a problem in its database.',
+        detail: [
+          error.message,
+          newest
+            ? `Restore replaces the database with the verified copy from ${newest.time} and saves the current file beside it. This covers the database only.`
+            : 'No usable database copy was found.',
+          'Quit closes Blaze UAV without continuing.',
+          'Continue read-only opens whatever data SQLite can still read. Some projects may fail to open, and changes cannot be saved.',
+        ].join('\n\n'),
+        buttons: ['Quit', ...restore, 'Continue read-only at own risk'],
+        defaultId: 0,
+        cancelId: 0,
+      })
+      if (response === 0) {
+        app.quit()
+        return
+      }
+      db = newest && response === 1 ? await restoreDatabase(dbPath, newest.id) : openDatabaseForRecovery(dbPath)
+    }
+  } catch (error) {
+    dialog.showErrorBox('Blaze UAV cannot open its database', `${dbPath}\n\n${(error as Error).message}`)
     app.exit(1)
     return
   }
-  const recordingsDir = join(app.getPath('userData'), 'recordings')
-  const repos = createRepositories(db, undefined, recordingsDir)
+
+  const recordingsDir = join(root, 'recordings')
+  const assetsDir = join(root, 'assets')
+  const folders = { root, assets: assetsDir, recordings: recordingsDir }
+  const readOnly = db.readonly
+  const readOnlyError = { ok: false, error: { code: 'VALIDATION', message: 'Data recovery mode is read-only.' } } as const
+  const repos = createRepositories(() => db!, undefined, recordingsDir)
   const recordings = new RecordingStore(recordingsDir, repos.runs)
-  try {
-    const orphans = await recordings.recover()
-    for (const name of orphans) console.warn('[recordings] recording file has no run row', name)
-  } catch (error) {
-    console.error('[recordings] startup recovery failed', error)
+  if (!readOnly) {
+    try {
+      recoverInterruptedImports(db, folders)
+    } catch (error) {
+      console.error('[projects] import recovery failed', error)
+    }
+    try {
+      const orphans = await recordings.recover()
+      for (const name of orphans) console.warn('[recordings] recording file has no run row', name)
+    } catch (error) {
+      console.error('[recordings] startup recovery failed', error)
+    }
+    try {
+      const s = loadBuiltIns(repos)
+      if (s.added || s.updated) console.log(`[components] built-ins: ${s.added} added, ${s.updated} updated`)
+    } catch (e) {
+      console.error('[components] built-in data could not be loaded', e)
+    }
+    try {
+      if (!hasPreservedDatabase(dbPath)) removeAssetFiles(assetsDir, repos.assets.collectGarbage())
+    } catch (e) {
+      console.error('[assets] cleanup failed', e)
+    }
+    // On worker threads and not awaited, so startup never waits for it.
+    void backfillHullsAsync(assetsDir, repos)
+      .then((filled) => {
+        if (filled.length) console.log(`[assets] computed the hull of ${filled.length} model(s) imported before 4.4`)
+      })
+      .catch((e: unknown) => console.error('[assets] hull back-fill failed', e))
   }
-
-  try {
-    const s = loadBuiltIns(repos)
-    if (s.added || s.updated) console.log(`[components] built-ins: ${s.added} added, ${s.updated} updated`)
-  } catch (e) {
-    console.error('[components] built-in data could not be loaded', e) // the library still works without it
-  }
-
-  const assetsDir = join(app.getPath('userData'), 'assets')
-  try {
-    removeAssetFiles(assetsDir, repos.assets.collectGarbage())
-  } catch (e) {
-    console.error('[assets] cleanup failed', e) // never blocks startup
-  }
-  // On worker threads and not awaited, so startup never waits for it.
-  void backfillHullsAsync(assetsDir, repos)
-    .then((filled) => {
-      if (filled.length) console.log(`[assets] computed the hull of ${filled.length} model(s) imported before 4.4`)
-    })
-    .catch((e: unknown) => console.error('[assets] hull back-fill failed', e)) // those parts keep their bounding box
   protocol.handle(ASSET_SCHEME, async (request) => {
     const file = resolveAssetUrl(request.url, assetsDir)
     if (!file) return new Response('Not found', { status: 404 })
@@ -279,7 +386,8 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       headers: { 'Content-Type': 'application/octet-stream', 'Access-Control-Allow-Origin': '*' },
     })
   })
-  ipcMain.handle(Channels.assetsImport, async (event): Promise<IpcResult<AssetInfo | null>> => {
+  handle(Channels.assetsImport, async (event): Promise<IpcResult<AssetInfo | null>> => {
+    if (readOnly) return readOnlyError
     const win = BrowserWindow.fromWebContents(event.sender)
     const options = {
       title: 'Import 3D model',
@@ -290,7 +398,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     if (picked.canceled || !picked.filePaths[0]) return { ok: true, data: null }
     return importAssetFileAsync(picked.filePaths[0], assetsDir, repos)
   })
-  ipcMain.handle(Channels.terrainImport, (event, payload: unknown) => importTerrain(payload, async () => {
+  handle(Channels.terrainImport, (event, payload: unknown) => readOnly ? readOnlyError : importTerrain(payload, async () => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const options = {
       title: 'Import terrain',
@@ -300,7 +408,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     const picked = await (win ? dialog.showOpenDialog(win, options) : dialog.showOpenDialog(options))
     return picked.canceled ? undefined : picked.filePaths[0]
   }, assetsDir, repos))
-  ipcMain.handle(Channels.componentsExportPack, async (event, payload: unknown): Promise<IpcResult<{ path: string; count: number } | null>> => {
+  handle(Channels.componentsExportPack, async (event, payload: unknown): Promise<IpcResult<{ path: string; count: number } | null>> => {
     const parsed = z.object({ ids: z.array(z.uuid()).min(1, 'Nothing to export').max(5000), name: z.string().max(200) }).safeParse(payload)
     if (!parsed.success) return { ok: false, error: { code: 'VALIDATION', message: parsed.error.issues[0]!.message } }
     try {
@@ -313,8 +421,8 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       }
       const picked = await (win ? dialog.showSaveDialog(win, options) : dialog.showSaveDialog(options))
       if (picked.canceled || !picked.filePath) return { ok: true, data: null }
-      const path = /\.json$/i.test(picked.filePath) ? picked.filePath : `${picked.filePath}.json`
-      await writeFile(path, buildPack(components), 'utf8')
+      const path = await writeConfirmedFile(picked.filePath, '.json',
+        (target) => writeFile(target, buildPack(components), 'utf8'))
       return { ok: true, data: { path, count: components.length } }
     } catch (e) {
       return { ok: false, error: { code: 'INTERNAL', message: `Could not export: ${(e as Error).message}` } }
@@ -322,7 +430,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
   })
   recordingCsv = createRecordingCsvExporter(recordings)
   const exportCsv = createRecordingCsvHandler(recordingCsv)
-  ipcMain.handle(Channels.recordingExportCsv, (event, payload: unknown) =>
+  handle(Channels.recordingExportCsv, (event, payload: unknown) =>
     exportCsv(payload, async (suggestedName) => {
       const win = BrowserWindow.fromWebContents(event.sender)
       const options = {
@@ -334,7 +442,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       return picked.canceled || !picked.filePath ? null : picked.filePath
     }))
 
-  ipcMain.handle(Channels.componentsImportPack, async (event): Promise<IpcResult<{ imported: number; skipped: number } | null>> => {
+  handle(Channels.componentsImportPack, async (event): Promise<IpcResult<{ imported: number; skipped: number } | null>> => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const options = {
       title: 'Import components',
@@ -352,7 +460,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       return { ok: false, error: { code: 'INTERNAL', message: 'The pack could not be read. See application log.' } }
     }
   })
-  ipcMain.handle(Channels.viewportSavePng, async (event, payload: unknown): Promise<IpcResult<{ path: string } | null>> => {
+  handle(Channels.viewportSavePng, async (event, payload: unknown): Promise<IpcResult<{ path: string } | null>> => {
     const parsed = savePngSchema.safeParse(payload)
     if (!parsed.success) {
       return { ok: false, error: { code: 'VALIDATION', message: parsed.error.issues.map((i) => i.message).join('; ') } }
@@ -365,9 +473,8 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     }
     const picked = await (win ? dialog.showSaveDialog(win, options) : dialog.showSaveDialog(options))
     if (picked.canceled || !picked.filePath) return { ok: true, data: null }
-    const path = /\.png$/i.test(picked.filePath) ? picked.filePath : `${picked.filePath}.png`
     try {
-      await writeFile(path, parsed.data.bytes)
+      const path = await writeConfirmedFile(picked.filePath, '.png', (target) => writeFile(target, parsed.data.bytes))
       return { ok: true, data: { path } }
     } catch (e) {
       return { ok: false, error: { code: 'INTERNAL', message: `Could not write the image: ${(e as Error).message}` } }
@@ -375,10 +482,121 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
   })
 
   const binaryPath = engineBinaryPath()
-  engine = new EngineSupervisor({ binaryPath, log: (l) => console.log(l) })
-  recorder = new SessionRecorder(recordings, (id) => repos.projects.get(id).name, app.getVersion(), () => engine!.status)
-  if (!existsSync(binaryPath)) console.error(`[engine] binary not found at ${binaryPath}`)
+  engine = new EngineSupervisor({ binaryPath, log: (line, level) => logger.write(level ?? 'info', 'engine', line) })
+  const diagnostics = createDiagnostics({
+    logger,
+    databasePath: dbPath,
+    schemaVersion: () => schemaVersion(db!),
+    backupDatabase: (path) => db!.backup(path),
+    recordingsDirectory: recordingsDir,
+    versions: () => ({ app: app.getVersion(), engine: engine!.status.engineVersion, electron: process.versions.electron }),
+    os: () => ({ platform: process.platform, arch: process.arch, release: release() }),
+    graphicsPreference: () => preference,
+    gpuInfo: () => app.getGPUInfo('basic'),
+  })
+  const diagnosticsHandlers = createDiagnosticsHandlers({
+    ...diagnostics,
+    openLogFolder: async () => {
+      await mkdir(logger.directory, { recursive: true })
+      const error = await shell.openPath(logger.directory)
+      if (error) throw new Error(error)
+    },
+    logRendererError: (message) => logger.write('error', 'renderer', message),
+  })
+  const dataOverview = createDataOverviewHandler({
+    async read() {
+      // Model and terrain imports share the flat, content-addressed assets folder.
+      const files = await readdir(assetsDir, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return []
+        throw error
+      })
+      let modelBytes = 0
+      let terrainBytes = 0
+      for (const file of files) {
+        if (!file.isFile() || !/^[a-f0-9]{64}\.(glb|gltf|asc)$/.test(file.name)) continue
+        const current = await lstat(join(assetsDir, file.name)).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error
+        })
+        if (!current?.isFile()) continue
+        if (file.name.endsWith('.asc')) terrainBytes += current.size
+        else modelBytes += current.size
+      }
+      return { path: root, databaseBytes: (await lstat(dbPath)).size, modelBytes, terrainBytes }
+    },
+    async open(target) {
+      const path = target === 'open-folder'
+        ? root
+        : thirdPartyNoticesPath(app.isPackaged, process.resourcesPath, app.getAppPath())
+      const error = await shell.openPath(path)
+      if (error) throw new Error(error)
+    },
+  })
+  handle(Channels.dataOverview, (_event, payload) => dataOverview(payload))
+  handle(Channels.diagnosticsOpenLogFolder, (_event, payload) => diagnosticsHandlers.openLogFolder(payload))
+  handle(Channels.diagnosticsSave, (_event, payload) => {
+    const win = mainWindow!
+    return diagnosticsHandlers.save(payload, async () => {
+      const picked = await dialog.showSaveDialog(win, {
+        title: 'Save diagnostics',
+        defaultPath: join(app.getPath('documents'), 'blaze-uav-diagnostics.zip'),
+        filters: [{ name: 'ZIP archive', extensions: ['zip'] }],
+      })
+      return picked.canceled ? undefined : picked.filePath
+    })
+  })
+  on(Channels.rendererError, (_event, payload) => diagnosticsHandlers.rendererError(payload))
+  if (!readOnly) recorder = new SessionRecorder(recordings, (id) => repos.projects.get(id).name, app.getVersion(), () => engine!.status)
+  if (!existsSync(binaryPath)) logger.write('error', 'engine', `[engine] binary not found at ${binaryPath}`)
 
+  const projectTransfer = new ProjectTransfer(() => db!, repos, folders, () => {
+    // engine-core/src/lib.rs:40 takes its version from the workspace Cargo manifest.
+    const engineVersion = engine!.status.engineVersion ?? /^version\s*=\s*"([^"]+)"/m.exec(engineManifest)?.[1]
+    if (!engineVersion) throw new Error('The engine version is unavailable.')
+    return { appVersion: app.getVersion(), engineVersion }
+  })
+  const projectFilters = [{ name: 'Blaze UAV project', extensions: [PROJECT_EXTENSION] }]
+  let restoring = false
+  const dataSafetyHandlers = createDataSafetyHandlers({
+    listBackups: () => listDatabaseBackups(copies),
+    async restore(id) {
+      if (restoring) throw new ConflictError('A database restore is already in progress.')
+      restoring = true
+      try {
+        const restored = await restoreDatabase(dbPath, id, () => {
+          if (!readOnly && repos.runs.listOpen().length) throw new ConflictError('Finish recording before restoring a database copy.')
+          return db
+        }, (reopened) => { db = reopened })
+        // The old renderer still has its assembly in memory and saves on unload.
+        // Leave its connection closed until the app restarts.
+        restored.close()
+        restartRequested = true
+        setImmediate(() => app.quit())
+        return null
+      } catch (error) {
+        restoring = false
+        throw error
+      }
+    },
+    async exportProject({ id, recordings }) {
+      const options = {
+        title: 'Export project',
+        defaultPath: join(app.getPath('documents'), `${safeFileName(repos.projects.get(id).name)}.${PROJECT_EXTENSION}`),
+        filters: projectFilters,
+      }
+      const picked = await (mainWindow ? dialog.showSaveDialog(mainWindow, options) : dialog.showSaveDialog(options))
+      if (picked.canceled || !picked.filePath) return null
+      const path = await writeConfirmedFile(picked.filePath, `.${PROJECT_EXTENSION}`,
+        (target) => projectTransfer.export(id, recordings, target))
+      return { path }
+    },
+    async importProject() {
+      if (readOnly) throw new ConflictError('Data recovery mode is read-only.')
+      const options = { title: 'Import project', properties: ['openFile' as const], filters: projectFilters }
+      const picked = await (mainWindow ? dialog.showOpenDialog(mainWindow, options) : dialog.showOpenDialog(options))
+      if (picked.canceled || !picked.filePaths[0]) return null
+      return projectTransfer.import(picked.filePaths[0])
+    },
+  })
   const handlers = createHandlers(repos, () => ({
     engine: engine!.status,
     database: { path: dbPath, schemaVersion: schemaVersion(db!) },
@@ -390,17 +608,15 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       platform: `${process.platform}-${process.arch}`,
     },
   }))
-  for (const [channel, handler] of Object.entries({ ...handlers, ...createTerrainHandlers(repos, assetsDir), ...createRecordingHandlers(recordings) })) {
-    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload))
+  for (const [channel, handler] of Object.entries({ ...handlers, ...dataSafetyHandlers, ...createTerrainHandlers(repos, assetsDir), ...createRecordingHandlers(recordings) })) {
+    handle(channel, (_event, payload: unknown) =>
+      readOnly && channel === Channels.runsDelete ? readOnlyError : handler(payload))
   }
   for (const [channel, handler] of Object.entries(createRecordingVerifyHandlers(recordings, binaryPath))) {
-    ipcMain.handle(channel, (event, payload: unknown) => handler(event.sender, payload))
+    handle(channel, (event, payload: unknown) => handler(event.sender, payload))
   }
-  ipcMain.handle(Channels.recordingPrintReportPdf, (event, payload: unknown) => handlePrintReportPdf(payload, async () => {
-    const win = mainWindow
-    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
-      throw new Error('Printing is available from the main window.')
-    }
+  handle(Channels.recordingPrintReportPdf, (event, payload: unknown) => handlePrintReportPdf(payload, async () => {
+    const win = mainWindow!
     return printCurrentReportPdf(event.sender, async (id) => {
       const run = await recordings.get(id)
       return run.title ?? undefined
@@ -413,23 +629,16 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     })
   }))
   // Same validation and storage as the async save; used only while a window unloads.
-  ipcMain.on(Channels.assemblySaveSync, (event, payload: unknown) => {
-    event.returnValue = handlers[Channels.assemblySave]!(payload)
+  on(Channels.assemblySaveSync, (event, payload: unknown) => {
+    event.returnValue = db?.open && !readOnly ? handlers[Channels.assemblySave]!(payload) : readOnlyError
   })
 
-  // The sidecar has one loaded vehicle. Keep each load and its consuming command together.
-  let vehicleQueue = Promise.resolve()
-  function withLoadedVehicle<T>(run: () => Promise<T>): Promise<T> {
-    const result = vehicleQueue.then(run)
-    vehicleQueue = result.then(() => {}, () => {})
-    return result
-  }
-  ipcMain.handle(Channels.engineDropTest, (_event, payload: unknown) => withLoadedVehicle(() => dropTest(engine!, payload)))
-  ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => withLoadedVehicle(() => flightStartForView(engine!, payload, recorder)))
-  ipcMain.handle(Channels.engineFlightStep, (_event, payload: unknown) => flightStepForView(engine!, payload, recorder))
-  ipcMain.handle(Channels.engineFlightEnd, () => flightEnd(engine!, recorder))
-  ipcMain.handle(Channels.engineScenarioRun, (_event, payload: unknown) => withLoadedVehicle(() => scenarioRun(engine!, payload, recorder)))
-  ipcMain.handle(Channels.engineStepTest, (_event, payload: unknown) => withLoadedVehicle(() => stepTest(engine!, payload, recorder)))
+  handle(Channels.engineDropTest, (_event, payload) => dropTest(engine!, payload))
+  handle(Channels.engineFlightStart, (_event, payload) => flightStartForView(engine!, payload, recorder))
+  handle(Channels.engineFlightStep, (_event, payload) => flightStepForView(engine!, payload, recorder))
+  handle(Channels.engineFlightEnd, () => flightEnd(engine!, recorder))
+  handle(Channels.engineScenarioRun, (_event, payload) => scenarioRun(engine!, payload, recorder))
+  handle(Channels.engineStepTest, (_event, payload) => stepTest(engine!, payload, recorder))
 
   engine.on('status', (status) => {
     if ((status.state === 'restarting' || status.state === 'failed') && status.lastError) recorder?.failFlight(status.lastError)
@@ -456,14 +665,15 @@ app.on('before-quit', (event) => {
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 3000))
   const closeRecordings = recorder?.shutdown('app quit')
   const closeCsvExports = recordingCsv?.shutdown()
-  void Promise.race([Promise.allSettled([closeRecordings, closeCsvExports, engine.stop()]), deadline]).finally(() => app.quit())
+  const shutdown = Promise.allSettled([closeRecordings, closeCsvExports, engine.stop()]).then(() => logger.flush())
+  void Promise.race([shutdown, deadline]).finally(() => app.quit())
 })
 
 // The database must outlive the windows: closing a window runs its unload handler,
 // which saves the last edit synchronously. `will-quit` fires after all windows closed.
 app.on('will-quit', () => {
   shutdownHullWorkers()
-  db?.close()
+  if (db?.open) db.close()
   db = null
   if (restartRequested) {
     app.relaunch()

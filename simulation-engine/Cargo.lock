@@ -70,7 +70,7 @@ dependencies = [
 
 [[package]]
 name = "engine-core"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "rapier3d-f64",
  "serde",
@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "engine-host"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "engine-core",
  "serde",

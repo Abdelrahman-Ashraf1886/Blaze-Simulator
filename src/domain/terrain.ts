@@ -11,7 +11,18 @@ export interface TerrainGrid {
 export type TerrainParseResult =
   | { ok: true; grid: TerrainGrid }
   | { ok: false; reason: 'invalid-header' | 'wrong-count' | 'nodata-cell' | 'non-number'
-      | 'non-positive-cell-size' | 'grid-too-small' | 'vertical-unit' | 'missing-nodata-value' | 'invalid-extent' }
+      | 'non-positive-cell-size' | 'grid-too-small' | 'grid-too-large' | 'vertical-unit' | 'missing-nodata-value' | 'invalid-extent' }
+
+// DEVLOG.md:49 measures live flight over a 512 x 512 grid. The engine checks
+// rows * columns for overflow and equality with the sample count, without a maximum.
+export const MAX_TERRAIN_CELLS = 512 * 512
+export const MAX_TERRAIN_DIMENSION = MAX_TERRAIN_CELLS / 2
+// The architecture's 24-byte float bound plus a sign and CRLF/spacing per value.
+const ascNumberBytes = 24 + 1 + 2
+// Each recognized header can contribute one key, value and separator.
+export const MAX_TERRAIN_BYTES = MAX_TERRAIN_CELLS * ascNumberBytes
+  + ['ncols', 'nrows', 'xllcorner', 'yllcorner', 'xllcenter', 'yllcenter', 'cellsize', 'nodata_value']
+    .reduce((total, key) => total + key.length + 1 + ascNumberBytes, 0)
 
 const HEADER_KEYS = new Set([
   'ncols', 'nrows', 'xllcorner', 'yllcorner', 'xllcenter', 'yllcenter', 'cellsize', 'nodata_value',
@@ -29,18 +40,18 @@ export function parseAsciiGrid(
 ): TerrainParseResult {
   if (verticalUnit !== 'm') return { ok: false, reason: 'vertical-unit' }
 
-  const tokens = text.match(/\S+/g) ?? []
+  const tokens = /\S+/g
+  const next = () => tokens.exec(text)?.[0]
   const header = new Map<string, number>()
-  let offset = 0
-  while (offset < tokens.length) {
-    const key = tokens[offset]?.toLowerCase()
-    if (key === undefined || !HEADER_KEYS.has(key)) break
-    const token = tokens[offset + 1]
+  let sample = next()
+  while (sample !== undefined && sample.length <= 'nodata_value'.length && HEADER_KEYS.has(sample.toLowerCase())) {
+    const key = sample.toLowerCase()
+    const token = next()
     if (header.has(key) || token === undefined) return { ok: false, reason: 'invalid-header' }
     const value = decimal(token)
     if (!Number.isFinite(value)) return { ok: false, reason: 'non-number' }
     header.set(key, value)
-    offset += 2
+    sample = next()
   }
 
   const rows = header.get('nrows')
@@ -56,7 +67,9 @@ export function parseAsciiGrid(
   }
   if (rows < 2 || columns < 2) return { ok: false, reason: 'grid-too-small' }
   if (cellSizeM <= 0) return { ok: false, reason: 'non-positive-cell-size' }
-  if (tokens.length - offset !== rows * columns) return { ok: false, reason: 'wrong-count' }
+  if (rows > MAX_TERRAIN_DIMENSION || columns > MAX_TERRAIN_DIMENSION || rows * columns > MAX_TERRAIN_CELLS) {
+    return { ok: false, reason: 'grid-too-large' }
+  }
 
   let cornerM: TerrainGrid['cornerM']
   if (xCorner !== undefined && yCorner !== undefined && xCentre === undefined && yCentre === undefined) {
@@ -79,13 +92,16 @@ export function parseAsciiGrid(
   const noData = header.get('nodata_value') ?? implicitNoDataValue
   if (noData === undefined) return { ok: false, reason: 'missing-nodata-value' }
   if (!Number.isFinite(noData)) return { ok: false, reason: 'non-number' }
-  const heightsM = new Float64Array(tokens.length - offset)
+  const heightsM = new Float64Array(rows * columns)
   for (let index = 0; index < heightsM.length; index++) {
-    const height = decimal(tokens[offset + index]!)
+    if (sample === undefined) return { ok: false, reason: 'wrong-count' }
+    const height = decimal(sample)
     if (!Number.isFinite(height)) return { ok: false, reason: 'non-number' }
     if (height === noData) return { ok: false, reason: 'nodata-cell' }
     heightsM[index] = height
+    sample = next()
   }
+  if (sample !== undefined) return { ok: false, reason: 'wrong-count' }
 
   return { ok: true, grid: { rows, columns, cellSizeM, cornerM, heightsM } }
 }

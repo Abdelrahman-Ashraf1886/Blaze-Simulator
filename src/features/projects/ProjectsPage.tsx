@@ -1,4 +1,4 @@
-import { Check, Pencil, Trash2, X } from 'lucide-react'
+import { Check, Download, Pencil, Trash2, Upload, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { FRAME_SPECS, type Project } from '../../../electron/ipc/contract'
@@ -11,6 +11,7 @@ import { Dialog, DialogClose, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/field'
 import { formatTimestamp } from '@/lib/utils'
 import { useProjects } from '@/stores/projects'
+import { getApi, unwrap } from '@/services/api'
 import { CreateProjectDialog } from './CreateProjectDialog'
 
 export function ProjectsPage() {
@@ -18,6 +19,18 @@ export function ProjectsPage() {
   const [editing, setEditing] = useState<{ id: string; name: string } | null>(null)
   const [deleting, setDeleting] = useState<Project | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [exporting, setExporting] = useState<Project | null>(null)
+  const [recordings, setRecordings] = useState(false)
+  const [transferBusy, setTransferBusy] = useState(false)
+
+  async function transfer(fn: () => Promise<void>) {
+    setTransferBusy(true)
+    try {
+      await act(fn)
+    } finally {
+      setTransferBusy(false)
+    }
+  }
 
   useEffect(() => {
     void useProjects.getState().load()
@@ -34,7 +47,17 @@ export function ProjectsPage() {
 
   return (
     <>
-      <PageHeader title="Projects" count={projects.length} actions={<CreateProjectDialog />} />
+      <PageHeader title="Projects" count={projects.length} actions={
+        <div className="flex gap-2">
+          <Button variant="secondary" disabled={transferBusy} onClick={() => void transfer(async () => {
+            const project = unwrap(await getApi().projects.import())
+            if (project) await useProjects.getState().load()
+          })}>
+            <Upload /> Import project
+          </Button>
+          <CreateProjectDialog />
+        </div>
+      } />
       <div className="mx-auto w-full max-w-[1600px] px-6 pb-10 pt-5">
         {actionError && (
           <p role="alert" className="mb-3 text-[12.5px] text-fault">
@@ -121,6 +144,19 @@ export function ProjectsPage() {
                         <Button
                           size="icon"
                           variant="ghost"
+                          aria-label={`Export ${p.name}`}
+                          title="Export project"
+                          disabled={transferBusy}
+                          onClick={() => {
+                            setRecordings(false)
+                            setExporting(p)
+                          }}
+                        >
+                          <Download />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
                           aria-label={`Delete ${p.name}`}
                           title="Delete"
                           onClick={() => setDeleting(p)}
@@ -136,6 +172,31 @@ export function ProjectsPage() {
           )}
         </section>
       </div>
+
+      <Dialog open={!!exporting} onOpenChange={(open) => !open && !transferBusy && setExporting(null)}>
+        <DialogContent
+          title="Export project"
+          description={`Save “${exporting?.name ?? ''}” with its models and terrain as a .blazeproj file.`}
+        >
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={recordings} onChange={(event) => setRecordings(event.target.checked)} />
+            Include recordings
+          </label>
+          <div className="mt-4 flex justify-end gap-2">
+            <DialogClose asChild>
+              <Button variant="ghost">Cancel</Button>
+            </DialogClose>
+            <Button variant="primary" onClick={() => {
+              const project = exporting
+              if (!project) return
+              setExporting(null)
+              void transfer(async () => {
+                unwrap(await getApi().projects.export({ id: project.id, recordings }))
+              })
+            }}>Export project</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
         <DialogContent

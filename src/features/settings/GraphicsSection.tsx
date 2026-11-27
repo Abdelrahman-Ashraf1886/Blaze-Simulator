@@ -13,11 +13,12 @@ interface GraphicsSectionProps {
   renderer: string | null | undefined
   busy: boolean
   error: string | null
+  feedback?: string
   onSelect: (preference: GpuPreference) => void
   onRestart: () => void
 }
 
-export function GraphicsSection({ status, renderer, busy, error, onSelect, onRestart }: GraphicsSectionProps) {
+export function GraphicsSection({ status, renderer, busy, error, feedback, onSelect, onRestart }: GraphicsSectionProps) {
   const restartNeeded = status !== null && status.preference !== status.startupPreference
   return (
     <Section title="Graphics" className="max-w-prose text-[13px]">
@@ -55,7 +56,9 @@ export function GraphicsSection({ status, renderer, busy, error, onSelect, onRes
       {error && <p role="alert" className="mb-3 text-warn">{error}</p>}
       <div className="space-y-2 border-t border-line pt-3">
         <p role="status" className="text-fg-muted">
-          {restartNeeded ? 'Preference saved. It will apply the next time the app starts.' : 'Changes apply the next time the app starts.'}
+          {feedback === 'Restarting the app…'
+            ? feedback
+            : [feedback ?? (restartNeeded ? 'Preference saved.' : null), 'Changes apply the next time the app starts.'].filter(Boolean).join(' ')}
         </p>
         <Button type="button" disabled={!restartNeeded || busy} onClick={onRestart}>Restart now</Button>
       </div>

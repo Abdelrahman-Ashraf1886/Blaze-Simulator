@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
-import { createInterface } from 'node:readline'
+import { z } from 'zod'
+import { jsonDepthWithin } from '../assets/json-depth'
 import type { RecordingHeader, RecordingVerifyResult } from '../../ipc/contract'
 import {
-  FlightSessionStartResultSchema, FlightSessionStepResultSchema, isEngineResponse, PROTOCOL_VERSION,
-  ScenarioRunResultSchema, StepTestRunResultSchema, VehicleLoadResultSchema,
+  BodyDragSchema, FlightSessionStartParamsSchema, FlightSessionStartResultSchema, FlightSessionStepParamsSchema,
+  FlightSessionStepResultSchema, PropulsionDefinitionSchema, PROTOCOL_VERSION, ScenarioRunParamsSchema,
+  ScenarioRunResultSchema, StepTestRunParamsSchema, StepTestRunResultSchema, VehicleDefinitionSchema, VehicleLoadResultSchema,
 } from '../engine/protocol'
+import { engineHelloSchema, MAX_ENGINE_REPLY_BYTES, MAX_ENGINE_REQUEST_BYTES, parseEngineReply, watchEngineLines } from '../engine/supervisor'
 import type { RecordingReader } from './reader'
 import { traceRows } from './session-recorder'
 
@@ -15,7 +17,6 @@ const REQUEST_TIMEOUT_MS = 3000
 async function withEngine<T>(path: string, signal: AbortSignal, use: (send: Send) => Promise<T>): Promise<T> {
   signal.throwIfAborted()
   const child = spawn(path, [], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] })
-  const stdout = createInterface({ input: child.stdout })
   const exited = new AbortController()
   const closed = new Promise<void>((resolve) => child.once('close', () => {
     exited.abort(new Error('Verification engine closed its connection'))
@@ -24,21 +25,36 @@ async function withEngine<T>(path: string, signal: AbortSignal, use: (send: Send
   const failed = (error: Error) => exited.abort(error)
   child.on('error', failed)
   child.stdin.on('error', failed)
-  stdout.on('error', failed)
+  let receive: ((line: string) => void) | undefined
+  const closeStdout = watchEngineLines(child.stdout, MAX_ENGINE_REPLY_BYTES, (line) => {
+    if (!receive) throw new Error('Unexpected verification engine response')
+    receive(line)
+    receive = undefined
+  }, failed)
   try {
     return await use(async (line, id) => {
       const waiting = AbortSignal.any([signal, exited.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
       waiting.throwIfAborted()
-      const reply = once(stdout, 'line', { signal: waiting })
-      child.stdin.write(line)
-      const [raw] = await reply
-      const response: unknown = JSON.parse(raw)
-      if (!isEngineResponse(response) || response.id !== id) throw new Error('Unexpected verification engine response')
+      const raw = await new Promise<string>((resolve, reject) => {
+        const abort = () => {
+          receive = undefined
+          reject(waiting.reason)
+        }
+        waiting.addEventListener('abort', abort, { once: true })
+        receive = (reply) => {
+          waiting.removeEventListener('abort', abort)
+          resolve(reply)
+        }
+        child.stdin.write(line)
+      })
+      exited.signal.throwIfAborted()
+      const response = parseEngineReply(raw)
+      if (response.id !== id) throw new Error('Unexpected verification engine response')
       if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`)
       return response.result
     })
   } finally {
-    stdout.close()
+    closeStdout()
     child.stdin.end()
     child.kill()
     await closed
@@ -47,14 +63,29 @@ async function withEngine<T>(path: string, signal: AbortSignal, use: (send: Send
 
 type Send = (line: string, id: number) => Promise<unknown>
 
-function sendRecorded(send: Send, line: string, type: string): Promise<unknown> {
-  // Only the expected command may run and the original JSON bytes reach the sidecar.
-  if (!/^[^\r\n]+\n$/.test(line)) throw new Error(`Invalid recorded ${type} line`)
-  const request = JSON.parse(line)
-  if (request?.type !== type || !Number.isSafeInteger(request.id) || request.id < 1) {
-    throw new Error(`Invalid recorded ${type} request`)
-  }
-  return send(line, request.id)
+const requestId = z.int().positive()
+const recordedCommand = {
+  'vehicle.load': z.strictObject({
+    id: requestId, type: z.literal('vehicle.load'), vehicle: VehicleDefinitionSchema,
+    propulsion: PropulsionDefinitionSchema.optional(), aero: BodyDragSchema.optional(),
+  }),
+  'flight.session.start': FlightSessionStartParamsSchema.safeExtend({ id: requestId, type: z.literal('flight.session.start') }),
+  'flight.session.step': FlightSessionStepParamsSchema.safeExtend({ id: requestId, type: z.literal('flight.session.step') }),
+  'scenario.run': ScenarioRunParamsSchema.safeExtend({ id: requestId, type: z.literal('scenario.run') }),
+  'stepTest.run': StepTestRunParamsSchema.safeExtend({ id: requestId, type: z.literal('stepTest.run') }),
+}
+
+export function validateRecordedRequest(line: string, type: keyof typeof recordedCommand): number {
+  // Preserve the original bytes after validating with the normal wire schemas.
+  if (Buffer.byteLength(line) > MAX_ENGINE_REQUEST_BYTES || !/^[^\r\n]+\n$/.test(line)
+      || !jsonDepthWithin(line, 1000)) throw new Error(`Invalid recorded ${type} line`)
+  const request = recordedCommand[type].safeParse(JSON.parse(line))
+  if (!request.success) throw new Error(`Invalid recorded ${type} request`)
+  return request.data.id
+}
+
+function sendRecorded(send: Send, line: string, type: keyof typeof recordedCommand): Promise<unknown> {
+  return send(line, validateRecordedRequest(line, type))
 }
 
 type Samples = { steps: number[]; rows: readonly (readonly (number | null)[])[] }
@@ -82,18 +113,14 @@ export async function verifyRecording(
 ): Promise<RecordingVerifyResult> {
   try {
     signal.throwIfAborted()
-    const summary = await reader.summary()
+    const summary = await reader.summary(signal)
     const { header, end, incomplete, integrityError, sampleCount } = summary
     if (!header || !end || incomplete || integrityError) {
       return { status: 'cannot-verify', reason: integrityError ?? 'Recording is incomplete' }
     }
     if (!end.finalStateHash) return { status: 'cannot-verify', reason: 'Recording has no final state hash' }
     if (header.protocolVersion !== PROTOCOL_VERSION) return { status: 'cannot-verify', reason: 'Engine protocol differs' }
-    const requests = await reader.readRequests()
-    if (requests.integrityError || requests.lines.length !== summary.requestCount) {
-      return { status: 'cannot-verify', reason: requests.integrityError ?? 'Recording changed during verification' }
-    }
-    if (header.kind !== 'flight' && requests.lines.length > 0) {
+    if (header.kind !== 'flight' && summary.requestCount > 0) {
       return { status: 'cannot-verify', reason: 'Expected a single recorded run request' }
     }
     const stepAt = (timeS: number) => Math.round(timeS / header.stepLengthS)
@@ -101,7 +128,7 @@ export async function verifyRecording(
     progress(0, totalSteps)
 
     return await withEngine(binaryPath, signal, async (send) => {
-      const hello = await send('{"id":0,"type":"hello"}\n', 0) as { engineVersion?: unknown; protocolVersion?: unknown }
+      const hello = engineHelloSchema.parse(await send('{"id":0,"type":"hello"}\n', 0))
       if (hello.engineVersion !== header.engineVersion || hello.protocolVersion !== header.protocolVersion) {
         return { status: 'cannot-verify', reason: 'Engine version or protocol differs' }
       }
@@ -120,7 +147,9 @@ export async function verifyRecording(
             const start = FlightSessionStartResultSchema.parse(await sendRecorded(send, header.startRequest, 'flight.session.start'))
             const initialDifference = await check(start.samples, start.channels)
             if (initialDifference) return initialDifference
-            for (const line of requests.lines) {
+            let requests = 0
+            for await (const line of reader.requestLines(signal)) {
+              if (++requests > summary.requestCount) throw new Error('Recording changed during verification')
               const reply = FlightSessionStepResultSchema.parse(await sendRecorded(send, line, 'flight.session.step'))
               step += reply.stepsRun
               const difference = await check(reply.samples)
@@ -128,6 +157,7 @@ export async function verifyRecording(
               hash = reply.stateHash
               progress(step, totalSteps)
             }
+            if (requests !== summary.requestCount) throw new Error('Recording changed during verification')
             break
           }
           case 'scenario': {

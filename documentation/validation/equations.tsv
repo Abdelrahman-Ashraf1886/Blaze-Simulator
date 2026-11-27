@@ -1,0 +1,62 @@
+Shapes, assembly totals and tensor rotation	Uniform box Ixx=m(b²+c²)/12. Rotate each tensor as RIRᵀ, add the parallel-axis terms m[(r·r)I−rrᵀ], and use rCoM=Σmᵢrᵢ/Σmᵢ.
+Principal axes and engine handoff	Diagonalize the symmetric tensor I=Q diag(λ) Qᵀ and pass its principal moments and axes to the engine.
+Physical mass distribution of imported models	Assign uniform density to the bounding box and use its center and solid-box inertia unless explicit properties are supplied.
+Static hover balance	Minimize Σ(fᵢ−mg/n)² subject to Σfᵢ=mg and zero roll/pitch moment about the CoM. A negative solution indicates required downward thrust.
+Frame mass allocation by primitive volume	Assign mᵢ=mframe Vᵢ/ΣVⱼ using the plate plus the portions of the arms outside it.
+Rapier compound-body mass-property handoff	Sum component masses and rotated tensors with the parallel-axis shift to the combined CoM.
+Gravity, frame transforms and rigid-body integration	Transform body loads with R(q), add gravity, and update velocity before position. Free fall has Δz=−gt²/2 and vz=−gt.
+Friction, single-point rebound and resting contact timing	Coulomb friction limits tangential impulse by μJn. Ideal normal rebound is vout=−e vin with apex e²h above contact.
+Fixed obstacle contact and initial overlap	Unilateral contact uses the shape-to-obstacle gap. Centered box rest height is obstacle top plus box half-height.
+Flat-box rebound	Four corner normal impulses affect linear and angular speed. The diagnostic compares the first rebound apex to e²h.
+Ideal BLDC steady state and RK4 spin-up	Vm=ω/Kv+RI, Qm=Kt(I−I₀), and Jω̇=Qm−kQω². Solve the steady quadratic or integrate with RK4.
+Bench effective duty map	Solve Vd²−(ω/Kv)d−RIpack=0 per bench row, then interpolate the monotone fitted duty map.
+Build thrust-curve fit and residual	Fit fx²+(1−f)x to (ω(x)/ω(1))² by least squares with f constrained to [0,1].
+Static thrust fit, T-Motor source	Fit T=kTω² with kT=Σ(Tω²)/Σω⁴.
+Torque inferred from motor current	Infer Q=Kt(Ipack/d−I₀), then fit Q=kQω² by least squares.
+APC fallback thrust/torque fit	Fit T=kTω² and Q=kQω² to the applicable APC static table rows.
+Rotor loads, reaction, gyroscopic and density scaling	Sum r×T, shaft reaction and rotor angular-momentum terms. Scale the static thrust and torque coefficients by ρ/ρref.
+Pack sag, charge use and configured cutoff	Vpack=Voc−RintΣI and charge used is ∫ΣI dt. The configured cutoff interrupts drive.
+Projected-area union	Along each axis, estimate the area of the union of the projected shapes on two raster resolutions.
+Per-axis quadratic drag	Fᵢ=−ρCd,ᵢAᵢ|vrel,ᵢ|vrel,ᵢ/2 in body axes.
+Constant mean velocity and drift	vrel=vbody−vwind in a common frame. A wind bearing gives the direction it comes from.
+Cosine ramp and convected distance	The gust rises as A[1−cos(πs/L)]/2 with s accumulated using start-of-step mean-air-relative speed, then holds at A.
+Low-altitude logarithmic profile	U(z)=Uref log(z/z₀)/log(zref/z₀) on the profile interval with endpoint handling.
+Dryden filter and stochastic stream	Advance the Dryden filter states with their discrete linear transition and Gaussian innovations. Check variance and spectral density.
+Dryden height parameter calibration	Filter length scales Lᵢ and intensities σᵢ depend on clearance and the entered reference wind. Hold at the supported height endpoints.
+Single-rotor ratio and induced velocity	In hover, TIGE/TOGE=1/[1−(R/4Z)²] in the formula’s domain. Induced velocity follows the momentum balance.
+Multirotor predictive accuracy near ground	Evaluate the single-rotor thrust ratio at each hub’s clearance and scale the rotor thrust.
+Grid ingest, triangle height and engine registration	Compute surface height by barycentric interpolation in the selected heightfield triangle and transform grid coordinates to the engine frame.
+Ground clearance and slide/rest	Clearance follows shape support relative to the ground. The Coulomb slide/rest threshold is tan(slope)=μ.
+Integrated terrain landing	Fly the takeoff, hold and landing state sequence against the terrain heightfield. Evaluate hold error, touchdown speed and the landed state.
+Rotor effectiveness, pseudoinverse and normalization	Allocate u=B⁺w from the rotor-effectiveness matrix B and normalize the selected allocation axes.
+Sequential desaturation and airmode	Adjust motor commands by gains along selected allocation directions, then clip to the command range.
+Motor command thrust transform	For desired normalized thrust t, invert t=fu²+(1−f)u on [0,1].
+Body-rate PID, feed-forward and anti-windup	τ=Kp(ωsp−ω)+I−Kdω̇+Kffωsp. Saturation gates integrator growth.
+Reduced-quaternion attitude and yaw weighting	Align the thrust axes first, weight the residual yaw, then map the canonical quaternion error’s imaginary part to a rate demand.
+Position P, velocity PID, thrust vector and limits	vsp=vff+Kp,pos(psp−p). Velocity PID plus acceleration feed-forward yields a thrust vector limited by tilt and thrust constraints.
+Legacy vertical conformance	Compare the vertical response and state hash to the legacy controller fixture.
+Manual stick shaping and trajectory smoothing	Apply deadband and expo to the stick, map to tilt or velocity, and integrate a jerk-limited trajectory under velocity and acceleration constraints.
+Integrated hover, payload and trim scenarios	Compare steady thrust and moment balance (ΣT=mg and Σr×T=0) with hover, loaded and offset-CoM scenarios.
+Takeoff state machine and signed climb ramp	Run the takeoff state machine and ramp the signed climb limit from its initial value to the commanded climb speed.
+Auto takeoff, hold and land target equations	Generate climb and hold setpoints, then interpolate descent speed between the configured height gates.
+Integrated takeoff/hold/land behavior	Run scripted target changes through the flight loop and check hold errors, touchdown and detector transitions.
+Altitude cone, straight-track trajectory and state order	Combine the return altitude cone with altitude bounds, then follow a straight horizontal track under velocity, acceleration and jerk caps.
+Integrated return-to-start guidance	Follow climb → return → land → landed. Measure horizontal distance and vertical error relative to home.
+Ground contact, maybe-landed, landed and freefall predicates	Combine thrust and motion predicates with state-dependent hysteresis. Evaluate freefall by its acceleration predicate.
+Scalar EKF, variance and gating	Predict scalar variance with process noise, then update using K=PH/(H²P+R) when the innovation gate accepts the measurement.
+Static notch, two-pole low-pass and derivative alpha filter	Apply notch and low-pass biquads, and first-difference the filtered rate before first-order smoothing.
+Noise-free filtered gyro feedback into the rate loop	Compare the production filter path with separate direct-form I biquads and an alpha-smoothed rate derivative.
+Noisy gyro closed-loop hover and roll-rate response	Compute RMS rate and tilt in hover and measure 10–90% rise time and overshoot in a rate step.
+IMU additive noise, vibration, bias walk and clipping	Add vibration and Gaussian noise to truth, walk bias with variance proportional to elapsed time, then clip and delay the sample.
+Accelerometer mount kinematics	Rotate aCoM−g+α×r+ω×(ω×r) into the sensor axes.
+Barometer pressure/inverse and noise	Use the ISA pressure power law and its inverse; add pressure bias and noise before holding the sample.
+GPS cadence and zero-noise truth	Sample local CoM position and velocity on the configured cadence, deliver after the configured delay, and hold between deliveries.
+GPS stochastic error and barometer noise/bias calibration	Perturb sensor truth with calibrated-input Gaussian noise and bias terms. The input calibration lacks independent observations.
+ISA troposphere and temperature override	Use T=T₀−Lh, p=p₀(T/T₀)^(g/RL) and ρ=p/(RT). For a temperature override, use the overridden temperature in density.
+Copper cable and steady-state network	R=ρ·2L/A for the cable pair. Sum branch currents, subtract IR drops, and compute resistive losses as I²R.
+Mechanical/electrical/spec and wiring rules	Compare component limits, connector and port assignments, and geometric separation against the project rules.
+BLZR binary frames, corruption handling, persistence and export	Check CRC-32 and complete-frame boundaries, recover the verified prefix, and export samples with the stored clock.
+Telemetry min/max bucketing	Keep chronological bucket minima and maxima with missing-value markers as specified by the point budget.
+Replay sample clock and window selection	Use the last sample at or before the query time and clamp requested windows to the stored sample range.
+Saved pose playback and verification	Hold the stored pose between sample times. Re-simulate the recorded inputs and compare the saved outputs and hash.
+FNV-1a state hash primitive	XOR each ordered byte into the hash, then multiply by the FNV prime modulo 2⁶⁴.

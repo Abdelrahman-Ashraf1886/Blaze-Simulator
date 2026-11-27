@@ -1,7 +1,7 @@
 import type { ElectronApplication, Page } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { cpus, hostname, platform, release, totalmem } from 'node:os'
+import { cpus, platform, release, totalmem } from 'node:os'
 import { dirname, join } from 'node:path'
 import { matchStickFlips, type StickFlip, type TimingCapture } from '../../src/features/flight/flight-timing-stats'
 import { root } from '../../tests/e2e/helpers'
@@ -72,7 +72,7 @@ export async function saveFlightTrace<T extends { capture: TimingCapture | null;
           version: 1,
           metadata: {
             ...metadata, buildCommit: commit, runCount: 1,
-            machine: { host: hostname(), cpu: cpus()[0]?.model, logicalCpus: cpus().length, platform: platform(), release: release(), ramBytes: totalmem() },
+            machine: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, platform: platform(), release: release(), ramBytes: totalmem() },
           },
           periodMs, anchors, main, flight: capture ?? null, stickDrawDelaysMs: matches?.drawDelaysMs,
         },

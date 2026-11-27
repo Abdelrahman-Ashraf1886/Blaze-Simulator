@@ -21,6 +21,13 @@ import {
   type SaveAssemblyInput,
 } from './contract'
 
+export const diagnosticsOpenLogFolderSchema = z.undefined()
+export const diagnosticsSaveSchema = z.strictObject({
+  action: z.enum(['preview', 'save']),
+  includeDatabase: z.boolean(),
+})
+export const rendererErrorSchema = z.string().min(1)
+
 export const graphicsStatusSchema = z.undefined()
 export const gpuPreferenceSchema = z.strictObject({ preference: z.enum(GPU_PREFERENCES) })
 export const graphicsCommandSchema = z.discriminatedUnion('action', [
@@ -37,6 +44,9 @@ const projectName = z
 export const createProjectSchema = z.object({ name: projectName, frameType: z.enum(FRAME_TYPES) })
 export const renameProjectSchema = z.object({ id: z.uuid(), name: projectName })
 export const projectIdSchema = z.object({ id: z.uuid() })
+export const projectExportSchema = z.strictObject({ id: projectIdSchema.shape.id, recordings: z.boolean() })
+export const restoreDatabaseSchema = z.strictObject({ id: z.string().min(1) })
+export const dataOverviewSchema = z.enum(['read', 'open-folder', 'open-notices'])
 export const listRunsSchema = z.object({ limit: z.int().min(1).max(200) })
 export const recordingOptionsSchema = z.strictObject({
   projectId: projectIdSchema.shape.id,

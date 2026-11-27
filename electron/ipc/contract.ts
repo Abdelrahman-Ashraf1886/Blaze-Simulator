@@ -25,6 +25,25 @@ export const FRAME_SPECS: Record<FrameType, { name: string; rotors: number }> = 
   'octo-x': { name: 'Octo X', rotors: 8 },
 }
 
+export interface DatabaseBackup {
+  id: string
+  version: number
+  time: string
+  bytes: number
+}
+
+export interface DataOverview {
+  path: string
+  databaseBytes: number
+  modelBytes: number
+  terrainBytes: number
+}
+
+export interface ProjectExportInput {
+  id: string
+  recordings: boolean
+}
+
 export interface Project {
   id: string
   name: string
@@ -678,15 +697,31 @@ export type GraphicsCommand =
   | { action: 'set'; preference: GpuPreference }
   | { action: 'restart' }
 
+export type DiagnosticsCommand =
+  | { action: 'preview'; includeDatabase: boolean }
+  | { action: 'save'; includeDatabase: boolean }
+
+export interface DiagnosticsPreview {
+  entries: { name: string; description: string }[]
+}
+
 // ---- Channels ---------------------------------------------------------------
 
 export const Channels = {
+  dataOverview: 'settings:dataOverview',
+  diagnosticsOpenLogFolder: 'diagnostics:openLogFolder',
+  diagnosticsSave: 'diagnostics:save',
+  rendererError: 'diagnostics:rendererError',
   graphicsStatus: 'graphics:status',
   graphicsCommand: 'graphics:command',
   projectsList: 'projects:list',
   projectsCreate: 'projects:create',
   projectsRename: 'projects:rename',
   projectsDelete: 'projects:delete',
+  projectsExport: 'projects:export',
+  projectsImport: 'projects:import',
+  databaseListBackups: 'database:list-backups',
+  databaseRestore: 'database:restore',
   runsListRecent: 'runs:listRecent',
   runsList: 'runs:list',
   runsGet: 'runs:get',
@@ -763,6 +798,15 @@ interface RecordingApi {
 export type DesktopApiWithRecordings = DesktopApi & { runs: RunRecordingApi; recording: RecordingApi }
 
 export interface DesktopApi {
+  dataOverview(action: 'read'): Promise<IpcResult<DataOverview>>
+  dataOverview(action: 'open-folder' | 'open-notices'): Promise<IpcResult<null>>
+  diagnostics: {
+    openLogFolder(): Promise<IpcResult<null>>
+    save(input: Extract<DiagnosticsCommand, { action: 'preview' }>): Promise<IpcResult<DiagnosticsPreview>>
+    save(input: Extract<DiagnosticsCommand, { action: 'save' }>): Promise<IpcResult<{ path: string } | null>>
+    /** Used by the preload's page error listeners. */
+    reportRendererError(message: string): void
+  }
   graphics: {
     status(): Promise<IpcResult<GraphicsStatus>>
     command(input: GraphicsCommand): Promise<IpcResult<null>>
@@ -773,6 +817,13 @@ export interface DesktopApi {
     create(input: CreateProjectInput): Promise<IpcResult<Project>>
     rename(input: RenameProjectInput): Promise<IpcResult<Project>>
     delete(id: string): Promise<IpcResult<null>>
+    export(input: ProjectExportInput): Promise<IpcResult<{ path: string } | null>>
+    import(): Promise<IpcResult<Project | null>>
+  }
+  database: {
+    listBackups(): Promise<IpcResult<DatabaseBackup[]>>
+    /** On success the app restarts with the restored database. */
+    restore(id: string): Promise<IpcResult<null>>
   }
   runs: Partial<RunRecordingApi> & {
     listRecent(limit: number): Promise<IpcResult<(SimulationRun & Partial<RecordingRun>)[]>>

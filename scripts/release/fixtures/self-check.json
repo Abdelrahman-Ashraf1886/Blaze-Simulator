@@ -1,0 +1,312 @@
+{
+  "engineVersion": "0.8.0",
+  "vehicleLoad": {
+    "type": "vehicle.load",
+    "vehicle": {
+      "version": 1,
+      "parts": [
+        {
+          "partId": "body",
+          "massKg": 1,
+          "com": [
+            0,
+            0,
+            0
+          ],
+          "inertia": [
+            0.01,
+            0.01,
+            0.02,
+            0,
+            0,
+            0
+          ],
+          "pose": {
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "quaternion": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "shape": {
+            "type": "box",
+            "halfExtents": [
+              0.05,
+              0.05,
+              0.02
+            ]
+          }
+        }
+      ],
+      "motors": [
+        {
+          "partId": "m1",
+          "position": [
+            0.15,
+            -0.15,
+            0
+          ],
+          "thrustAxis": [
+            0,
+            0,
+            1
+          ],
+          "spin": "ccw"
+        },
+        {
+          "partId": "m2",
+          "position": [
+            -0.15,
+            0.15,
+            0
+          ],
+          "thrustAxis": [
+            0,
+            0,
+            1
+          ],
+          "spin": "ccw"
+        },
+        {
+          "partId": "m3",
+          "position": [
+            0.15,
+            0.15,
+            0
+          ],
+          "thrustAxis": [
+            0,
+            0,
+            1
+          ],
+          "spin": "cw"
+        },
+        {
+          "partId": "m4",
+          "position": [
+            -0.15,
+            -0.15,
+            0
+          ],
+          "thrustAxis": [
+            0,
+            0,
+            1
+          ],
+          "spin": "cw"
+        }
+      ],
+      "totalMassKg": 1,
+      "com": [
+        0,
+        0,
+        0
+      ],
+      "inertia": [
+        0.01,
+        0.01,
+        0.02,
+        0,
+        0,
+        0
+      ],
+      "missingMass": []
+    },
+    "propulsion": {
+      "version": 1,
+      "motors": [
+        {
+          "partId": "m1",
+          "kvRadPerSV": 100,
+          "resistanceOhm": 0.1,
+          "noLoadCurrentA": 0.5,
+          "thrustCoefNs2": 0.00002,
+          "torqueCoefNms2": 1e-7,
+          "inertiaKgM2": 0.00002,
+          "referenceDensityKgM3": 1.225
+        },
+        {
+          "partId": "m2",
+          "kvRadPerSV": 100,
+          "resistanceOhm": 0.1,
+          "noLoadCurrentA": 0.5,
+          "thrustCoefNs2": 0.00002,
+          "torqueCoefNms2": 1e-7,
+          "inertiaKgM2": 0.00002,
+          "referenceDensityKgM3": 1.225
+        },
+        {
+          "partId": "m3",
+          "kvRadPerSV": 100,
+          "resistanceOhm": 0.1,
+          "noLoadCurrentA": 0.5,
+          "thrustCoefNs2": 0.00002,
+          "torqueCoefNms2": 1e-7,
+          "inertiaKgM2": 0.00002,
+          "referenceDensityKgM3": 1.225
+        },
+        {
+          "partId": "m4",
+          "kvRadPerSV": 100,
+          "resistanceOhm": 0.1,
+          "noLoadCurrentA": 0.5,
+          "thrustCoefNs2": 0.00002,
+          "torqueCoefNms2": 1e-7,
+          "inertiaKgM2": 0.00002,
+          "referenceDensityKgM3": 1.225
+        }
+      ],
+      "battery": {
+        "openCircuitVoltageV": 10,
+        "internalResistanceOhm": 0.01,
+        "capacityC": 18720
+      }
+    },
+    "aero": {
+      "cdBody": [
+        1,
+        1,
+        1
+      ],
+      "areaM2": [
+        0.01,
+        0.01,
+        0.01
+      ]
+    }
+  },
+  "scenario": {
+    "requests": [
+      {
+        "type": "scenario.run",
+        "scenario": {
+          "type": "builtin",
+          "name": "balanced_hover"
+        },
+        "config": {
+          "airDensityKgM3": 1.225,
+          "cutoff": {
+            "type": "chargeMah",
+            "value": 1000
+          }
+        }
+      }
+    ],
+    "expectedHash": "a9e5e5fc53fd27b9"
+  },
+  "flight": {
+    "requests": [
+      {
+        "type": "flight.session.start",
+        "airDensityKgM3": 1.225,
+        "cutoff": {
+          "type": "chargeMah",
+          "value": 1000
+        },
+        "environment": {
+          "ground": null,
+          "obstacles": []
+        },
+        "startPositionM": [
+          0,
+          0,
+          0.02
+        ],
+        "controller": {
+          "mode": "position"
+        },
+        "sensors": {
+          "seed": -12,
+          "gyro": {
+            "noiseSigma": 0.03,
+            "vibrationSigma": 0.01,
+            "bias": null,
+            "randomWalk": 0.02,
+            "delaySteps": 2,
+            "range": null
+          },
+          "accelerometer": {
+            "noiseSigma": 0.03,
+            "vibrationSigma": 0.01,
+            "bias": null,
+            "randomWalk": 0.02,
+            "delaySteps": null,
+            "range": null,
+            "mountPositionM": [
+              0.01,
+              0,
+              0
+            ]
+          },
+          "barometer": {
+            "referenceAltitudeM": 1000,
+            "referenceTemperatureK": null,
+            "sigmaPa": null,
+            "biasPa": null,
+            "periodSteps": 3,
+            "delaySteps": null
+          },
+          "gps": {
+            "positionSigmaHorizontalM": null,
+            "positionSigmaVerticalM": null,
+            "velocitySigmaMps": null,
+            "periodSteps": 3,
+            "delaySteps": 1
+          }
+        },
+        "sampleEverySteps": 1
+      },
+      {
+        "type": "flight.session.step",
+        "steps": 12,
+        "setpoint": {
+          "mode": "rates",
+          "bodyRadps": [
+            0,
+            0,
+            0
+          ],
+          "collective": 0.5
+        }
+      }
+    ],
+    "expectedHash": "77549dedba77397c"
+  },
+  "stepTest": {
+    "requests": [
+      {
+        "type": "stepTest.run",
+        "test": {
+          "step": {
+            "type": "rate",
+            "axis": "roll",
+            "amplitudeRadps": 0.17453292519943295
+          },
+          "holdS": 0.002,
+          "durationS": 0.008,
+          "decimationSteps": 2
+        },
+        "config": {
+          "airDensityKgM3": 1.225,
+          "cutoff": {
+            "type": "chargeMah",
+            "value": 1000
+          },
+          "gains": {
+            "MC_ROLL_P": 7,
+            "MC_AIRMODE": 1
+          },
+          "airmode": 1,
+          "thrustModelFactor": 0
+        }
+      }
+    ],
+    "expectedHash": "9644d51ae5ff0264"
+  }
+}

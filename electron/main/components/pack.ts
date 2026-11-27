@@ -1,3 +1,5 @@
+import { readBoundedFile } from '../assets/bounded-file'
+import { jsonDepthWithin } from '../assets/json-depth'
 /**
  * Component packs: JSON files for sharing library records.
  *
@@ -56,6 +58,9 @@ const headerSchema = z.object({
 /** Parses and validates a whole pack; throws PackError listing every bad entry. */
 export function parsePack(text: string): { id: string | null; input: ComponentInput }[] {
   if (Buffer.byteLength(text, 'utf8') > MAX_PACK_BYTES) throw new PackError('The file is larger than 10 MB.')
+  // Pack -> components -> entry -> specs -> curve -> value -> rows -> row
+  // (component-schemas.ts:103?132).
+  if (!jsonDepthWithin(text, 8)) throw new PackError('The pack JSON is nested too deeply.')
   let json: unknown
   try {
     json = JSON.parse(text)
@@ -68,7 +73,8 @@ export function parsePack(text: string): { id: string | null; input: ComponentIn
   const problems: string[] = []
   const entries: { id: string | null; input: ComponentInput }[] = []
   head.data.components.forEach((raw, i) => {
-    const label = `Entry ${i + 1}${raw && typeof raw === 'object' && 'name' in raw ? ` (${String((raw as { name: unknown }).name).slice(0, 60)})` : ''}`
+    const name = raw && typeof raw === 'object' && 'name' in raw ? raw.name : undefined
+    const label = `Entry ${i + 1}${typeof name === 'string' ? ` (${name.slice(0, 60)})` : ''}`
     if (!raw || typeof raw !== 'object') return void problems.push(`${label}: not an object`)
     const { id, ...rest } = raw as Record<string, unknown>
     if (id !== undefined && !z.uuid().safeParse(id).success) return void problems.push(`${label}: id must be a UUID`)
@@ -101,4 +107,12 @@ export function importPack(repos: Repositories, text: string): PackSummary {
     }
     return { imported, skipped }
   })
+}
+
+export async function importPackFile(repos: Repositories, path: string): Promise<PackSummary> {
+  const bytes = await readBoundedFile(path, MAX_PACK_BYTES).catch((error: unknown) => {
+    if (error instanceof Error) throw new PackError(error.message)
+    throw error
+  })
+  return importPack(repos, bytes.toString('utf8'))
 }

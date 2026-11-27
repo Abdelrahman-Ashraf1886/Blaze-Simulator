@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import type { WebContents } from 'electron'
 import { recordingIdSchema } from '../../ipc/schemas'
-import { safeFileName } from '../screenshot'
+import { safeFileName, writeConfirmedFile } from '../screenshot'
 
 type ReportContents = Pick<WebContents, 'getURL' | 'printToPDF'>
 
@@ -37,12 +37,10 @@ export async function printCurrentReportPdf(
   const path = await pickDestination(safeFileName((title || 'Blaze UAV flight') + ' report') + '.pdf')
   if (!path) return null
   assertCurrentReport()
-  const destination = /\.pdf$/i.test(path) ? path : path + '.pdf'
   const bytes = await contents.printToPDF({
     pageSize: 'A4', preferCSSPageSize: true,
     displayHeaderFooter: true, headerTemplate: '<span></span>', footerTemplate: footer(title || 'Blaze UAV flight'),
   })
   assertCurrentReport()
-  await write(destination, bytes)
-  return { path: destination }
+  return { path: await writeConfirmedFile(path, '.pdf', (target) => write(target, bytes)) }
 }

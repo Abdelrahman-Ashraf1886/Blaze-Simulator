@@ -205,16 +205,48 @@ push cannot roll the UI back (e.g. from `failed` to `restarting`).
   native error box naming the file, then exit without modifying it.
 - **Help → About** lists app, engine, Electron/Chromium/Node versions and the data
   file location. The menu bar auto-hides; press Alt to show it.
-- `BLAZE_UAV_USER_DATA` and (unpackaged builds only) `BLAZE_UAV_ENGINE` override
-  the data directory and engine path for tests.
+- Unpackaged builds accept `BLAZE_UAV_USER_DATA` and `BLAZE_UAV_ENGINE`
+  as test overrides. Packaged builds disable these overrides, test hooks and
+  DevTools. [Launch options](../electron/main/self-check.ts#L8-L15)
+
+### Settings
+
+Settings shows the data folder and storage sizes, database copies and restore,
+log folder and diagnostics, graphics, recording preference, versions and notices.
+Main reads the graphics preference from the data folder before Electron is ready.
+A change takes effect on restart. The page reports the current WebGL renderer.
+The recording preference is stored in renderer local storage.
+[Settings sections](../src/features/settings/SettingsPage.tsx#L117-L137) ·
+[GPU startup](../electron/main/index.ts#L98-L102) ·
+[Graphics readout](../src/features/settings/GraphicsSection.tsx#L21-L46) ·
+[Recording preference](../src/lib/prefs.ts#L71-L79)
+
+### Logging and diagnostics
+
+Main writes local logs under `<userData>/logs`. It rotates `main.log` at
+2 MiB and keeps five files including the active log. Main registers handlers
+for uncaught exceptions, unhandled rejections and renderer loss. Engine stderr
+goes to the log at info, including the startup and exit messages.
+[Main setup](../electron/main/index.ts#L54-L70) ·
+[Rotation](../electron/main/logging/logger.ts#L5-L10) ·
+[Crash handlers](../electron/main/logging/crashes.ts#L4-L53) ·
+[Engine stderr](../electron/main/engine/supervisor.ts#L308-L313)
+
+Settings previews the contents of a diagnostics ZIP. It contains the current
+and rotated logs, system and version details, and recording filenames and sizes.
+Logs may contain paths. The user can opt into a database snapshot. Main stages
+the ZIP beside the chosen destination and publishes it by rename.
+[Contents and writing](../electron/main/logging/diagnostics.ts#L8-L94) ·
+[Settings opt-in](../src/features/settings/SettingsPage.tsx#L32-L38)
 
 ## Storage
 
 SQLite (`better-sqlite3`, Node-API prebuilds, loads in both Node and Electron)
 at `<userData>/blaze-uav.db`, WAL mode, foreign keys on. Schema version =
 `PRAGMA user_version`; migrations in `database/migrations/NNNN_*.sql` are
-append-only and run in a transaction each. Opening a DB from a newer app version
-is refused rather than risking data loss.
+append-only. Pending migrations run in one transaction. Startup refuses a
+schema newer than the app supports.
+[Migration transaction](../electron/main/db/database.ts#L41-L60)
 
 **Assemblies** (schema v2): one per project, saved as a whole document with
 optimistic concurrency. Each save carries the revision it was based on, and main
@@ -228,8 +260,10 @@ every window has unloaded. Undo/redo lives in the renderer as document snapshots
 only, no unsupported compression) and copies it to
 `<userData>/assets/<sha256>.<ext>`; the `assets` table holds file facts (name,
 size, triangles, bounds). The renderer loads models only through
-`blaze-asset://model/<sha256>`, a privileged protocol whose handler serves exact
-ids from that folder and nothing else. Units and up axis are part of each model
+`blaze-asset://model/<sha256>`, a privileged protocol whose handler resolves
+digest-shaped IDs in that folder. Serving only database-registered assets
+remains open. [Protocol handler](../electron/main/index.ts#L382-L388)
+Units and up axis are part of each model
 part's shape. Unused assets are removed at startup.
 
 **Viewport images**: the renderer renders and encodes the PNG; main validates it
@@ -243,13 +277,78 @@ condition}`, converted to SI only where a check or calculation uses it (ADR 0007
 Checks, wiring rules and electrical calculations are pure modules in `src/domain/`,
 with no React, three.js, IPC or Node imports; ESLint enforces this (ADR 0008).
 
+### Data safety
+
+Startup runs SQLite `quick_check` and checks the schema version. Before upgrading
+an older database, main makes and verifies a standalone SQLite backup in
+`<userData>/backups`. If the copy fails, startup stops before migration. It keeps
+the latest three pre-migration copies. On an integrity check failure, startup
+offers to quit, restore the newest usable copy if available, or continue in
+read-only recovery mode.
+[Integrity check](../electron/main/db/safety.ts#L42-L50) ·
+[Copy and retention](../electron/main/db/safety.ts#L113-L159) ·
+[Retention count](../electron/main/db/safety.ts#L12) ·
+[Recovery prompt](../electron/main/index.ts#L304-L339)
+
+Restore verifies and migrates a staged database, keeps the displaced file,
+and journals the swap for startup recovery. Settings restarts the app after
+restore. A database copy contains SQLite rows only. Model, terrain and
+recording files stay in their separate stores.
+[Restore and recovery](../electron/main/db/safety.ts#L180-L288) ·
+[Restart](../electron/main/index.ts#L558-L574) ·
+[Restore confirmation](../src/features/settings/SettingsSections.tsx#L87-L92)
+
+Export writes one `.blazeproj` with project data, referenced components and
+assets, and optional recordings. The container checks entry names, sizes and
+SHA-256 digests. Import validates and stages its files, then publishes them
+with a database transaction and a journal for interrupted imports.
+[Container](../electron/main/projects/container.ts#L135-L214) ·
+[Transfer](../electron/main/projects/transfer.ts#L193-L299) ·
+[Import journal](../electron/main/projects/publish.ts#L32-L76)
+
 ## Security
 
 `contextIsolation`, `sandbox`, no `nodeIntegration`; CSP header (`script-src 'self'`
-in production); navigation and `window.open` blocked (https links go to the
-system browser); every IPC payload validated with zod in main; renderer only
-receives `{ok, data} | {ok:false, error:{code, message}}` with internal errors
-logged, not leaked.
+in production). The packaged window blocks navigation and new Electron
+windows. HTTPS citations open in the system browser. Main uses Zod schemas for
+channel payloads and IPC result envelopes for validation errors.
+[Window policy](../electron/main/index.ts#L113-L183) ·
+[IPC handlers](../electron/ipc/handlers.ts)
+
+### IPC guard
+
+Async and sync bindings check the current main window, its top frame and the
+app document URL before dispatch. The URL check ignores the route fragment.
+The guard limits payload size and structure. It allows one active request in
+each guarded group for engine work, asset imports and recording verification.
+Flight End has its own slot so it can interrupt a step. The supervisor bounds
+pipe lines and validates replies and the hello result.
+[Main bindings](../electron/main/index.ts#L288-L293) ·
+[Guard](../electron/ipc/handlers.ts#L96-L142) ·
+[Engine reply bounds](../electron/main/engine/supervisor.ts#L41-L77)
+
+## Packaging and self-check
+
+0.8.0 packages an unsigned per-user NSIS installer and a portable Windows x64
+executable. Uninstall keeps user data. The builder restricts the app to ASAR
+and enables embedded ASAR integrity checks. It disables Electron's RunAsNode,
+Node environment options and CLI inspection fuses. The Windows x64 SQLite
+native module is unpacked. The engine, notices and self-check fixtures ship as
+extra resources. The engine links the C runtime statically for clean Windows.
+[Builder config](../electron-builder.yml#L12-L57) ·
+[Static C runtime](../.cargo/config.toml#L1-L6)
+
+The release script checks the packaged fuses, ASAR contents, engine version
+and notices, then verifies both artifacts. It writes a release manifest and
+SHA-256 checksums.
+[Release verification](../scripts/release/build.mjs#L112-L145)
+
+Help → Check this computer runs three bundled inputs in separate engine
+processes. It checks the engine and protocol versions and compares the final
+state hashes for balanced hover, a flight with sensors and a roll-rate step
+test. The dialog reports the CPU and the result for each run.
+[Help command](../electron/main/index.ts#L210-L226) ·
+[Self-check logic](../electron/main/self-check.ts#L24-L102)
 
 ## Coordinate and unit conventions
 

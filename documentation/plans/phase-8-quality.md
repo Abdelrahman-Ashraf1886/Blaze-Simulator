@@ -1,7 +1,9 @@
 # Phase 8 plan: quality and distribution
 
-Status (2026-11-26): **Draft. D1–D16 are not decided.** Written against `blaze-sim` at 28e0dc9
-(Phase 7 done, awaiting review). Earlier phases' decisions are written "P6-D2".
+Status (2026-11-27): **In progress.** On 2026-11-27 the user asked to go on with Phase 8 to wrap it up; the
+recommendations below are followed (D9 was chosen on 2026-11-26). D10 (Sandbox: needs your administrator
+approval), D11(b) (a real flight log) and the limit values of D15 need you and wait for you. Written against
+`blaze-sim` at 28e0dc9 (Phase 7 done, awaiting review). Earlier phases' decisions are written "P6-D2".
 
 ## Goal
 
@@ -43,7 +45,7 @@ a fix that must change one (8.10) is listed, justified and approved on its own.
 | K7 | **Fixed 2026-11-26:** the tuning page edits the Return parameters (RTL_RETURN_ALT, RTL_DESCEND_ALT, NAV_ACC_RAD and the other supported ones, PX4 multicopter defaults); GPS fields show only on GPS peripherals, and values stored on others are kept and listed. Takeoff and landing parameters are still not editable (needs an engine change) | Phase 6 and 7 notes; tests in controller-params, flight-live, component-library |
 | K8 | Never tried: a real PlayStation controller (yours), another PC, another GPU | – |
 
-## Decisions (yours)
+## Decisions (yours; recommendations followed from 2026-11-27)
 
 | # | Question | Options | Recommendation |
 |---|---|---|---|

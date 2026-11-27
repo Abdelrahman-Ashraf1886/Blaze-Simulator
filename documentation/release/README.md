@@ -38,3 +38,5 @@ The installed app and engine both report 0.8.0. Recordings made with the 0.1.0 e
 ## Check this computer
 
 Open **Help → Check this computer** to run the three saved engine inputs in separate sidecar processes. The dialog shows the CPU name and compares each final state hash with its saved value. The result applies to those inputs on that machine. It makes no network request.
+
+[Blaze UAV user guide](../guide/README.md)

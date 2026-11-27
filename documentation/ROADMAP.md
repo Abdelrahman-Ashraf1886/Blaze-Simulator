@@ -12,7 +12,7 @@ builds and its acceptance tests pass. Status is updated in `DEVLOG.md` entries.
 | 5 Flight control | PID cascade (rate/angle/alt/pos), mixing/allocation, tuning tools, step-response metrics | **Done** (2026-11-24), [plan](plans/phase-5-flight-control.md), [ADR 0009](adr/0009-px4-controller-perfect-state.md) |
 | 6 Flight environment | Wind, ground effect, terrain and obstacles, input devices, auto flight modes, cameras and acceptance scenarios | **Done** (2026-11-25), [plan](plans/phase-6-flight-environment.md), [ADR 0010](adr/0010-flight-environment.md). 6.0b passed (2026-11-25). 6.11 (turbulence) and 6.12 (return) are included. Awaiting user review. |
 | 7 Telemetry | Sensor models (noise/bias/delay), live and historical graphs, recording/replay, CSV, reports | **Done, awaiting review** (2026-11-25). 7.0–7.9 and 7.12 built and merged. 7.10 attitude estimator and 7.11 ULog not chosen. [Plan](plans/phase-7-telemetry.md#milestones). |
-| 8 Quality & distribution | Profiling, regression suite, validation report, signed installer, upgrade test, docs | Plan drafted 2026-11-26, decisions open ([plan](plans/phase-8-quality.md)) |
+| 8 Quality & distribution | Profiling, regression suite, validation report, Windows packaging, upgrade test, docs | **Done, awaiting review** (2026-11-27). Open items include the one-hour soak, user-set startup/workshop/memory limits (D15), real-flight comparison (D11b), signing (D2), PlayStation controller and second PC (K8), Rapier rebound (K4), pack dialog bounded reads, registered-only asset serving, and terrain parsing off main. [Acceptance and evidence gaps](plans/phase-8-quality.md#milestones) |
 
 ## Phase 2 acceptance criteria (carried in from the Phase 1 design review)
 

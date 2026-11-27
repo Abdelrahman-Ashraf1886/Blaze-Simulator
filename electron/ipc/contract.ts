@@ -25,6 +25,18 @@ export const FRAME_SPECS: Record<FrameType, { name: string; rotors: number }> = 
   'octo-x': { name: 'Octo X', rotors: 8 },
 }
 
+export interface DatabaseBackup {
+  id: string
+  version: number
+  time: string
+  bytes: number
+}
+
+export interface ProjectExportInput {
+  id: string
+  recordings: boolean
+}
+
 export interface Project {
   id: string
   name: string
@@ -687,6 +699,10 @@ export const Channels = {
   projectsCreate: 'projects:create',
   projectsRename: 'projects:rename',
   projectsDelete: 'projects:delete',
+  projectsExport: 'projects:export',
+  projectsImport: 'projects:import',
+  databaseListBackups: 'database:list-backups',
+  databaseRestore: 'database:restore',
   runsListRecent: 'runs:listRecent',
   runsList: 'runs:list',
   runsGet: 'runs:get',
@@ -773,6 +789,13 @@ export interface DesktopApi {
     create(input: CreateProjectInput): Promise<IpcResult<Project>>
     rename(input: RenameProjectInput): Promise<IpcResult<Project>>
     delete(id: string): Promise<IpcResult<null>>
+    export(input: ProjectExportInput): Promise<IpcResult<{ path: string } | null>>
+    import(): Promise<IpcResult<Project | null>>
+  }
+  database: {
+    listBackups(): Promise<IpcResult<DatabaseBackup[]>>
+    /** On success the app restarts with the restored database. */
+    restore(id: string): Promise<IpcResult<null>>
   }
   runs: Partial<RunRecordingApi> & {
     listRecent(limit: number): Promise<IpcResult<(SimulationRun & Partial<RecordingRun>)[]>>

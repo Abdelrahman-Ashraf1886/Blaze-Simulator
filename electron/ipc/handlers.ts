@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { CONTROLLER_PARAMS, effectiveParams } from '../../src/domain/controller-params'
 import type { WebContents } from 'electron'
-import { Channels, type FlightStartResult, type FlightStepResult, type GraphicsStatus, type GpuPreference, type IpcResult, type SystemStatus, type TerrainAssetInfo } from './contract'
+import { Channels, type DatabaseBackup, type Project, type ProjectExportInput, type FlightStartResult, type FlightStepResult, type GraphicsStatus, type GpuPreference, type IpcResult, type SystemStatus, type TerrainAssetInfo } from './contract'
 import {
   assetIdSchema,
   graphicsCommandSchema,
@@ -10,6 +10,8 @@ import {
   flightLiveViewSchema,
   listRunsSchema,
   projectIdSchema,
+  projectExportSchema,
+  restoreDatabaseSchema,
   printReportPdfSchema,
   recordingCsvSchema,
   recordingIdSchema,
@@ -53,6 +55,32 @@ export function createGraphicsHandlers(options: {
       else options.restart()
       return null
     }),
+  }
+}
+
+export function createDataSafetyHandlers(options: {
+  listBackups: () => DatabaseBackup[]
+  restore: (id: string) => Promise<null>
+  exportProject: (input: ProjectExportInput) => Promise<{ path: string } | null>
+  importProject: () => Promise<Project | null>
+}) {
+  async function withMessage<T>(action: string, task: () => T | Promise<T>): Promise<T> {
+    try {
+      return await task()
+    } catch (error) {
+      if (error instanceof ValidationError || error instanceof NotFoundError || error instanceof ConflictError) throw error
+      throw new Error(`Could not ${action}. ${(error as Error).message}`, { cause: error })
+    }
+  }
+  return {
+    [Channels.databaseListBackups]: (payload: unknown) =>
+      validatedAsync(z.undefined(), payload, () => withMessage('list database copies', options.listBackups), true),
+    [Channels.databaseRestore]: (payload: unknown) =>
+      validatedAsync(restoreDatabaseSchema, payload, ({ id }) => withMessage('restore the database', () => options.restore(id)), true),
+    [Channels.projectsExport]: (payload: unknown) =>
+      validatedAsync(projectExportSchema, payload, (input) => withMessage('export the project', () => options.exportProject(input)), true),
+    [Channels.projectsImport]: (payload: unknown) =>
+      validatedAsync(z.undefined(), payload, () => withMessage('import the project', options.importProject), true),
   }
 }
 
@@ -247,14 +275,14 @@ function validated<S extends z.ZodType, T>(
 }
 
 async function validatedAsync<S extends z.ZodType, T>(
-  schema: S, payload: unknown, fn: (input: z.infer<S>) => Promise<T>,
+  schema: S, payload: unknown, fn: (input: z.infer<S>) => Promise<T>, showDetails = false,
 ): Promise<IpcResult<T>> {
   const parsed = schema.safeParse(payload)
   if (!parsed.success) return { ok: false, error: { code: 'VALIDATION', message: parsed.error.issues.map((i) => i.message).join('; ') } }
   try {
     return { ok: true, data: await fn(parsed.data) }
   } catch (error) {
-    return handlerError(error)
+    return handlerError(error, showDetails)
   }
 }
 
@@ -273,7 +301,7 @@ function run<T>(fn: () => T): IpcResult<T> {
   }
 }
 
-function handlerError(e: unknown): IpcResult<never> {
+function handlerError(e: unknown, showDetails = false): IpcResult<never> {
   if (e instanceof NotFoundError) return { ok: false, error: { code: 'NOT_FOUND', message: e.message } }
   if (e instanceof ConflictError) return { ok: false, error: { code: 'CONFLICT', message: e.message } }
   if (e instanceof TuningValidationError) return { ok: false, error: { code: 'VALIDATION', message: e.message, errors: e.errors } }
@@ -281,5 +309,5 @@ function handlerError(e: unknown): IpcResult<never> {
     return { ok: false, error: { code: 'VALIDATION', message: e.message } }
   }
   console.error('[ipc] handler failed', e)
-  return { ok: false, error: { code: 'INTERNAL', message: 'Unexpected error. See application log.' } }
+  return { ok: false, error: { code: 'INTERNAL', message: showDetails && e instanceof Error ? e.message : 'Unexpected error. See application log.' } }
 }

@@ -27,31 +27,37 @@ export const MIGRATIONS: readonly string[] = [m0001, m0002, m0003, m0004, m0005,
  */
 export function openDatabase(path: string): Db {
   const db = new Database(path)
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
-  migrate(db)
-  return db
+  try {
+    db.pragma('journal_mode = WAL')
+    db.pragma('foreign_keys = ON')
+    migrate(db)
+    return db
+  } catch (error) {
+    db.close()
+    throw error
+  }
 }
 
 export function schemaVersion(db: Db): number {
   return db.pragma('user_version', { simple: true }) as number
 }
 
-export function migrate(db: Db): void {
+export function migrate(db: Db, afterStep?: () => void): void {
   const current = schemaVersion(db)
   if (current > MIGRATIONS.length) {
     throw new Error(
       `Database schema v${current} is newer than this app supports (v${MIGRATIONS.length}).`,
     )
   }
-  // The assets rebuild copies hull_json, including on early development databases.
-  repairUnshippedMigrations(db)
-  for (let v = current; v < MIGRATIONS.length; v++) {
-    db.transaction(() => {
+  db.transaction(() => {
+    // The assets rebuild copies hull_json, including on early development databases.
+    repairUnshippedMigrations(db)
+    for (let v = current; v < MIGRATIONS.length; v++) {
       db.exec(MIGRATIONS[v]!)
       db.pragma(`user_version = ${v + 1}`)
-    })()
-  }
+      afterStep?.()
+    }
+  })()
 }
 
 /**

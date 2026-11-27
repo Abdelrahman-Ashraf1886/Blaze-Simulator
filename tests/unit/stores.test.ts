@@ -19,8 +19,11 @@ function fakeApi(overrides: Partial<DesktopApi['projects']> = {}): DesktopApi {
       create: vi.fn(async (i) => ({ ok: true as const, data: project('b', i.name) })),
       rename: vi.fn(async (i) => ({ ok: true as const, data: project(i.id, i.name) })),
       delete: vi.fn(async () => ({ ok: true as const, data: null })),
+      export: vi.fn(),
+      import: vi.fn(),
       ...overrides,
     },
+    database: { listBackups: vi.fn(), restore: vi.fn() },
     runs: { listRecent: vi.fn(async () => ({ ok: true as const, data: [] })) },
     assembly: {
       load: vi.fn(),

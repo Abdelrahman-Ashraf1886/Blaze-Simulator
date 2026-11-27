@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { thirdPartyNoticesPath } from './notices'
 import { ASSET_SCHEME, Channels, type AssetInfo, type GpuPreference, type IpcResult } from '../ipc/contract'
-import { createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
+import { createDataSafetyHandlers, createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
 import { createRecordingCsvExporter } from './telemetry/csv'
 import { RecordingStore } from './telemetry/store'
 import { printCurrentReportPdf } from './telemetry/report-pdf'
@@ -15,8 +15,16 @@ import { safeFileName, savePngSchema } from './screenshot'
 import { MAX_PACK_BYTES, PackError, buildPack, importPack } from './components/pack'
 import { loadBuiltIns } from './components/seed'
 import { z } from 'zod'
-import { openDatabase, schemaVersion, type Db } from './db/database'
-import { createRepositories } from './db/repositories'
+import { schemaVersion, type Db } from './db/database'
+import {
+  backupDirectory, DatabaseCheckError, hasPreservedDatabase, listDatabaseBackups, newestGoodBackup,
+  openCheckedDatabase, openDatabaseForRecovery, recoverInterruptedRestore, restoreDatabase,
+} from './db/safety'
+import { PROJECT_EXTENSION } from './projects/container'
+import { recoverInterruptedImports } from './projects/publish'
+import { ProjectTransfer } from './projects/transfer'
+import engineManifest from '../../simulation-engine/Cargo.toml?raw'
+import { ConflictError, createRepositories } from './db/repositories'
 import { dropTest } from './engine/drop-test'
 import { flightEnd } from './engine/flight-session'
 import { scenarioRun } from './engine/scenario-run'
@@ -232,46 +240,87 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
   powerMonitor.on('on-ac', notifyPowerChange)
   powerMonitor.on('on-battery', notifyPowerChange)
 
-  dbPath = join(app.getPath('userData'), 'blaze-uav.db')
+  const root = app.getPath('userData')
+  dbPath = join(root, 'blaze-uav.db')
+  const copies = backupDirectory(dbPath)
   try {
-    db = openDatabase(dbPath)
-  } catch (e) {
-    dialog.showErrorBox(
-      'Blaze UAV cannot open its database',
-      `${dbPath}\n\n${(e as Error).message}\n\nThe file was not modified.`,
-    )
+    recoverInterruptedRestore(dbPath)
+    try {
+      db = await openCheckedDatabase(dbPath)
+    } catch (error) {
+      if (!(error instanceof DatabaseCheckError)) throw error
+      let newest
+      try {
+        newest = newestGoodBackup(copies)
+      } catch (copyError) {
+        console.error('[database] could not inspect recovery copies', copyError)
+      }
+      const restore = newest ? ['Restore newest good copy'] : []
+      const { response } = await dialog.showMessageBox({
+        type: 'error',
+        title: 'Database integrity check failed',
+        message: 'Blaze UAV found a problem in its database.',
+        detail: [
+          error.message,
+          newest
+            ? `Restore replaces the database with the verified copy from ${newest.time} and saves the current file beside it. This covers the database only.`
+            : 'No usable database copy was found.',
+          'Quit closes Blaze UAV without continuing.',
+          'Continue read-only opens whatever data SQLite can still read. Some projects may fail to open, and changes cannot be saved.',
+        ].join('\n\n'),
+        buttons: ['Quit', ...restore, 'Continue read-only at own risk'],
+        defaultId: 0,
+        cancelId: 0,
+      })
+      if (response === 0) {
+        app.quit()
+        return
+      }
+      db = newest && response === 1 ? await restoreDatabase(dbPath, newest.id) : openDatabaseForRecovery(dbPath)
+    }
+  } catch (error) {
+    dialog.showErrorBox('Blaze UAV cannot open its database', `${dbPath}\n\n${(error as Error).message}`)
     app.exit(1)
     return
   }
-  const recordingsDir = join(app.getPath('userData'), 'recordings')
-  const repos = createRepositories(db, undefined, recordingsDir)
+
+  const recordingsDir = join(root, 'recordings')
+  const assetsDir = join(root, 'assets')
+  const folders = { root, assets: assetsDir, recordings: recordingsDir }
+  const readOnly = db.readonly
+  const readOnlyError = { ok: false, error: { code: 'VALIDATION', message: 'Data recovery mode is read-only.' } } as const
+  const repos = createRepositories(() => db!, undefined, recordingsDir)
   const recordings = new RecordingStore(recordingsDir, repos.runs)
-  try {
-    const orphans = await recordings.recover()
-    for (const name of orphans) console.warn('[recordings] recording file has no run row', name)
-  } catch (error) {
-    console.error('[recordings] startup recovery failed', error)
+  if (!readOnly) {
+    try {
+      recoverInterruptedImports(db, folders)
+    } catch (error) {
+      console.error('[projects] import recovery failed', error)
+    }
+    try {
+      const orphans = await recordings.recover()
+      for (const name of orphans) console.warn('[recordings] recording file has no run row', name)
+    } catch (error) {
+      console.error('[recordings] startup recovery failed', error)
+    }
+    try {
+      const s = loadBuiltIns(repos)
+      if (s.added || s.updated) console.log(`[components] built-ins: ${s.added} added, ${s.updated} updated`)
+    } catch (e) {
+      console.error('[components] built-in data could not be loaded', e)
+    }
+    try {
+      if (!hasPreservedDatabase(dbPath)) removeAssetFiles(assetsDir, repos.assets.collectGarbage())
+    } catch (e) {
+      console.error('[assets] cleanup failed', e)
+    }
+    // On worker threads and not awaited, so startup never waits for it.
+    void backfillHullsAsync(assetsDir, repos)
+      .then((filled) => {
+        if (filled.length) console.log(`[assets] computed the hull of ${filled.length} model(s) imported before 4.4`)
+      })
+      .catch((e: unknown) => console.error('[assets] hull back-fill failed', e))
   }
-
-  try {
-    const s = loadBuiltIns(repos)
-    if (s.added || s.updated) console.log(`[components] built-ins: ${s.added} added, ${s.updated} updated`)
-  } catch (e) {
-    console.error('[components] built-in data could not be loaded', e) // the library still works without it
-  }
-
-  const assetsDir = join(app.getPath('userData'), 'assets')
-  try {
-    removeAssetFiles(assetsDir, repos.assets.collectGarbage())
-  } catch (e) {
-    console.error('[assets] cleanup failed', e) // never blocks startup
-  }
-  // On worker threads and not awaited, so startup never waits for it.
-  void backfillHullsAsync(assetsDir, repos)
-    .then((filled) => {
-      if (filled.length) console.log(`[assets] computed the hull of ${filled.length} model(s) imported before 4.4`)
-    })
-    .catch((e: unknown) => console.error('[assets] hull back-fill failed', e)) // those parts keep their bounding box
   protocol.handle(ASSET_SCHEME, async (request) => {
     const file = resolveAssetUrl(request.url, assetsDir)
     if (!file) return new Response('Not found', { status: 404 })
@@ -280,6 +329,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     })
   })
   ipcMain.handle(Channels.assetsImport, async (event): Promise<IpcResult<AssetInfo | null>> => {
+    if (readOnly) return readOnlyError
     const win = BrowserWindow.fromWebContents(event.sender)
     const options = {
       title: 'Import 3D model',
@@ -290,7 +340,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     if (picked.canceled || !picked.filePaths[0]) return { ok: true, data: null }
     return importAssetFileAsync(picked.filePaths[0], assetsDir, repos)
   })
-  ipcMain.handle(Channels.terrainImport, (event, payload: unknown) => importTerrain(payload, async () => {
+  ipcMain.handle(Channels.terrainImport, (event, payload: unknown) => readOnly ? readOnlyError : importTerrain(payload, async () => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const options = {
       title: 'Import terrain',
@@ -376,9 +426,59 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
 
   const binaryPath = engineBinaryPath()
   engine = new EngineSupervisor({ binaryPath, log: (l) => console.log(l) })
-  recorder = new SessionRecorder(recordings, (id) => repos.projects.get(id).name, app.getVersion(), () => engine!.status)
+  if (!readOnly) recorder = new SessionRecorder(recordings, (id) => repos.projects.get(id).name, app.getVersion(), () => engine!.status)
   if (!existsSync(binaryPath)) console.error(`[engine] binary not found at ${binaryPath}`)
 
+  const projectTransfer = new ProjectTransfer(() => db!, repos, folders, () => {
+    // engine-core/src/lib.rs:40 takes its version from the workspace Cargo manifest.
+    const engineVersion = engine!.status.engineVersion ?? /^version\s*=\s*"([^"]+)"/m.exec(engineManifest)?.[1]
+    if (!engineVersion) throw new Error('The engine version is unavailable.')
+    return { appVersion: app.getVersion(), engineVersion }
+  })
+  const projectFilters = [{ name: 'Blaze UAV project', extensions: [PROJECT_EXTENSION] }]
+  let restoring = false
+  const dataSafetyHandlers = createDataSafetyHandlers({
+    listBackups: () => listDatabaseBackups(copies),
+    async restore(id) {
+      if (restoring) throw new ConflictError('A database restore is already in progress.')
+      restoring = true
+      try {
+        const restored = await restoreDatabase(dbPath, id, () => {
+          if (!readOnly && repos.runs.listOpen().length) throw new ConflictError('Finish recording before restoring a database copy.')
+          return db
+        }, (reopened) => { db = reopened })
+        // The old renderer still has its assembly in memory and saves on unload.
+        // Leave its connection closed until the app restarts.
+        restored.close()
+        restartRequested = true
+        setImmediate(() => app.quit())
+        return null
+      } catch (error) {
+        restoring = false
+        throw error
+      }
+    },
+    async exportProject({ id, recordings }) {
+      const options = {
+        title: 'Export project',
+        defaultPath: join(app.getPath('documents'), `${safeFileName(repos.projects.get(id).name)}.${PROJECT_EXTENSION}`),
+        filters: projectFilters,
+      }
+      const picked = await (mainWindow ? dialog.showSaveDialog(mainWindow, options) : dialog.showSaveDialog(options))
+      if (picked.canceled || !picked.filePath) return null
+      const extension = `.${PROJECT_EXTENSION}`
+      const path = picked.filePath.toLowerCase().endsWith(extension) ? picked.filePath : picked.filePath + extension
+      await projectTransfer.export(id, recordings, path)
+      return { path }
+    },
+    async importProject() {
+      if (readOnly) throw new ConflictError('Data recovery mode is read-only.')
+      const options = { title: 'Import project', properties: ['openFile' as const], filters: projectFilters }
+      const picked = await (mainWindow ? dialog.showOpenDialog(mainWindow, options) : dialog.showOpenDialog(options))
+      if (picked.canceled || !picked.filePaths[0]) return null
+      return projectTransfer.import(picked.filePaths[0])
+    },
+  })
   const handlers = createHandlers(repos, () => ({
     engine: engine!.status,
     database: { path: dbPath, schemaVersion: schemaVersion(db!) },
@@ -390,8 +490,9 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       platform: `${process.platform}-${process.arch}`,
     },
   }))
-  for (const [channel, handler] of Object.entries({ ...handlers, ...createTerrainHandlers(repos, assetsDir), ...createRecordingHandlers(recordings) })) {
-    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload))
+  for (const [channel, handler] of Object.entries({ ...handlers, ...dataSafetyHandlers, ...createTerrainHandlers(repos, assetsDir), ...createRecordingHandlers(recordings) })) {
+    ipcMain.handle(channel, (_event, payload: unknown) =>
+      readOnly && channel === Channels.runsDelete ? readOnlyError : handler(payload))
   }
   for (const [channel, handler] of Object.entries(createRecordingVerifyHandlers(recordings, binaryPath))) {
     ipcMain.handle(channel, (event, payload: unknown) => handler(event.sender, payload))
@@ -414,7 +515,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
   }))
   // Same validation and storage as the async save; used only while a window unloads.
   ipcMain.on(Channels.assemblySaveSync, (event, payload: unknown) => {
-    event.returnValue = handlers[Channels.assemblySave]!(payload)
+    event.returnValue = db?.open && !readOnly ? handlers[Channels.assemblySave]!(payload) : readOnlyError
   })
 
   // The sidecar has one loaded vehicle. Keep each load and its consuming command together.
@@ -463,7 +564,7 @@ app.on('before-quit', (event) => {
 // which saves the last edit synchronously. `will-quit` fires after all windows closed.
 app.on('will-quit', () => {
   shutdownHullWorkers()
-  db?.close()
+  if (db?.open) db.close()
   db = null
   if (restartRequested) {
     app.relaunch()

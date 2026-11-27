@@ -18,6 +18,12 @@ const api: DesktopApiWithRecordings = {
     create: (input) => ipcRenderer.invoke('projects:create', input),
     rename: (input) => ipcRenderer.invoke('projects:rename', input),
     delete: (id) => ipcRenderer.invoke('projects:delete', { id }),
+    export: (input) => ipcRenderer.invoke('projects:export', input),
+    import: () => ipcRenderer.invoke('projects:import'),
+  },
+  database: {
+    listBackups: () => ipcRenderer.invoke('database:list-backups'),
+    restore: (id) => ipcRenderer.invoke('database:restore', { id }),
   },
   runs: {
     listRecent: (limit) => ipcRenderer.invoke('runs:listRecent', { limit }),

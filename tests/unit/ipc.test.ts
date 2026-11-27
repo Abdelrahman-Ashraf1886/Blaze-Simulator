@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Channels, type IpcResult, type Project } from '../../electron/ipc/contract'
-import { createHandlers, createRecordingHandlers, createTerrainHandlers } from '../../electron/ipc/handlers'
+import { createDataSafetyHandlers, createHandlers, createRecordingHandlers, createTerrainHandlers } from '../../electron/ipc/handlers'
 import { RecordingStore } from '../../electron/main/telemetry/store'
 import { openDatabase } from '../../electron/main/db/database'
 import { createRepositories } from '../../electron/main/db/repositories'
@@ -24,7 +24,11 @@ beforeEach(() => {
     },
     database: { path: ':memory:', schemaVersion: 1 },
     app: { version: '0.1.0', electron: 'x', chrome: 'x', node: 'x', platform: 'test' },
-  })), ...createTerrainHandlers(repos, __dirname), ...createRecordingHandlers(new RecordingStore(__dirname, repos.runs)) }
+  })), ...createTerrainHandlers(repos, __dirname), ...createRecordingHandlers(new RecordingStore(__dirname, repos.runs)),
+    ...createDataSafetyHandlers({
+      listBackups: () => [], restore: async () => null, exportProject: async () => null, importProject: async () => null,
+    }),
+  }
 })
 
 const call = <T>(channel: string, payload?: unknown) => handlers[channel]!(payload) as IpcResult<T>

@@ -309,7 +309,8 @@ export class EngineSupervisor extends EventEmitter<{ status: [EngineStatus] }> {
       if (this.child === child) this.onLine(line)
     }, invalidPipe)
     const closeStderr = watchEngineLines(child.stderr, getDefaultHighWaterMark(false),
-      (line) => this.opts.log(`[engine] ${line}`, 'error'), invalidPipe)
+      // stderr is the engine's own log (engine-host/src/main.rs: started, exiting), not only errors.
+      (line) => this.opts.log(`[engine] ${line}`, 'info'), invalidPipe)
     child.once('close', () => {
       closeStdout()
       closeStderr()

@@ -21,6 +21,13 @@ import {
   type SaveAssemblyInput,
 } from './contract'
 
+export const diagnosticsOpenLogFolderSchema = z.undefined()
+export const diagnosticsSaveSchema = z.strictObject({
+  action: z.enum(['preview', 'save']),
+  includeDatabase: z.boolean(),
+})
+export const rendererErrorSchema = z.string().min(1)
+
 export const graphicsStatusSchema = z.undefined()
 export const gpuPreferenceSchema = z.strictObject({ preference: z.enum(GPU_PREFERENCES) })
 export const graphicsCommandSchema = z.discriminatedUnion('action', [

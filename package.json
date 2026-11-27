@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.e2e.json",
     "lint": "eslint .",
     "test": "npm run engine:build && vitest run",
+    "validation-report": "node scripts/validation-report.mjs",
     "test:e2e": "npm run build && playwright test",
     "test:flight-perf": "node scripts/flight-perf.cjs",
     "profile": "node scripts/profile/profile.cjs",

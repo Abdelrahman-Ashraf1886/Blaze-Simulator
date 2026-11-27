@@ -1,6 +1,6 @@
 const { spawnSync } = require('node:child_process')
 const { writeFileSync, existsSync } = require('node:fs')
-const { cpus, hostname, platform, release, totalmem } = require('node:os')
+const { cpus, platform, release, totalmem } = require('node:os')
 const { join, resolve } = require('node:path')
 
 const root = resolve(__dirname, '../..')
@@ -32,7 +32,7 @@ async function main() {
     if (state.error || state.status !== 0) throw state.error ?? new Error(state.stderr.trim())
     const metadata = {
       ...JSON.parse(state.stdout), buildCommit, runCount: count,
-      machine: { host: hostname(), cpu: cpus()[0]?.model, logicalCpus: cpus().length, platform: platform(), release: release(), ramBytes: totalmem() },
+      machine: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, platform: platform(), release: release(), ramBytes: totalmem() },
     }
     const result = await require('./step-cost.cjs').measureCost(root, count, resolve(target), metadata)
     writeFileSync(out, JSON.stringify(result, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' })

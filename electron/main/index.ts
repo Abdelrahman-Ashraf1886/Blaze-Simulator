@@ -1,11 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, protocol, screen, session, shell } from 'electron'
 import { existsSync, statSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import { thirdPartyNoticesPath } from './notices'
 import { ASSET_SCHEME, Channels, type AssetInfo, type GpuPreference, type IpcResult } from '../ipc/contract'
-import { createDataSafetyHandlers, createDiagnosticsHandlers, createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
+import { createDataOverviewHandler, createDataSafetyHandlers, createDiagnosticsHandlers, createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
 import { createRecordingCsvExporter } from './telemetry/csv'
 import { RecordingStore } from './telemetry/store'
 import { printCurrentReportPdf } from './telemetry/report-pdf'
@@ -473,6 +473,37 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
   function isMainFrame(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean {
     return !!mainWindow && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame
   }
+  const dataOverview = createDataOverviewHandler({
+    async read() {
+      // Model and terrain imports share the flat, content-addressed assets folder.
+      const files = await readdir(assetsDir, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return []
+        throw error
+      })
+      let modelBytes = 0
+      let terrainBytes = 0
+      for (const file of files) {
+        if (!file.isFile() || !/^[a-f0-9]{64}\.(glb|gltf|asc)$/.test(file.name)) continue
+        const current = await lstat(join(assetsDir, file.name)).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error
+        })
+        if (!current?.isFile()) continue
+        if (file.name.endsWith('.asc')) terrainBytes += current.size
+        else modelBytes += current.size
+      }
+      return { path: root, databaseBytes: (await lstat(dbPath)).size, modelBytes, terrainBytes }
+    },
+    async open(target) {
+      const path = target === 'open-folder'
+        ? root
+        : thirdPartyNoticesPath(app.isPackaged, process.resourcesPath, app.getAppPath())
+      const error = await shell.openPath(path)
+      if (error) throw new Error(error)
+    },
+  })
+  ipcMain.handle(Channels.dataOverview, (event, payload: unknown) =>
+    isMainFrame(event) ? dataOverview(payload)
+      : { ok: false, error: { code: 'VALIDATION', message: 'Data overview is available from the main window.' } })
   const denied = { ok: false, error: { code: 'VALIDATION', message: 'Diagnostics are available from the main window.' } } as const
   ipcMain.handle(Channels.diagnosticsOpenLogFolder, (event, payload: unknown) =>
     isMainFrame(event) ? diagnosticsHandlers.openLogFolder(payload) : denied)

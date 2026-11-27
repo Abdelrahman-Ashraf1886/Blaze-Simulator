@@ -5,6 +5,7 @@ import type { DesktopApiWithRecordings, EngineStatus, RecordingVerifyProgress } 
 // module at runtime would bundle zod into the sandboxed preload.
 let lastRendererError = -Infinity
 const api: DesktopApiWithRecordings = {
+  dataOverview: (action) => ipcRenderer.invoke('settings:dataOverview', action),
   diagnostics: {
     openLogFolder: () => ipcRenderer.invoke('diagnostics:openLogFolder'),
     save: (input) => ipcRenderer.invoke('diagnostics:save', input),

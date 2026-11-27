@@ -1,9 +1,10 @@
 import { z } from 'zod'
 import { CONTROLLER_PARAMS, effectiveParams } from '../../src/domain/controller-params'
 import type { WebContents } from 'electron'
-import { Channels, type DatabaseBackup, type DiagnosticsPreview, type FlightStartResult, type FlightStepResult, type GpuPreference, type GraphicsStatus, type IpcResult, type Project, type ProjectExportInput, type SystemStatus, type TerrainAssetInfo } from './contract'
+import { Channels, type DatabaseBackup, type DataOverview, type DiagnosticsPreview, type FlightStartResult, type FlightStepResult, type GpuPreference, type GraphicsStatus, type IpcResult, type Project, type ProjectExportInput, type SystemStatus, type TerrainAssetInfo } from './contract'
 import {
   assetIdSchema,
+  dataOverviewSchema,
   diagnosticsOpenLogFolderSchema,
   diagnosticsSaveSchema,
   rendererErrorSchema,
@@ -93,6 +94,17 @@ export function createGraphicsHandlers(options: {
       return null
     }),
   }
+}
+
+export function createDataOverviewHandler(options: {
+  read: () => Promise<DataOverview>
+  open: (target: 'open-folder' | 'open-notices') => Promise<void>
+}) {
+  return (payload: unknown) => validatedAsync(dataOverviewSchema, payload, async (action) => {
+    if (action === 'read') return options.read()
+    await options.open(action)
+    return null
+  }, true)
 }
 
 export function createDataSafetyHandlers(options: {

@@ -32,6 +32,13 @@ export interface DatabaseBackup {
   bytes: number
 }
 
+export interface DataOverview {
+  path: string
+  databaseBytes: number
+  modelBytes: number
+  terrainBytes: number
+}
+
 export interface ProjectExportInput {
   id: string
   recordings: boolean
@@ -701,6 +708,7 @@ export interface DiagnosticsPreview {
 // ---- Channels ---------------------------------------------------------------
 
 export const Channels = {
+  dataOverview: 'settings:dataOverview',
   diagnosticsOpenLogFolder: 'diagnostics:openLogFolder',
   diagnosticsSave: 'diagnostics:save',
   rendererError: 'diagnostics:rendererError',
@@ -790,6 +798,8 @@ interface RecordingApi {
 export type DesktopApiWithRecordings = DesktopApi & { runs: RunRecordingApi; recording: RecordingApi }
 
 export interface DesktopApi {
+  dataOverview(action: 'read'): Promise<IpcResult<DataOverview>>
+  dataOverview(action: 'open-folder' | 'open-notices'): Promise<IpcResult<null>>
   diagnostics: {
     openLogFolder(): Promise<IpcResult<null>>
     save(input: Extract<DiagnosticsCommand, { action: 'preview' }>): Promise<IpcResult<DiagnosticsPreview>>

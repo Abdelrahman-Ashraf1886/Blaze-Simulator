@@ -46,6 +46,7 @@ export const renameProjectSchema = z.object({ id: z.uuid(), name: projectName })
 export const projectIdSchema = z.object({ id: z.uuid() })
 export const projectExportSchema = z.strictObject({ id: projectIdSchema.shape.id, recordings: z.boolean() })
 export const restoreDatabaseSchema = z.strictObject({ id: z.string().min(1) })
+export const dataOverviewSchema = z.enum(['read', 'open-folder', 'open-notices'])
 export const listRunsSchema = z.object({ limit: z.int().min(1).max(200) })
 export const recordingOptionsSchema = z.strictObject({
   projectId: projectIdSchema.shape.id,

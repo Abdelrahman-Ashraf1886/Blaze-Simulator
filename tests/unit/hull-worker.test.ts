@@ -4,7 +4,7 @@
  * dies. The worker is built from hull-worker.ts the way electron-vite builds it (one
  * bundle, three.js inside) and started from a temporary folder.
  */
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
@@ -62,7 +62,7 @@ const cases: { name: string; bytes: Uint8Array; file: string }[] = [
 let dir: string
 let workerFile: string
 const pools: HullPool[] = []
-const poolOf = (spawn: () => Worker | Promise<Worker>, opts?: { maxWorkers?: number; idleMs?: number }) => {
+const poolOf = (spawn: () => Worker | Promise<Worker>, opts?: { maxWorkers?: number; idleMs?: number; jobMs?: number }) => {
   const p = createHullPool(spawn, opts)
   pools.push(p)
   return p
@@ -239,4 +239,24 @@ describe('several calls at once', () => {
     await pool.run(own(cases[0]!.bytes), f.format, f.bounds)
     expect(started).toBe(2)
   })
+})
+
+it('inspects a hostile hierarchy in the existing worker before computing a hull', async () => {
+  const bytes = readFileSync(join(import.meta.dirname, '../fixtures/hostile/cycle.gltf'))
+  const pool = poolOf(realWorker)
+  const started = performance.now()
+  await expect(pool.inspect(own(bytes), 'cycle.gltf')).rejects.toThrow(/cycle/)
+  console.info(`Hostile model worker round trip: ${(performance.now() - started).toFixed(1)} ms`)
+})
+
+it('cancels and times out an unresponsive hull worker', async () => {
+  const stalled = () => new Worker("require('node:worker_threads').parentPort.on('message', () => {})", { eval: true })
+  const pool = poolOf(stalled, { maxWorkers: 1, jobMs: 100 })
+  const model = cases[0]!
+  const facts = inspectGltf(model.bytes, model.file)
+  const controller = new AbortController()
+  const first = pool.run(own(model.bytes), facts.format, facts.bounds, controller.signal)
+  controller.abort(new Error('Cancelled test'))
+  await expect(first).rejects.toThrow('Cancelled test')
+  await expect(pool.run(own(model.bytes), facts.format, facts.bounds)).rejects.toThrow(/timed out/)
 })

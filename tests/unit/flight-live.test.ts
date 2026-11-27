@@ -1652,7 +1652,7 @@ function fakeRecordingEngine() {
         queueMicrotask(() => {
           switch (type) {
             case 'hello': send({ engineVersion: 'fake-engine', protocolVersion: PROTOCOL_VERSION, threads: 1 }); break
-            case 'ping': send({}); break
+            case 'ping': send({ engineUptimeUs: 0 }); break
             case 'vehicle.load': send({
               valid: true, partCount: quad.vehicle.parts.length, motorCount: quad.vehicle.motors.length, missingMass: [],
               totals: { massKg: quad.vehicle.totalMassKg, com: quad.vehicle.com, inertia: quad.vehicle.inertia },

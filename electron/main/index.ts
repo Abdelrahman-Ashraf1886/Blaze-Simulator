@@ -3,17 +3,18 @@ import { existsSync, statSync } from 'node:fs'
 import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { release } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { thirdPartyNoticesPath } from './notices'
 import { checkComputer, formatComputerCheck, releaseLaunchOptions, selfCheckPath } from './self-check'
 import { ASSET_SCHEME, Channels, type AssetInfo, type GpuPreference, type IpcResult } from '../ipc/contract'
-import { createDataOverviewHandler, createDataSafetyHandlers, createDiagnosticsHandlers, createGraphicsHandlers, createHandlers, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
+import { createDataOverviewHandler, createDataSafetyHandlers, createDiagnosticsHandlers, createGraphicsHandlers, createHandlers, createIpcGuard, createRecordingCsvHandler, createRecordingHandlers, createRecordingVerifyHandlers, createTerrainHandlers, flightStartForView, flightStepForView, handlePrintReportPdf, importTerrain } from '../ipc/handlers'
 import { createRecordingCsvExporter } from './telemetry/csv'
 import { RecordingStore } from './telemetry/store'
 import { printCurrentReportPdf } from './telemetry/report-pdf'
 import { SessionRecorder } from './telemetry/session-recorder'
 import { backfillHullsAsync, importAssetFileAsync, removeAssetFiles, resolveAssetUrl } from './assets/store'
 import { shutdownHullWorkers } from './assets/hull-async'
-import { safeFileName, savePngSchema } from './screenshot'
+import { safeFileName, savePngSchema, writeConfirmedFile } from './screenshot'
 import { MAX_PACK_BYTES, PackError, buildPack, importPack } from './components/pack'
 import { loadBuiltIns } from './components/seed'
 import { z } from 'zod'
@@ -284,8 +285,15 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       app.quit()
     },
   })
-  ipcMain.handle(Channels.graphicsStatus, (_event, payload) => graphics.status(payload))
-  ipcMain.handle(Channels.graphicsCommand, (_event, payload) => graphics.command(payload))
+  const guard = createIpcGuard(() => mainWindow?.webContents,
+    isDev ? new URL(process.env.ELECTRON_RENDERER_URL!) : pathToFileURL(join(__dirname, '../renderer/index.html')))
+  const handle = (channel: string, handler: Parameters<typeof guard.handle>[1]) =>
+    ipcMain.handle(channel, guard.handle(channel, handler))
+  const on = (channel: string, listener: Parameters<typeof guard.on>[1]) =>
+    ipcMain.on(channel, guard.on(channel, listener))
+
+  handle(Channels.graphicsStatus, (_event, payload) => graphics.status(payload))
+  handle(Channels.graphicsCommand, (_event, payload) => graphics.command(payload))
   const notifyPowerChange = () => mainWindow?.webContents.send(Channels.graphicsStatus, powerMonitor.isOnBatteryPower())
   powerMonitor.on('on-ac', notifyPowerChange)
   powerMonitor.on('on-battery', notifyPowerChange)
@@ -378,7 +386,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       headers: { 'Content-Type': 'application/octet-stream', 'Access-Control-Allow-Origin': '*' },
     })
   })
-  ipcMain.handle(Channels.assetsImport, async (event): Promise<IpcResult<AssetInfo | null>> => {
+  handle(Channels.assetsImport, async (event): Promise<IpcResult<AssetInfo | null>> => {
     if (readOnly) return readOnlyError
     const win = BrowserWindow.fromWebContents(event.sender)
     const options = {
@@ -390,7 +398,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     if (picked.canceled || !picked.filePaths[0]) return { ok: true, data: null }
     return importAssetFileAsync(picked.filePaths[0], assetsDir, repos)
   })
-  ipcMain.handle(Channels.terrainImport, (event, payload: unknown) => readOnly ? readOnlyError : importTerrain(payload, async () => {
+  handle(Channels.terrainImport, (event, payload: unknown) => readOnly ? readOnlyError : importTerrain(payload, async () => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const options = {
       title: 'Import terrain',
@@ -400,7 +408,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     const picked = await (win ? dialog.showOpenDialog(win, options) : dialog.showOpenDialog(options))
     return picked.canceled ? undefined : picked.filePaths[0]
   }, assetsDir, repos))
-  ipcMain.handle(Channels.componentsExportPack, async (event, payload: unknown): Promise<IpcResult<{ path: string; count: number } | null>> => {
+  handle(Channels.componentsExportPack, async (event, payload: unknown): Promise<IpcResult<{ path: string; count: number } | null>> => {
     const parsed = z.object({ ids: z.array(z.uuid()).min(1, 'Nothing to export').max(5000), name: z.string().max(200) }).safeParse(payload)
     if (!parsed.success) return { ok: false, error: { code: 'VALIDATION', message: parsed.error.issues[0]!.message } }
     try {
@@ -413,8 +421,8 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       }
       const picked = await (win ? dialog.showSaveDialog(win, options) : dialog.showSaveDialog(options))
       if (picked.canceled || !picked.filePath) return { ok: true, data: null }
-      const path = /\.json$/i.test(picked.filePath) ? picked.filePath : `${picked.filePath}.json`
-      await writeFile(path, buildPack(components), 'utf8')
+      const path = await writeConfirmedFile(picked.filePath, '.json',
+        (target) => writeFile(target, buildPack(components), 'utf8'))
       return { ok: true, data: { path, count: components.length } }
     } catch (e) {
       return { ok: false, error: { code: 'INTERNAL', message: `Could not export: ${(e as Error).message}` } }
@@ -422,7 +430,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
   })
   recordingCsv = createRecordingCsvExporter(recordings)
   const exportCsv = createRecordingCsvHandler(recordingCsv)
-  ipcMain.handle(Channels.recordingExportCsv, (event, payload: unknown) =>
+  handle(Channels.recordingExportCsv, (event, payload: unknown) =>
     exportCsv(payload, async (suggestedName) => {
       const win = BrowserWindow.fromWebContents(event.sender)
       const options = {
@@ -434,7 +442,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       return picked.canceled || !picked.filePath ? null : picked.filePath
     }))
 
-  ipcMain.handle(Channels.componentsImportPack, async (event): Promise<IpcResult<{ imported: number; skipped: number } | null>> => {
+  handle(Channels.componentsImportPack, async (event): Promise<IpcResult<{ imported: number; skipped: number } | null>> => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const options = {
       title: 'Import components',
@@ -452,7 +460,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       return { ok: false, error: { code: 'INTERNAL', message: 'The pack could not be read. See application log.' } }
     }
   })
-  ipcMain.handle(Channels.viewportSavePng, async (event, payload: unknown): Promise<IpcResult<{ path: string } | null>> => {
+  handle(Channels.viewportSavePng, async (event, payload: unknown): Promise<IpcResult<{ path: string } | null>> => {
     const parsed = savePngSchema.safeParse(payload)
     if (!parsed.success) {
       return { ok: false, error: { code: 'VALIDATION', message: parsed.error.issues.map((i) => i.message).join('; ') } }
@@ -465,9 +473,8 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     }
     const picked = await (win ? dialog.showSaveDialog(win, options) : dialog.showSaveDialog(options))
     if (picked.canceled || !picked.filePath) return { ok: true, data: null }
-    const path = /\.png$/i.test(picked.filePath) ? picked.filePath : `${picked.filePath}.png`
     try {
-      await writeFile(path, parsed.data.bytes)
+      const path = await writeConfirmedFile(picked.filePath, '.png', (target) => writeFile(target, parsed.data.bytes))
       return { ok: true, data: { path } }
     } catch (e) {
       return { ok: false, error: { code: 'INTERNAL', message: `Could not write the image: ${(e as Error).message}` } }
@@ -496,9 +503,6 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     },
     logRendererError: (message) => logger.write('error', 'renderer', message),
   })
-  function isMainFrame(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean {
-    return !!mainWindow && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame
-  }
   const dataOverview = createDataOverviewHandler({
     async read() {
       // Model and terrain imports share the flat, content-addressed assets folder.
@@ -527,15 +531,10 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       if (error) throw new Error(error)
     },
   })
-  ipcMain.handle(Channels.dataOverview, (event, payload: unknown) =>
-    isMainFrame(event) ? dataOverview(payload)
-      : { ok: false, error: { code: 'VALIDATION', message: 'Data overview is available from the main window.' } })
-  const denied = { ok: false, error: { code: 'VALIDATION', message: 'Diagnostics are available from the main window.' } } as const
-  ipcMain.handle(Channels.diagnosticsOpenLogFolder, (event, payload: unknown) =>
-    isMainFrame(event) ? diagnosticsHandlers.openLogFolder(payload) : denied)
-  ipcMain.handle(Channels.diagnosticsSave, (event, payload: unknown) => {
-    const win = mainWindow
-    if (!win || !isMainFrame(event)) return denied
+  handle(Channels.dataOverview, (_event, payload) => dataOverview(payload))
+  handle(Channels.diagnosticsOpenLogFolder, (_event, payload) => diagnosticsHandlers.openLogFolder(payload))
+  handle(Channels.diagnosticsSave, (_event, payload) => {
+    const win = mainWindow!
     return diagnosticsHandlers.save(payload, async () => {
       const picked = await dialog.showSaveDialog(win, {
         title: 'Save diagnostics',
@@ -545,9 +544,7 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       return picked.canceled ? undefined : picked.filePath
     })
   })
-  ipcMain.on(Channels.rendererError, (event, payload: unknown) => {
-    if (isMainFrame(event)) diagnosticsHandlers.rendererError(payload)
-  })
+  on(Channels.rendererError, (_event, payload) => diagnosticsHandlers.rendererError(payload))
   if (!readOnly) recorder = new SessionRecorder(recordings, (id) => repos.projects.get(id).name, app.getVersion(), () => engine!.status)
   if (!existsSync(binaryPath)) logger.write('error', 'engine', `[engine] binary not found at ${binaryPath}`)
 
@@ -588,9 +585,8 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
       }
       const picked = await (mainWindow ? dialog.showSaveDialog(mainWindow, options) : dialog.showSaveDialog(options))
       if (picked.canceled || !picked.filePath) return null
-      const extension = `.${PROJECT_EXTENSION}`
-      const path = picked.filePath.toLowerCase().endsWith(extension) ? picked.filePath : picked.filePath + extension
-      await projectTransfer.export(id, recordings, path)
+      const path = await writeConfirmedFile(picked.filePath, `.${PROJECT_EXTENSION}`,
+        (target) => projectTransfer.export(id, recordings, target))
       return { path }
     },
     async importProject() {
@@ -613,17 +609,14 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     },
   }))
   for (const [channel, handler] of Object.entries({ ...handlers, ...dataSafetyHandlers, ...createTerrainHandlers(repos, assetsDir), ...createRecordingHandlers(recordings) })) {
-    ipcMain.handle(channel, (_event, payload: unknown) =>
+    handle(channel, (_event, payload: unknown) =>
       readOnly && channel === Channels.runsDelete ? readOnlyError : handler(payload))
   }
   for (const [channel, handler] of Object.entries(createRecordingVerifyHandlers(recordings, binaryPath))) {
-    ipcMain.handle(channel, (event, payload: unknown) => handler(event.sender, payload))
+    handle(channel, (event, payload: unknown) => handler(event.sender, payload))
   }
-  ipcMain.handle(Channels.recordingPrintReportPdf, (event, payload: unknown) => handlePrintReportPdf(payload, async () => {
-    const win = mainWindow
-    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
-      throw new Error('Printing is available from the main window.')
-    }
+  handle(Channels.recordingPrintReportPdf, (event, payload: unknown) => handlePrintReportPdf(payload, async () => {
+    const win = mainWindow!
     return printCurrentReportPdf(event.sender, async (id) => {
       const run = await recordings.get(id)
       return run.title ?? undefined
@@ -636,23 +629,16 @@ async function start(preferencePath: string, startupPreference: GpuPreference): 
     })
   }))
   // Same validation and storage as the async save; used only while a window unloads.
-  ipcMain.on(Channels.assemblySaveSync, (event, payload: unknown) => {
+  on(Channels.assemblySaveSync, (event, payload: unknown) => {
     event.returnValue = db?.open && !readOnly ? handlers[Channels.assemblySave]!(payload) : readOnlyError
   })
 
-  // The sidecar has one loaded vehicle. Keep each load and its consuming command together.
-  let vehicleQueue = Promise.resolve()
-  function withLoadedVehicle<T>(run: () => Promise<T>): Promise<T> {
-    const result = vehicleQueue.then(run)
-    vehicleQueue = result.then(() => {}, () => {})
-    return result
-  }
-  ipcMain.handle(Channels.engineDropTest, (_event, payload: unknown) => withLoadedVehicle(() => dropTest(engine!, payload)))
-  ipcMain.handle(Channels.engineFlightStart, (_event, payload: unknown) => withLoadedVehicle(() => flightStartForView(engine!, payload, recorder)))
-  ipcMain.handle(Channels.engineFlightStep, (_event, payload: unknown) => flightStepForView(engine!, payload, recorder))
-  ipcMain.handle(Channels.engineFlightEnd, () => flightEnd(engine!, recorder))
-  ipcMain.handle(Channels.engineScenarioRun, (_event, payload: unknown) => withLoadedVehicle(() => scenarioRun(engine!, payload, recorder)))
-  ipcMain.handle(Channels.engineStepTest, (_event, payload: unknown) => withLoadedVehicle(() => stepTest(engine!, payload, recorder)))
+  handle(Channels.engineDropTest, (_event, payload) => dropTest(engine!, payload))
+  handle(Channels.engineFlightStart, (_event, payload) => flightStartForView(engine!, payload, recorder))
+  handle(Channels.engineFlightStep, (_event, payload) => flightStepForView(engine!, payload, recorder))
+  handle(Channels.engineFlightEnd, () => flightEnd(engine!, recorder))
+  handle(Channels.engineScenarioRun, (_event, payload) => scenarioRun(engine!, payload, recorder))
+  handle(Channels.engineStepTest, (_event, payload) => stepTest(engine!, payload, recorder))
 
   engine.on('status', (status) => {
     if ((status.state === 'restarting' || status.state === 'failed') && status.lastError) recorder?.failFlight(status.lastError)

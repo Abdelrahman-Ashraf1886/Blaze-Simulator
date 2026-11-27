@@ -69,7 +69,8 @@ export function telemetryCsv(
   return {
     header: (options.bom ? '\uFEFF' : '') + prefix + line(indices.map((index) => {
       const { name, unit } = columns[index]!
-      return `${name} [${unit}]`
+      const prefix = /^[=+\-@\t\r]/.test(name) ? "'" : ''
+      return `${prefix}${name} [${unit}]`
     })),
     row(values: readonly (number | null | undefined)[]): string {
       return line(indices.map((index) => {

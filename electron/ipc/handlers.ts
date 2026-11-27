@@ -1,7 +1,8 @@
 import { z } from 'zod'
+import { MAX_TERRAIN_CELLS } from '../../src/domain/terrain'
 import { CONTROLLER_PARAMS, effectiveParams } from '../../src/domain/controller-params'
-import type { WebContents } from 'electron'
-import { Channels, type DatabaseBackup, type DataOverview, type DiagnosticsPreview, type FlightStartResult, type FlightStepResult, type GpuPreference, type GraphicsStatus, type IpcResult, type Project, type ProjectExportInput, type SystemStatus, type TerrainAssetInfo } from './contract'
+import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
+import { Channels, type DatabaseBackup, type DataOverview, type DiagnosticsPreview, type FlightStartResult, type FlightStepResult, type GpuPreference, type GraphicsStatus, type IpcResult, MAX_ASSET_BYTES, type Project, type ProjectExportInput, type SystemStatus, type TerrainAssetInfo } from './contract'
 import {
   assetIdSchema,
   dataOverviewSchema,
@@ -41,11 +42,105 @@ import { ConflictError, NotFoundError, TuningValidationError, ValidationError, t
 import { importTerrainFile, readTerrainFile } from '../main/assets/terrain-store'
 import type { createRecordingCsvExporter, PickCsvPath } from '../main/telemetry/csv'
 import { RecordingFormatError } from '../main/telemetry/format'
+import { MAX_NODE_DEPTH } from '../main/assets/gltf'
+import { MAX_IMAGE_BYTES, savePngSchema, writeConfirmedFile } from '../main/screenshot'
 import { RecordingQueryError } from '../main/telemetry/reader'
 import type { RecordingStore } from '../main/telemetry/store'
 import { verifyRecording } from '../main/telemetry/verify'
 import { flightStart, flightStartSchema, flightStep, type EngineForFlight } from '../main/engine/flight-session'
 import { RECORD_EVERY_STEPS, type SessionRecorder } from '../main/telemetry/session-recorder'
+
+const engineJobs = new Set<string>([
+  Channels.engineDropTest, Channels.engineFlightStart, Channels.engineFlightStep,
+  Channels.engineScenarioRun, Channels.engineStepTest,
+])
+const assetImports = new Set<string>([Channels.assetsImport, Channels.terrainImport, Channels.componentsImportPack])
+
+export function ipcPayloadWithinBudget(value: unknown, budget: number): boolean {
+  const active = new WeakSet<object>()
+  function charge(bytes: number): boolean {
+    budget -= bytes
+    return budget >= 0
+  }
+  function visit(input: unknown, depth: number): boolean {
+    // Charge one double-width slot even for booleans and null.
+    if (depth > MAX_NODE_DEPTH || !charge(Float64Array.BYTES_PER_ELEMENT)) return false
+    if (typeof input === 'string') return input.length <= budget && charge(Buffer.byteLength(input))
+    if (input === null || input === undefined || typeof input === 'boolean' || typeof input === 'number') return true
+    if (typeof input !== 'object' || active.has(input)) return false
+    if (ArrayBuffer.isView(input)) return charge(input.buffer.byteLength)
+    if (input instanceof ArrayBuffer) return charge(input.byteLength)
+
+    active.add(input)
+    if (Array.isArray(input)) {
+      // The terrain grid is the largest flat input collection.
+      if (input.length > MAX_TERRAIN_CELLS || input.length * Float64Array.BYTES_PER_ELEMENT > budget) return false
+      for (const value of input) if (!visit(value, depth + 1)) return false
+    } else {
+      const prototype: unknown = Object.getPrototypeOf(input)
+      if (prototype !== Object.prototype && prototype !== null) return false
+      const fields = input as Record<string, unknown>
+      for (const key in fields) {
+        if (Object.hasOwn(fields, key) && (!visit(key, depth + 1) || !visit(fields[key], depth + 1))) return false
+      }
+    }
+    active.delete(input)
+    return true
+  }
+  return visit(value, 0)
+}
+
+type MainIpcEvent = IpcMainEvent | IpcMainInvokeEvent
+const ipcDenied = (message: string): IpcResult<never> => ({ ok: false, error: { code: 'VALIDATION', message } })
+
+export function createIpcGuard(getContents: () => WebContents | undefined, expectedDocument: URL) {
+  const active = new Set<string>()
+  const expected = new URL(expectedDocument)
+  expected.hash = ''
+  function rejection(event: MainIpcEvent, args: unknown[], channel: string): IpcResult<never> | undefined {
+    const contents = getContents()
+    const frame = event.senderFrame
+    if (!contents || contents.isDestroyed() || event.sender !== contents || !frame || frame !== contents.mainFrame) {
+      return ipcDenied('IPC is available from the main window.')
+    }
+    const url = URL.parse(frame.url)
+    if (url) url.hash = ''
+    if (url?.href !== expected.href) return ipcDenied('IPC is available from the app document.')
+    // The PNG contract allows a full-size typed array plus the name and envelope.
+    const budget = channel === Channels.viewportSavePng
+      ? MAX_IMAGE_BYTES + savePngSchema.shape.name.maxLength! * 3 + Buffer.byteLength('bytesname') + 5 * Float64Array.BYTES_PER_ELEMENT
+      : MAX_ASSET_BYTES
+    if (args.length > 1 || !ipcPayloadWithinBudget(args[0], budget)) return ipcDenied('IPC payload exceeds its size or structure limit.')
+  }
+  return {
+    handle(channel: string, handler: (event: IpcMainInvokeEvent, payload: unknown) => unknown) {
+      return async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+        const rejected = rejection(event, args, channel)
+        if (rejected) return rejected
+        // Flight end can interrupt a step. Keep it in its own single slot.
+        const slot = engineJobs.has(channel) ? 'engine'
+          : assetImports.has(channel) ? 'asset import'
+          : channel === Channels.recordingVerify || channel === Channels.engineFlightEnd ? channel
+          : undefined
+        if (!slot) return handler(event, args[0])
+        if (active.has(slot)) return ipcDenied('An operation of this kind is already active.')
+        active.add(slot)
+        try {
+          return await handler(event, args[0])
+        } finally {
+          active.delete(slot)
+        }
+      }
+    },
+    on(channel: string, listener: (event: IpcMainEvent, payload: unknown) => void) {
+      return (event: IpcMainEvent, ...args: unknown[]) => {
+        const rejected = rejection(event, args, channel)
+        if (!rejected) listener(event, args[0])
+        else if (channel === Channels.assemblySaveSync) event.returnValue = rejected
+      }
+    },
+  }
+}
 
 export function createDiagnosticsHandlers(options: {
   openLogFolder: () => Promise<void>
@@ -66,8 +161,10 @@ export function createDiagnosticsHandlers(options: {
         if (action === 'preview') return options.preview(includeDatabase)
         const picked = await pickPath()
         if (!picked) return null
-        const path = /\.zip$/i.test(picked) ? picked : `${picked}.zip`
-        return options.save(path, includeDatabase)
+        const path = await writeConfirmedFile(picked, '.zip', async (target) => {
+          await options.save(target, includeDatabase)
+        })
+        return { path }
       }),
     rendererError: (payload: unknown) => {
       const timestamp = now()

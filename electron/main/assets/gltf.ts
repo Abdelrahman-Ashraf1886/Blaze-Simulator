@@ -1,3 +1,4 @@
+import { jsonDepthWithin } from './json-depth'
 /**
  * Validation and inspection of glTF 2.0 files before they enter the asset store.
  * Pure: takes bytes, returns facts or throws `AssetError` with a message meant
@@ -11,7 +12,14 @@
  */
 import { MAX_ASSET_BYTES, type Bounds3 } from '../../ipc/contract'
 
-export class AssetError extends Error {}
+export class AssetError extends Error {
+  override name = 'AssetError'
+}
+
+export const MAX_NODE_DEPTH = 1000
+// Charge each hierarchy entry and primitive visit against the file budget at a
+// minimum of one 3-float position per operation.
+export const MAX_SCENE_WORK = Math.floor(MAX_ASSET_BYTES / (3 * Float32Array.BYTES_PER_ELEMENT))
 
 const GLB_MAGIC = 0x46546c67 // "glTF"
 const CHUNK_JSON = 0x4e4f534a // "JSON"
@@ -61,6 +69,10 @@ export interface Gltf {
 }
 
 export function inspectGltf(bytes: Uint8Array, filename: string): GltfFacts {
+  return inspectGltfDocument(bytes, filename).facts
+}
+
+export function inspectGltfDocument(bytes: Uint8Array, filename: string): { facts: GltfFacts; json: Gltf } {
   if (bytes.byteLength > MAX_ASSET_BYTES) throw new AssetError(tooLarge(bytes.byteLength))
   if (bytes.byteLength === 0) throw new AssetError('The file is empty.')
   const ext = filename.toLowerCase().match(/\.(glb|gltf)$/)?.[1] as 'glb' | 'gltf' | undefined
@@ -87,7 +99,8 @@ export function inspectGltf(bytes: Uint8Array, filename: string): GltfFacts {
   }
   checkBuffers(json, ext, binLength)
   checkImages(json)
-  return { format: ext, ...measure(json) }
+  validateHierarchy(json)
+  return { json, facts: { format: ext, ...measure(json) } }
 }
 
 export const tooLarge = (bytes: number) =>
@@ -117,6 +130,7 @@ export function readGlb(bytes: Uint8Array, view: DataView): { json: Gltf; binLen
 }
 
 export function parseJson(text: string): Gltf {
+  if (!jsonDepthWithin(text, MAX_NODE_DEPTH)) throw new AssetError('The glTF JSON is nested too deeply.')
   try {
     const v: unknown = JSON.parse(text)
     if (v && typeof v === 'object' && !Array.isArray(v)) return v as Gltf
@@ -193,6 +207,68 @@ function primitiveTriangles(json: Gltf, p: NonNullable<NonNullable<Gltf['meshes'
   return 0 // points and lines
 }
 
+/** Validate all scenes, including hierarchies the default scene does not use. */
+export function validateHierarchy(json: Gltf): void {
+  const nodes = json.nodes ?? []
+  if (!Array.isArray(nodes) || nodes.length > MAX_SCENE_WORK) throw new AssetError('The scene exceeds the traversal budget.')
+  const parents = new Int32Array(nodes.length).fill(-1)
+  const depths = new Uint16Array(nodes.length)
+  let work = nodes.length
+  const charge = () => {
+    if (++work > MAX_SCENE_WORK) throw new AssetError('The scene exceeds the traversal budget.')
+  }
+  const checkIndex = (index: number) => {
+    if (!Number.isSafeInteger(index) || index < 0 || index >= nodes.length || !nodes[index]) {
+      throw new AssetError('The scene refers to an invalid node.')
+    }
+  }
+  nodes.forEach((node, index) => {
+    if (!node || typeof node !== 'object' || (node.children !== undefined && !Array.isArray(node.children))) {
+      throw new AssetError('The file contains an invalid node.')
+    }
+    if (node.mesh !== undefined) {
+      const mesh = Number.isSafeInteger(node.mesh) ? json.meshes?.[node.mesh] : undefined
+      if (!mesh || (mesh.primitives !== undefined && !Array.isArray(mesh.primitives))) throw new AssetError('The scene refers to an invalid mesh.')
+      work += mesh.primitives?.length ?? 0
+      if (work > MAX_SCENE_WORK) throw new AssetError('The scene exceeds the traversal budget.')
+    }
+    for (const child of node.children ?? []) {
+      charge()
+      checkIndex(child)
+      if (parents[child] !== -1) throw new AssetError('A node has repeated parents or child references.')
+      parents[child] = index
+    }
+  })
+  // Resolve each parent path once. Mark the current path with a sentinel to
+  // distinguish a cycle from a path whose depth has already been measured.
+  const visiting = MAX_NODE_DEPTH + 1
+  const path: number[] = []
+  for (let index = 0; index < nodes.length; index++) {
+    let ancestor = index
+    while (ancestor !== -1 && depths[ancestor] === 0) {
+      if (path.length === MAX_NODE_DEPTH) throw new AssetError('The node hierarchy is too deep.')
+      depths[ancestor] = visiting
+      path.push(ancestor)
+      ancestor = parents[ancestor]!
+    }
+    let depth = ancestor === -1 ? 0 : depths[ancestor]!
+    if (depth === visiting) throw new AssetError('The node hierarchy contains a cycle (loop).')
+    if (depth + path.length > MAX_NODE_DEPTH) throw new AssetError('The node hierarchy is too deep.')
+    while (path.length) depths[path.pop()!] = ++depth
+  }
+  for (const scene of json.scenes ?? []) {
+    charge()
+    const seen = new Set<number>()
+    for (const root of scene.nodes ?? []) {
+      charge()
+      checkIndex(root)
+      if (seen.has(root)) throw new AssetError('The scene contains repeated roots.')
+      if (parents[root] !== -1) throw new AssetError('A scene root is also a child node.')
+      seen.add(root)
+    }
+  }
+}
+
 function measure(json: Gltf): { triangles: number; bounds: Bounds3 } {
   const nodes = json.nodes ?? []
   const scene = json.scenes?.[json.scene ?? 0]
@@ -201,16 +277,19 @@ function measure(json: Gltf): { triangles: number; bounds: Bounds3 } {
   const max = [-Infinity, -Infinity, -Infinity]
   let triangles = 0
   let depth = 0
+  let work = 0
 
   const visit = (index: number, parent: Mat4) => {
     const node = nodes[index]
     if (!node) throw new AssetError(`The file refers to node ${index}, which does not exist.`)
-    if (++depth > 1000) throw new AssetError('The node hierarchy is too deep or contains a loop.')
+    if (++work > MAX_SCENE_WORK) throw new AssetError('The scene exceeds the traversal budget.')
+    if (++depth > MAX_NODE_DEPTH) throw new AssetError('The node hierarchy is too deep or contains a loop.')
     const m = multiply(parent, nodeMatrix(node))
     if (node.mesh !== undefined) {
       const mesh = json.meshes?.[node.mesh]
       if (!mesh) throw new AssetError(`The file refers to mesh ${node.mesh}, which does not exist.`)
       for (const p of mesh.primitives ?? []) {
+        if (++work > MAX_SCENE_WORK) throw new AssetError('The scene exceeds the traversal budget.')
         triangles += primitiveTriangles(json, p)
         const pos = p.attributes?.POSITION
         if (pos === undefined) continue
@@ -242,7 +321,8 @@ function measure(json: Gltf): { triangles: number; bounds: Bounds3 } {
 
 /** Nodes that are nobody's child (used when a file has no scenes). */
 export function rootNodes(json: Gltf): number[] {
-  const children = new Set((json.nodes ?? []).flatMap((n) => n.children ?? []))
+  const children = new Set<number>()
+  for (const node of json.nodes ?? []) for (const child of node.children ?? []) children.add(child)
   return (json.nodes ?? []).map((_, i) => i).filter((i) => !children.has(i))
 }
 

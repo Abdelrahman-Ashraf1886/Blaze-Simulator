@@ -1,7 +1,7 @@
 {
   "name": "blaze-uav",
   "productName": "Blaze UAV",
-  "version": "0.1.0",
+  "version": "0.8.0",
   "description": "Drone engineering and flight simulation workstation",
   "private": true,
   "main": "out/main/index.js",
@@ -22,7 +22,8 @@
     "icon": "node scripts/render-icon.mjs",
     "notices": "node scripts/notices.mjs",
     "postinstall": "install-electron && electron-builder install-app-deps",
-    "dist": "npm run build && electron-builder --win"
+    "dist": "npm run build && electron-builder --win --publish never",
+    "release": "node scripts/release/build.mjs"
   },
   "author": "Blaze UAV contributors",
   "//dependencies": "Only main-process runtime deps belong here; renderer libs are bundled by Vite and live in devDependencies so they are not shipped twice.",

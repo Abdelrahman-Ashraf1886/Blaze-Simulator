@@ -47,9 +47,13 @@ async function checkRecording(path: string) {
   await validateRecording(path, { id: header.runId, projectId: header.projectId, incomplete: false, sampleCount })
 }
 
+// Checked through their own paths in tests/unit/hostile-inputs.test.ts: the hull worker's accessor
+// bounds, Verify's request validation and the engine reply parser.
+const coveredByUnitTests = new Set(['invalid-accessor.gltf', 'invalid-replay.ndjson', 'malformed-reply.ndjson'])
+
 for (const path of fixtures) {
   const name = relative(root, path)
-  it(`refuses ${name} with a message`, async () => {
+  it.skipIf(coveredByUnitTests.has(name))(`refuses ${name} with a message`, async () => {
     switch (extname(name).toLowerCase()) {
       case '.gltf':
       case '.glb': expect(() => inspectGltf(readFileSync(path), name)).toThrow(/\S/); break

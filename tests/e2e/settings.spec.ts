@@ -56,7 +56,7 @@ test('restores a migration copy from Settings after confirmation and restarts', 
       database.exec(await readFile(join(root, 'database/migrations/0001_initial.sql'), 'utf8'))
       database.exec('PRAGMA user_version = 1')
       const date = new Date().toISOString()
-      database.prepare('INSERT INTO projects (id, name, frame_type, created_at, updated_at) VALUES (?, ?, ?, ?)')
+      database.prepare('INSERT INTO projects (id, name, frame_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
         .run(randomUUID(), 'Before migration', 'quad-x', date, date)
     } finally {
       database.close()

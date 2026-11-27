@@ -99,6 +99,7 @@ describe('IPC handlers', () => {
       Channels.viewportSavePng,
       Channels.recordingPrintReportPdf,
       // Wired in main with the preference file path and powerMonitor (electron/main/index.ts).
+      Channels.dataOverview,
       Channels.graphicsStatus,
       Channels.graphicsCommand,
       // Diagnostics are bound in main with Electron dialogs, shell, or event context.

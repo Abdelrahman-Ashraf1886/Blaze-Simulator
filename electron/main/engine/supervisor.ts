@@ -125,7 +125,7 @@ export interface SupervisorOptions {
   backoffMs?: readonly number[]
   /** Consecutive failed starts before giving up (state `failed`). */
   maxRestarts?: number
-  log?: (line: string, level?: 'error') => void
+  log?: (line: string, level?: 'info' | 'error') => void
 }
 
 interface Pending {
